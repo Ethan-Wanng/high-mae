@@ -10,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing/common/metadata"
 	"high-mae/protocol"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -60,6 +61,9 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 
 	// A. AnyTLS 节点
 	if node.Type == "anytls" {
+		// 1. 创建带生命周期控制的 Context
+		clientCtx, cancelClient := context.WithCancel(context.Background())
+
 		dialer := &net.Dialer{Timeout: 10 * time.Second}
 		dialOut := func(ctx context.Context) (net.Conn, error) {
 			dialHost := node.Server
@@ -84,19 +88,30 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 			return tlsConn, nil
 		}
 
-		client, err := sing_anytls.NewClient(context.Background(), sing_anytls.ClientConfig{
+		// 2. 初始化引擎，🚀 强行塞入 dummyLogger，彻底堵死空指针崩溃漏洞！
+		client, err := sing_anytls.NewClient(clientCtx, sing_anytls.ClientConfig{
 			Password:       node.Password,
 			MinIdleSession: 1,
 			DialOut:        anytls_util.DialOutFunc(dialOut),
+			Logger:         dummyLogger{}, // <--- 救命的黑魔法在这里
 		})
 		if err != nil {
+			cancelClient()
 			return nil, nil, err
 		}
 
 		dialCtx = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return client.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
 		}
-		cleanup = func() {} // AnyTLS 由 Go GC 自动回收
+
+		// 3. 测速完成后的安全清理逻辑
+		cleanup = func() {
+			cancelClient() // 发送取消信号，优雅终止底层死循环
+			// 主动关闭连接池
+			if closer, ok := any(client).(io.Closer); ok {
+				closer.Close()
+			}
+		}
 
 	} else {
 		// B. Sing-box 其他多协议节点
@@ -158,3 +173,35 @@ func TestProxyLatency() {
 
 	ShowWindowsMsgBox("测速结果", fmt.Sprintf("🎯 当前节点畅通！\n\n⏱ 延迟：%d ms\n📊 状态：%s", latency, rating))
 }
+
+// 🚀 专治 AnyTLS 空指针的哑巴日志器
+type dummyLogger struct{}
+
+func (l dummyLogger) TraceContext(ctx context.Context, args ...any) {}
+
+func (l dummyLogger) DebugContext(ctx context.Context, args ...any) {}
+
+func (l dummyLogger) InfoContext(ctx context.Context, args ...any) {}
+
+func (l dummyLogger) WarnContext(ctx context.Context, args ...any) {}
+
+func (l dummyLogger) ErrorContext(ctx context.Context, args ...any) {}
+
+func (l dummyLogger) FatalContext(ctx context.Context, args ...any) {}
+
+func (l dummyLogger) PanicContext(ctx context.Context, args ...any) {}
+
+func (l dummyLogger) Trace(args ...any)                 {}
+func (l dummyLogger) Tracef(format string, args ...any) {}
+func (l dummyLogger) Debug(args ...any)                 {}
+func (l dummyLogger) Debugf(format string, args ...any) {}
+func (l dummyLogger) Info(args ...any)                  {}
+func (l dummyLogger) Infof(format string, args ...any)  {}
+func (l dummyLogger) Warn(args ...any)                  {}
+func (l dummyLogger) Warnf(format string, args ...any)  {}
+func (l dummyLogger) Error(args ...any)                 {}
+func (l dummyLogger) Errorf(format string, args ...any) {}
+func (l dummyLogger) Fatal(args ...any)                 {}
+func (l dummyLogger) Fatalf(format string, args ...any) {}
+func (l dummyLogger) Panic(args ...any)                 {}
+func (l dummyLogger) Panicf(format string, args ...any) {}
