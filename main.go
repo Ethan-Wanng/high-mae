@@ -144,9 +144,6 @@ func onExit() {
 	//os.Remove("wintun.dll")
 	//os.Remove(importTempFile)
 
-	// 刚下载或者误删文件时，打印日志即可，程序会正常启动并提示导入
-	ins.ShowWindowsMsgBox("体验结束", fmt.Sprint("请复制订阅链接后，在托盘点击「导入」！"))
-
 }
 
 func main() {

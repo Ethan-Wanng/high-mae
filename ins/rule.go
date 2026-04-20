@@ -3,6 +3,7 @@ package ins
 import (
 	"context"
 	"fmt"
+	anytls_util "github.com/anytls/sing-anytls/util"
 	"github.com/sagernet/sing/common/json/badoption"
 	"log"
 	"net"
@@ -20,6 +21,8 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/metadata"
 )
+
+var cancelAnyTLS context.CancelFunc
 
 func ShouldDirect(hostPort string) bool {
 	if ProxyMode == "Global" {
@@ -78,11 +81,8 @@ func SwitchNode(node protocol.Node) {
 	clientMu.Lock()
 	defer clientMu.Unlock()
 
-	ips, err := net.LookupHost(node.Server)
-	newIP := ""
-	if err == nil && len(ips) > 0 {
-		newIP = ips[0]
-	}
+	// 🚀 修复 1：使用智能解析函数，防止给原本就是 IP 的地址做二次 DNS 污染解析
+	newIP := resolveDirect(node.Server)
 
 	if IsTunModeOn {
 		realGateway := GetDefaultGateway()
@@ -97,7 +97,19 @@ func SwitchNode(node protocol.Node) {
 	globalNodeServer = node.Server
 	GlobalNodeIP = newIP
 
-	// 专门处理 AnyTLS 节点 (保持原有高效客户端逻辑)
+	// 🚀 修复 2：彻底清理上一个节点的残留资源（无论是 Sing-box 还是 AnyTLS）
+	if currentBox != nil {
+		currentBox.Close()
+		currentBox = nil
+	}
+	if cancelAnyTLS != nil {
+		cancelAnyTLS() // 瞬间杀死上一个 AnyTLS 的后台协程
+		cancelAnyTLS = nil
+	}
+
+	// ==========================================
+	// 专门处理 AnyTLS 节点
+	// ==========================================
 	if node.Type == "anytls" {
 		dialer := &net.Dialer{Timeout: 10 * time.Second}
 		dialOut := func(ctx context.Context) (net.Conn, error) {
@@ -116,7 +128,6 @@ func SwitchNode(node protocol.Node) {
 			if sni == "" {
 				sni = node.Server
 			}
-			// 确保 node.SkipCertVerify 被正确传递
 			tlsConfig := &utls.Config{ServerName: sni, InsecureSkipVerify: node.SkipCertVerify}
 			tlsConn := utls.UClient(conn, tlsConfig, utls.HelloFirefox_Auto)
 			if err := tlsConn.HandshakeContext(ctx); err != nil {
@@ -126,34 +137,34 @@ func SwitchNode(node protocol.Node) {
 			return tlsConn, nil
 		}
 
-		newClient, err := sing_anytls.NewClient(context.Background(), sing_anytls.ClientConfig{
+		// 🚀 修复 3：加入 Context 控制，绑定到全局变量，方便下次切换时精准回收
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelAnyTLS = cancel
+
+		newClient, err := sing_anytls.NewClient(ctx, sing_anytls.ClientConfig{
 			Password:       node.Password,
 			MinIdleSession: 1,
-			DialOut:        dialOut,
+			DialOut:        anytls_util.DialOutFunc(dialOut), // 🚀 修复 4：必须强转，否则编译报错
+			Logger:         dummyLogger{},                    // 🚀 修复 5：塞入哑巴日志器，防止切节点时闪退！
 		})
 		if err != nil {
 			log.Printf("AnyTLS Client 创建失败: %v", err)
+			cancel() // 失败了也要清理
 			return
 		}
 
-		if currentBox != nil {
-			currentBox.Close()
-			currentBox = nil
-		}
 		activeClient = newClient
 		return
 	}
 
+	// ==========================================
 	// === 多协议支持：利用 sing-box 构建通用客户端 ===
+	// ==========================================
 	log.Printf("初始化通用代理引擎 [%s] 节点: %s", node.Type, node.Name)
 	opts, err := buildSingBoxOptions(node, newIP)
 	if err != nil {
 		log.Printf("构建 Sing-Box 配置失败: %v", err)
 		return
-	}
-
-	if currentBox != nil {
-		currentBox.Close()
 	}
 
 	b, err := box.New(box.Options{

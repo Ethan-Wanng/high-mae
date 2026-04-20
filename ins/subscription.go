@@ -1,6 +1,7 @@
 package ins
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -12,6 +13,49 @@ import (
 	// "github.com/atotto/clipboard"
 	"os/exec"
 )
+
+const SubscriptionsFile = "subscriptions.json"
+const ConfigFile = ".yml" // 你的 yaml 配置文件名
+
+// ReadSubscriptions 读取保存的原始链接列表
+func ReadSubscriptions() ([]string, error) {
+	if _, err := os.Stat(SubscriptionsFile); os.IsNotExist(err) {
+		return []string{}, nil // 文件不存在返回空列表
+	}
+
+	data, err := os.ReadFile(SubscriptionsFile)
+	if err != nil {
+		return nil, err
+	}
+
+	var links []string
+	if err := json.Unmarshal(data, &links); err != nil {
+		return nil, fmt.Errorf("解析 JSON 失败: %w", err)
+	}
+	return links, nil
+}
+
+// AppendSubscription 追加新链接到 JSON，并去重
+func AppendSubscription(newLink string) error {
+	links, _ := ReadSubscriptions()
+
+	// 简单的去重逻辑
+	for _, existing := range links {
+		if existing == newLink {
+			return nil // 已经存在，不用重复添加
+		}
+	}
+
+	links = append(links, newLink)
+
+	// 格式化输出 JSON (带缩进，方便人眼查看)
+	data, err := json.MarshalIndent(links, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(SubscriptionsFile, data, 0644)
+}
 
 func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 	var sb strings.Builder
@@ -255,10 +299,6 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 
 func ImportNodeFromClipboard() {
 	// 1. 读取剪贴板内容
-	// 推荐写法(需引入 github.com/atotto/clipboard):
-	// input, err := clipboard.ReadAll()
-
-	// 当前 Windows 专属写法:
 	out, err := exec.Command("powershell", "-command", "Get-Clipboard").Output()
 	if err != nil {
 		ShowWindowsMsgBox("导入失败", "无法读取剪贴板内容！")
@@ -271,36 +311,58 @@ func ImportNodeFromClipboard() {
 		return
 	}
 
-	// 2. 解析节点
+	// 2. 解析节点 (使用你强大的解析器)
 	newNodes, err := ParseSubscription(input)
 	if err != nil || len(newNodes) == 0 {
 		ShowWindowsMsgBox("导入失败", fmt.Sprintf("无法解析剪贴板内的节点或订阅。\n原因: %v", err))
 		return
 	}
 
+	// ==========================================
+	// 🚀 新增逻辑：将合法的原始链接持久化保存到 JSON
+	// ==========================================
+	// input 可能是一行（一个分享链接或一个订阅链接），也可能是多行（批量复制的节点文本）。
+	// 为了以后方便更新，如果有多行，我们逐行保存；如果是单行订阅，直接保存。
+	lines := strings.Split(input, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			err = AppendSubscription(line)
+			if err != nil {
+				fmt.Printf("⚠️ 警告: 无法将链接保存到 JSON: %v\n", err)
+			}
+		}
+	}
+
 	// 3. 将新节点追加到全局节点列表中
 	AllNodes = append(AllNodes, newNodes...)
 
-	// 4. 持久化
-	err = SaveNodesToYAML(".yml", AllNodes)
+	// 4. 持久化到 YAML
+	err = SaveNodesToYAML(ConfigFile, AllNodes)
 	if err != nil {
 		ShowWindowsMsgBox("保存失败", "写入 .yml 文件失败: "+err.Error())
 		return
 	}
 
 	// 5. 重新读取确保同步
-	refreshedNodes, err := protocol.ParseNodes(".yml")
+	refreshedNodes, err := protocol.ParseNodes(ConfigFile)
 	if err == nil {
 		AllNodes = refreshedNodes
 	}
 
-	// 6. 清理旧菜单
+	// 6. 刷新托盘菜单
+	RefreshNodeMenu(newNodes)
+
+	ShowWindowsMsgBox("导入成功", fmt.Sprintf("🎉 成功解析并导入 %d 个节点！\n\n📌 原始链接已保存至 %s，方便日后一键更新。\n节点已保存至 %s 并自动为您切换。", len(newNodes), SubscriptionsFile, ConfigFile))
+}
+
+// 辅助函数：刷新菜单逻辑（从你的原代码中抽离，让代码更干净）
+func RefreshNodeMenu(newNodes []protocol.Node) {
 	for _, mi := range NodeMenuItems {
 		mi.Hide()
 	}
 	NodeMenuItems = nil
 
-	// 7. 重新渲染全新的节点菜单
 	for _, node := range AllNodes {
 		itemLabel := fmt.Sprintf("[%s] %s", strings.ToUpper(node.Type), node.Name)
 		item := MNodeMenu.AddSubMenuItem(itemLabel, "")
@@ -318,7 +380,7 @@ func ImportNodeFromClipboard() {
 		}(node, item)
 	}
 
-	// 8. 自动切换到导入的第一个新节点
+	// 自动切换到导入的第一个新节点
 	if len(newNodes) > 0 {
 		firstNewIndex := len(AllNodes) - len(newNodes)
 		if firstNewIndex >= 0 && firstNewIndex < len(NodeMenuItems) {
@@ -326,8 +388,6 @@ func ImportNodeFromClipboard() {
 			SwitchNode(AllNodes[firstNewIndex])
 		}
 	}
-
-	ShowWindowsMsgBox("导入成功", fmt.Sprintf("🎉 成功解析并导入 %d 个节点！\n已持久化保存至 .yml 并自动为您切换。", len(newNodes)))
 }
 
 func ParseSubscription(input string) ([]protocol.Node, error) {
@@ -387,4 +447,40 @@ func ParseSubscription(input string) ([]protocol.Node, error) {
 		}
 	}
 	return nodes, nil
+}
+
+func UpdateAllSubscriptions() {
+	links, err := ReadSubscriptions()
+	if err != nil || len(links) == 0 {
+		ShowWindowsMsgBox("更新失败", "没有找到保存的订阅链接。请先从剪贴板导入！")
+		return
+	}
+
+	var updatedNodes []protocol.Node
+
+	for _, link := range links {
+		// 遍历下载并解析所有保存的链接
+		nodes, err := ParseSubscription(link)
+		if err == nil && len(nodes) > 0 {
+			updatedNodes = append(updatedNodes, nodes...)
+		} else {
+			fmt.Printf("⚠️ 链接更新失败或无节点: %s\n", link)
+		}
+	}
+
+	if len(updatedNodes) == 0 {
+		ShowWindowsMsgBox("更新失败", "所有链接均未能获取到有效节点！")
+		return
+	}
+
+	// 覆盖保存，抛弃旧节点
+	AllNodes = updatedNodes
+	err = SaveNodesToYAML(ConfigFile, AllNodes)
+	if err != nil {
+		ShowWindowsMsgBox("保存失败", "写入文件失败: "+err.Error())
+		return
+	}
+
+	RefreshNodeMenu(updatedNodes)
+	ShowWindowsMsgBox("更新完成", fmt.Sprintf("🎉 成功从保存的链接中更新了 %d 个节点！", len(updatedNodes)))
 }

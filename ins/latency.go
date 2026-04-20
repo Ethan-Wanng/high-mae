@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -148,27 +149,75 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 	return httpClient, cleanup, nil
 }
 
-func TestProxyLatency() {
-	proxyUrl, _ := url.Parse("http://127.0.0.1:" + LocalHttpPort)
+// =======================================================
+// 1. 核心测速组件 (纯逻辑，无 UI 耦合，方便复用)
+// =======================================================
+func CheckProxyLatency(proxyURL string, targetURL string, timeout time.Duration) (int64, error) {
+	pUrl, err := url.Parse(proxyURL)
+	if err != nil {
+		return 0, fmt.Errorf("代理地址解析失败: %v", err)
+	}
+
 	client := &http.Client{
-		Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)},
-		Timeout:   5 * time.Second,
+		Transport: &http.Transport{
+			Proxy:             http.ProxyURL(pUrl),
+			ForceAttemptHTTP2: true, // 强制尝试 HTTP/2 以提速
+		},
+		Timeout: timeout,
 	}
 
 	start := time.Now()
-	resp, err := client.Get("https://www.google.com/generate_204")
+	resp, err := client.Get(targetURL)
 	if err != nil {
-		ShowWindowsMsgBox("测速失败", "当前节点超时或网络异常！\n可尝试在上方菜单切换其他节点。\n\n详情: "+err.Error())
-		return
+		return 0, err
 	}
 	defer resp.Body.Close()
 
-	latency := time.Since(start).Milliseconds()
+	// 🚀 核心优化：将 Body 的数据读入黑洞丢弃。
+	// 这是 Go 标准库的潜规则：只有读完 Body，底层的 TCP/TLS 连接才能被放入连接池复用！
+	io.Copy(io.Discard, resp.Body)
+
+	// 只要不是 204 或者 200，说明节点遇到了验证码/拦截网页
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("节点可能被拦截，异常状态码: %d", resp.StatusCode)
+	}
+
+	return time.Since(start).Milliseconds(), nil
+}
+
+// =======================================================
+// 2. GUI 菜单绑定的触发函数 (处理弹窗交互)
+// =======================================================
+func TestProxyLatency() {
+	proxyStr := "http://127.0.0.1:" + LocalHttpPort
+
+	// 使用 Cloudflare 的 204 接口，全球 CDN 加速，比 Google 更稳定且不会弹人机验证
+	targetURL := "https://cp.cloudflare.com/generate_204"
+
+	// 放宽到 8 秒，包容复杂协议的冷启动
+	latency, err := CheckProxyLatency(proxyStr, targetURL, 8*time.Second)
+
+	if err != nil {
+		// 优化错误提示，去掉冗长且难看的 Go 语言原生错误堆栈
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "Client.Timeout") || strings.Contains(errMsg, "timeout") {
+			errMsg = "节点连接超时 (Timeout)"
+		} else if strings.Contains(errMsg, "connection refused") {
+			errMsg = "本地代理服务未启动或被拒绝"
+		}
+
+		ShowWindowsMsgBox("测速失败", fmt.Sprintf("当前节点连通性异常！\n可尝试在上方菜单切换其他节点。\n\n详情: %s", errMsg))
+		return
+	}
+
+	// 评级表情
 	rating := "🟡 较慢"
 	if latency < 200 {
 		rating = "🚀 极佳"
 	} else if latency < 500 {
 		rating = "🟢 良好"
+	} else if latency >= 1000 {
+		rating = "🔴 极差"
 	}
 
 	ShowWindowsMsgBox("测速结果", fmt.Sprintf("🎯 当前节点畅通！\n\n⏱ 延迟：%d ms\n📊 状态：%s", latency, rating))
