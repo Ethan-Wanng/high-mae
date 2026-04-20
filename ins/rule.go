@@ -291,6 +291,7 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 
 	case "vmess":
 		outbound.Type = "vmess"
+
 		cipher := node.Cipher
 		if cipher == "" {
 			cipher = "auto"
@@ -299,14 +300,18 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		opts := option.VMessOutboundOptions{
 			ServerOptions: serverOpts,
 			UUID:          node.UUID,
-			AlterId:       node.AlterId,
-			Security:      cipher,
+			// 🚀 修复 1：绝对尊重配置里的 AlterId！绝不能强行写死 0
+			AlterId:  node.AlterId,
+			Security: cipher,
 		}
 
-		if node.Tls || node.TLS || node.SNI != "" {
+		// 🚀 修复 2：严格遵守 TLS 开关
+		// 这个节点 tls: false，且是纯 ws 流量，绝对不能套接 TLS
+		if node.TLS || node.Tls {
 			opts.TLS = makeTLS()
 		}
 
+		// 🚀 修复 3：完美无死角的 WebSocket 与 Host 提取
 		if node.Network == "ws" || node.Network == "websocket" {
 			path := node.WSOpts.Path
 			if path == "" {
@@ -316,26 +321,47 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 				path = "/"
 			}
 
+			// 忽略大小写，智能提取 Host 头 (防止 yaml 中的 Host/host 不匹配)
 			host := ""
-			if node.WSOpts.Headers != nil && node.WSOpts.Headers["Host"] != "" {
-				host = node.WSOpts.Headers["Host"]
-			} else if node.WSHeaders != nil && node.WSHeaders["Host"] != "" {
-				host = node.WSHeaders["Host"]
+			extractHost := func(m map[string]string) string {
+				for k, v := range m {
+					if strings.ToLower(k) == "host" {
+						return v
+					}
+				}
+				return ""
+			}
+
+			if h := extractHost(node.WSOpts.Headers); h != "" {
+				host = h
+			} else if h := extractHost(node.WSHeaders); h != "" {
+				host = h
 			} else if node.Host != "" {
 				host = node.Host
 			}
 
-			wsOpts := option.V2RayWebsocketOptions{Path: path}
-			if host != "" {
-				wsOpts.Headers = map[string]badoption.Listable[string]{"Host": {host}}
+			wsOpts := option.V2RayWebsocketOptions{
+				Path: path,
 			}
-			opts.Transport = &option.V2RayTransportOptions{Type: "ws", WebsocketOptions: wsOpts}
+			// 必须使用 option.Listable 包装，Sing-box 才能正确识别
+			if host != "" {
+				wsOpts.Headers = map[string]badoption.Listable[string]{
+					"Host": {host},
+				}
+			}
+			opts.Transport = &option.V2RayTransportOptions{
+				Type:             "ws",
+				WebsocketOptions: wsOpts,
+			}
 		} else if node.Network == "grpc" {
 			opts.Transport = &option.V2RayTransportOptions{
-				Type:        "grpc",
-				GRPCOptions: option.V2RayGRPCOptions{ServiceName: node.WSOpts.Path},
+				Type: "grpc",
+				GRPCOptions: option.V2RayGRPCOptions{
+					ServiceName: node.WSOpts.Path,
+				},
 			}
 		}
+
 		outbound.Options = &opts
 
 	case "trojan":

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type WSOpts struct {
@@ -54,6 +56,7 @@ type Node struct {
 	Flow              string            `yaml:"flow,omitempty"`
 	ServerName        string            `yaml:"servername,omitempty"` // VLESS 专用 SNI 别名
 	RealityOpts       *RealityOpts      `yaml:"reality-opts,omitempty"`
+	GrpcOpts          map[string]string `yaml:"grpc-opts,omitempty"`
 }
 
 func PreprocessYAML(data string) string {
@@ -127,27 +130,46 @@ func tryBase64Variants(s string) ([]byte, bool) {
 
 func LoadInput(input string) ([]byte, error) {
 	s := strings.TrimSpace(input)
+	s = strings.Trim(s, "“”\"'")
 
-	// 智能判断：如果是一整行链接且不含 @，则认为是订阅链接去下载
 	isSingleLine := !strings.Contains(s, "\n")
 	if (strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")) && isSingleLine && !strings.Contains(s, "@") {
-
-		req, err := http.NewRequest("GET", s, nil)
+		req, err := http.NewRequest(http.MethodGet, s, nil)
 		if err != nil {
 			return nil, err
 		}
-		// ⚠️ 伪装成正常浏览器，防止被机场防火墙拦截导致下载失败
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-		client := &http.Client{}
+		// 这里保留正常请求头，不做“伪装绕过”
+		req.Header.Set("User-Agent", "high-mae/1.0")
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+
+		client := &http.Client{
+			Timeout: 15 * time.Second,
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				ForceAttemptHTTP2:     true,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+			},
+		}
+
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("HTTP 请求失败: %w", err)
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != 200 {
-			return nil, fmt.Errorf("订阅下载失败，HTTP 状态码: %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			return nil, fmt.Errorf("订阅下载失败，HTTP 状态码: %d, 响应: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		}
 
 		b, err := io.ReadAll(resp.Body)

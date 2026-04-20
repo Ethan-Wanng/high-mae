@@ -18,9 +18,9 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 	for i, n := range nodes {
 		sb.WriteString("{\n")
 		// 注意这里沿用了你的 name 格式，包裹在双引号中防特殊字符解析错误
-		sb.WriteString(fmt.Sprintf("    name: \"%s\",\n", n.Name))
+		sb.WriteString(fmt.Sprintf("    name: '%s',\n", n.Name))
 		sb.WriteString(fmt.Sprintf("    type: %s,\n", n.Type))
-		sb.WriteString(fmt.Sprintf("    server: %s,\n", n.Server))
+		sb.WriteString(fmt.Sprintf("    server: '%s',\n", n.Server))
 
 		var inner strings.Builder
 		inner.WriteString(fmt.Sprintf("    port: %d,\n", n.Port))
@@ -160,6 +160,10 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 
 			// 兜底格式 (VMess, SS, Trojan 等)
 		} else {
+			if n.Type == "vmess" {
+				inner.WriteString("    alterId: 0,\n")
+				inner.WriteString("    udp: true,\n")
+			}
 			if n.UUID != "" {
 				inner.WriteString(fmt.Sprintf("    uuid: %s,\n", n.UUID))
 			}
@@ -169,18 +173,32 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 			if n.Password != "" {
 				inner.WriteString(fmt.Sprintf("    password: %s,\n", n.Password))
 			}
+			//cipher := n.Cipher
+			//if cipher == "" {
+			//	cipher = "auto"
+			//}
+			//inner.WriteString(fmt.Sprintf("    cipher: %s,\n", cipher))
+			//if n.SNI == "" {
+			//	inner.WriteString("    sni: '',\n")
+			//} else {
+			//	inner.WriteString(fmt.Sprintf("    sni: %s,\n", n.SNI))
+			//}
+			if n.Port == 443 || n.TLS || n.Tls {
+				inner.WriteString("    tls: true,\n")
+				inner.WriteString("    skip-cert-verify: true,\n")
+			}
+			if n.ServerName != "" {
+				inner.WriteString(fmt.Sprintf("    servername: %s,\n", n.ServerName))
+			} else if n.SNI != "" {
+				inner.WriteString(fmt.Sprintf("    servername: %s,\n", n.SNI))
+			}
+			//inner.WriteString(fmt.Sprintf("    skip-cert-verify: %t,\n", n.SkipCertVerify))
+
 			cipher := n.Cipher
 			if cipher == "" {
 				cipher = "auto"
 			}
 			inner.WriteString(fmt.Sprintf("    cipher: %s,\n", cipher))
-			if n.SNI == "" {
-				inner.WriteString("    sni: '',\n")
-			} else {
-				inner.WriteString(fmt.Sprintf("    sni: %s,\n", n.SNI))
-			}
-			inner.WriteString(fmt.Sprintf("    skip-cert-verify: %t,\n", n.SkipCertVerify))
-
 			if n.Network == "ws" || n.Network == "websocket" {
 				path := n.WSOpts.Path
 				if path == "" {
@@ -205,12 +223,16 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 				}
 			} else if n.Network == "grpc" {
 				inner.WriteString("    network: grpc,\n")
+
 				serviceName := n.WSOpts.Path
 				if serviceName == "" {
 					serviceName = n.WSPath
 				}
+
 				if serviceName != "" {
-					inner.WriteString(fmt.Sprintf("    grpc-service-name: %s,\n", serviceName))
+					inner.WriteString("    grpc-opts:\n      {\n")
+					inner.WriteString(fmt.Sprintf("          grpc-service-name: '%s'\n", serviceName))
+					inner.WriteString("      },\n")
 				}
 			}
 		}
@@ -347,7 +369,6 @@ func ParseSubscription(input string) ([]protocol.Node, error) {
 			if n, err := protocol.ParseTUIC(line); err == nil {
 				nodes = append(nodes, n)
 			}
-
 		case strings.HasPrefix(line, "vless://"):
 			if n, err := protocol.ParseVLESS(line); err == nil {
 				nodes = append(nodes, n)
@@ -360,8 +381,10 @@ func ParseSubscription(input string) ([]protocol.Node, error) {
 			if n, err := protocol.ParseHTTPLike(line); err == nil {
 				nodes = append(nodes, n)
 			}
+		default:
+			// 其他协议或格式暂不支持，直接跳过
+			fmt.Printf("⚠️ 跳过不支持的链接格式: %s\n", line)
 		}
 	}
 	return nodes, nil
-}
 }
