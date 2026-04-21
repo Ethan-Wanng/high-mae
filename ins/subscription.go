@@ -364,4 +364,3 @@ func ParseSubscription(input string) ([]protocol.Node, error) {
 	}
 	return nodes, nil
 }
-}
