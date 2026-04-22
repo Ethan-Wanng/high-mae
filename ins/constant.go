@@ -3,12 +3,12 @@ package ins
 import (
 	"context"
 	"github.com/getlantern/systray"
-	"github.com/sagerne
 	"high-mae/protocol"
-"
-	"high-m
-	"os/exec"
+	"net"
+	"sync"
+
 	"github.com/sagernet/sing/common/metadata"
+	"os/exec"
 )
 
 type GenericClient interface {
@@ -32,7 +32,6 @@ var (
 	MNodeMenu         *systray.MenuItem   // 托盘上的节点菜单父级
 	NodeMenuItems     []*systray.MenuItem // 保存所有的节点子菜单项，用于动态刷新
 	MSupplierMenu     *systray.MenuItem   // 托盘上的供应商菜单父级
-	MSupplierMenu *systray.MenuItem   // 托盘上的供应商菜单父级
 	SupplierMenuItems []*systray.MenuItem // 供应商子菜单项
 )
 
