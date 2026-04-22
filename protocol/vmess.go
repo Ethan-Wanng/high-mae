@@ -40,6 +40,7 @@ func ParseVMess(link string) (Node, error) {
 	path := getString(v, "path")
 	host := getString(v, "host")
 	sni := getString(v, "sni")
+	grpcServiceName := getString(v, "grpc-service-name")
 
 	isTls := false
 	if tlsStr := getString(v, "tls"); tlsStr == "tls" {
@@ -61,6 +62,13 @@ func ParseVMess(link string) (Node, error) {
 		wsHeaders = headers
 	}
 
+	var grpcOpts map[string]string
+	if network == "grpc" {
+		grpcOpts = map[string]string{
+			"grpc-service-name": grpcServiceName,
+		}
+	}
+
 	return Node{
 		Type:      "vmess",
 		Name:      name,
@@ -76,5 +84,6 @@ func ParseVMess(link string) (Node, error) {
 		WSPath:    path,
 		WSHeaders: wsHeaders,
 		WSOpts:    wsOpts,
+		GrpcOpts:  grpcOpts,
 	}, nil
 }

@@ -2,12 +2,13 @@ package ins
 
 import (
 	"context"
-	"net"
 	"github.com/getlantern/systray"
 	"high-mae/protocol"
-	"os/exec"
+	"net"
 	"sync"
+
 	"github.com/sagernet/sing/common/metadata"
+	"os/exec"
 )
 
 type GenericClient interface {
@@ -25,12 +26,13 @@ var (
 	globalNodeServer string
 	GlobalNodeIP     string
 
-	// ---- 节点管理核心变量 ----
-	clientMu      sync.RWMutex
-	activeClient  GenericClient // 当前正在工作的代理客户端引擎
-	AllNodes      []protocol.Node     // 保存所有已加载的节点
-	MNodeMenu     *systray.MenuItem   // 托盘上的节点菜单父级
-	NodeMenuItems []*systray.MenuItem // 保存所有的节点子菜单项，用于动态刷新
+	clientMu          sync.RWMutex
+	activeClient      GenericClient       // 当前正在工作的代理客户端引擎
+	AllNodes          []protocol.Node     // 保存所有已加载的节点
+	MNodeMenu         *systray.MenuItem   // 托盘上的节点菜单父级
+	NodeMenuItems     []*systray.MenuItem // 保存所有的节点子菜单项，用于动态刷新
+	MSupplierMenu     *systray.MenuItem   // 托盘上的供应商菜单父级
+	SupplierMenuItems []*systray.MenuItem // 供应商子菜单项
 )
 
 func GetActiveClient() GenericClient {

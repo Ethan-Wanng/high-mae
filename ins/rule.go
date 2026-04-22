@@ -3,6 +3,7 @@ package ins
 import (
 	"context"
 	"fmt"
+	anytls_util "github.com/anytls/sing-anytls/util"
 	"github.com/sagernet/sing/common/json/badoption"
 	"log"
 	"net"
@@ -20,6 +21,8 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/metadata"
 )
+
+var cancelAnyTLS context.CancelFunc
 
 func ShouldDirect(hostPort string) bool {
 	if ProxyMode == "Global" {
@@ -78,11 +81,8 @@ func SwitchNode(node protocol.Node) {
 	clientMu.Lock()
 	defer clientMu.Unlock()
 
-	ips, err := net.LookupHost(node.Server)
-	newIP := ""
-	if err == nil && len(ips) > 0 {
-		newIP = ips[0]
-	}
+	// 🚀 修复 1：使用智能解析函数，防止给原本就是 IP 的地址做二次 DNS 污染解析
+	newIP := resolveDirect(node.Server)
 
 	if IsTunModeOn {
 		realGateway := GetDefaultGateway()
@@ -97,7 +97,19 @@ func SwitchNode(node protocol.Node) {
 	globalNodeServer = node.Server
 	GlobalNodeIP = newIP
 
-	// 专门处理 AnyTLS 节点 (保持原有高效客户端逻辑)
+	// 🚀 修复 2：彻底清理上一个节点的残留资源（无论是 Sing-box 还是 AnyTLS）
+	if currentBox != nil {
+		currentBox.Close()
+		currentBox = nil
+	}
+	if cancelAnyTLS != nil {
+		cancelAnyTLS() // 瞬间杀死上一个 AnyTLS 的后台协程
+		cancelAnyTLS = nil
+	}
+
+	// ==========================================
+	// 专门处理 AnyTLS 节点
+	// ==========================================
 	if node.Type == "anytls" {
 		dialer := &net.Dialer{Timeout: 10 * time.Second}
 		dialOut := func(ctx context.Context) (net.Conn, error) {
@@ -116,7 +128,6 @@ func SwitchNode(node protocol.Node) {
 			if sni == "" {
 				sni = node.Server
 			}
-			// 确保 node.SkipCertVerify 被正确传递
 			tlsConfig := &utls.Config{ServerName: sni, InsecureSkipVerify: node.SkipCertVerify}
 			tlsConn := utls.UClient(conn, tlsConfig, utls.HelloFirefox_Auto)
 			if err := tlsConn.HandshakeContext(ctx); err != nil {
@@ -126,34 +137,34 @@ func SwitchNode(node protocol.Node) {
 			return tlsConn, nil
 		}
 
-		newClient, err := sing_anytls.NewClient(context.Background(), sing_anytls.ClientConfig{
+		// 🚀 修复 3：加入 Context 控制，绑定到全局变量，方便下次切换时精准回收
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelAnyTLS = cancel
+
+		newClient, err := sing_anytls.NewClient(ctx, sing_anytls.ClientConfig{
 			Password:       node.Password,
 			MinIdleSession: 1,
-			DialOut:        dialOut,
+			DialOut:        anytls_util.DialOutFunc(dialOut), // 🚀 修复 4：必须强转，否则编译报错
+			Logger:         dummyLogger{},                    // 🚀 修复 5：塞入哑巴日志器，防止切节点时闪退！
 		})
 		if err != nil {
 			log.Printf("AnyTLS Client 创建失败: %v", err)
+			cancel() // 失败了也要清理
 			return
 		}
 
-		if currentBox != nil {
-			currentBox.Close()
-			currentBox = nil
-		}
 		activeClient = newClient
 		return
 	}
 
+	// ==========================================
 	// === 多协议支持：利用 sing-box 构建通用客户端 ===
+	// ==========================================
 	log.Printf("初始化通用代理引擎 [%s] 节点: %s", node.Type, node.Name)
 	opts, err := buildSingBoxOptions(node, newIP)
 	if err != nil {
 		log.Printf("构建 Sing-Box 配置失败: %v", err)
 		return
-	}
-
-	if currentBox != nil {
-		currentBox.Close()
 	}
 
 	b, err := box.New(box.Options{
@@ -291,6 +302,7 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 
 	case "vmess":
 		outbound.Type = "vmess"
+
 		cipher := node.Cipher
 		if cipher == "" {
 			cipher = "auto"
@@ -299,14 +311,18 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		opts := option.VMessOutboundOptions{
 			ServerOptions: serverOpts,
 			UUID:          node.UUID,
-			AlterId:       node.AlterId,
-			Security:      cipher,
+			// 🚀 修复 1：绝对尊重配置里的 AlterId！绝不能强行写死 0
+			AlterId:  node.AlterId,
+			Security: cipher,
 		}
 
-		if node.Tls || node.TLS || node.SNI != "" {
+		// 🚀 修复 2：严格遵守 TLS 开关
+		// 这个节点 tls: false，且是纯 ws 流量，绝对不能套接 TLS
+		if node.TLS || node.Tls {
 			opts.TLS = makeTLS()
 		}
 
+		// 🚀 修复 3：完美无死角的 WebSocket 与 Host 提取
 		if node.Network == "ws" || node.Network == "websocket" {
 			path := node.WSOpts.Path
 			if path == "" {
@@ -316,26 +332,47 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 				path = "/"
 			}
 
+			// 忽略大小写，智能提取 Host 头 (防止 yaml 中的 Host/host 不匹配)
 			host := ""
-			if node.WSOpts.Headers != nil && node.WSOpts.Headers["Host"] != "" {
-				host = node.WSOpts.Headers["Host"]
-			} else if node.WSHeaders != nil && node.WSHeaders["Host"] != "" {
-				host = node.WSHeaders["Host"]
+			extractHost := func(m map[string]string) string {
+				for k, v := range m {
+					if strings.ToLower(k) == "host" {
+						return v
+					}
+				}
+				return ""
+			}
+
+			if h := extractHost(node.WSOpts.Headers); h != "" {
+				host = h
+			} else if h := extractHost(node.WSHeaders); h != "" {
+				host = h
 			} else if node.Host != "" {
 				host = node.Host
 			}
 
-			wsOpts := option.V2RayWebsocketOptions{Path: path}
-			if host != "" {
-				wsOpts.Headers = map[string]badoption.Listable[string]{"Host": {host}}
+			wsOpts := option.V2RayWebsocketOptions{
+				Path: path,
 			}
-			opts.Transport = &option.V2RayTransportOptions{Type: "ws", WebsocketOptions: wsOpts}
+			// 必须使用 option.Listable 包装，Sing-box 才能正确识别
+			if host != "" {
+				wsOpts.Headers = map[string]badoption.Listable[string]{
+					"Host": {host},
+				}
+			}
+			opts.Transport = &option.V2RayTransportOptions{
+				Type:             "ws",
+				WebsocketOptions: wsOpts,
+			}
 		} else if node.Network == "grpc" {
 			opts.Transport = &option.V2RayTransportOptions{
-				Type:        "grpc",
-				GRPCOptions: option.V2RayGRPCOptions{ServiceName: node.WSOpts.Path},
+				Type: "grpc",
+				GRPCOptions: option.V2RayGRPCOptions{
+					ServiceName: node.WSOpts.Path,
+				},
 			}
 		}
+
 		outbound.Options = &opts
 
 	case "trojan":
@@ -369,6 +406,17 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 				tlsOpt.ALPN = []string{"h2", "http/1.1"}
 			}
 			opts.TLS = tlsOpt
+		}
+		outbound.Options = &opts
+
+	case "socks", "socks5":
+		outbound.Type = "socks"
+		opts := option.SOCKSOutboundOptions{
+			ServerOptions: serverOpts,
+		}
+		if node.Username != "" || node.Password != "" {
+			opts.Username = node.Username
+			opts.Password = node.Password
 		}
 		outbound.Options = &opts
 

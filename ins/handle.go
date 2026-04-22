@@ -70,9 +70,9 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if req.URL.RawQuery != "" {
 			path += "?" + req.URL.RawQuery
 		}
-		fmt.Fprintf(clientConn, "%s %s HTTP/1.1\r\n", req.Method, path)
-		req.Header.Write(clientConn)
-		fmt.Fprintf(clientConn, "\r\n")
+		fmt.Fprintf(upstream, "%s %s HTTP/1.1\r\n", req.Method, path)
+		req.Header.Write(upstream)
+		fmt.Fprintf(upstream, "\r\n")
 	}
 	go io.Copy(upstream, bufrw)
 	io.Copy(clientConn, upstream)
