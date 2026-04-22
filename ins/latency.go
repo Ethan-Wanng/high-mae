@@ -181,6 +181,36 @@ func CheckProxyLatency(proxyURL string, targetURL string, timeout time.Duration)
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("节点可能被拦截，异常状态码: %d", resp.StatusCode)
 	}
+	return time.Since(start).Milliseconds(), nil
+}
+
+func TestNodeLatency(node protocol.Node) (int64, error) {
+	client, cleanup, err := CreateTempHTTPClient(node)
+	if err != nil {
+		return 0, err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	targetURL := "https://cp.cloudflare.com/generate_204"
+	req, err := http.NewRequest("GET", targetURL, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("bad status: %d", resp.StatusCode)
+	}
 
 	return time.Since(start).Milliseconds(), nil
 }

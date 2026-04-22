@@ -409,6 +409,17 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		}
 		outbound.Options = &opts
 
+	case "socks", "socks5":
+		outbound.Type = "socks"
+		opts := option.SOCKSOutboundOptions{
+			ServerOptions: serverOpts,
+		}
+		if node.Username != "" || node.Password != "" {
+			opts.Username = node.Username
+			opts.Password = node.Password
+		}
+		outbound.Options = &opts
+
 	default:
 		return option.Options{}, fmt.Errorf("不支持的 sing-box 节点类型: %s", node.Type)
 	}

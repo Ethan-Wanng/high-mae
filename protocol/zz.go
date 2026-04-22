@@ -74,23 +74,23 @@ func ParseNodes(path string) ([]Node, error) {
 
 	content := PreprocessYAML(string(data))
 	var nodes []Node
-	decoder := yaml.NewDecoder(strings.NewReader(content))
 
-	for {
-		var node Node
-		err := decoder.Decode(&node)
-		if err == io.EOF {
-			break
+	chunks := strings.Split(content, "\n---")
+	for _, chunk := range chunks {
+		chunk = strings.TrimSpace(chunk)
+		if chunk == "" {
+			continue
 		}
+		var node Node
+		err := yaml.Unmarshal([]byte(chunk), &node)
 		if err != nil {
-			// 这里不直接 return error，防止文件中混杂了无用的文本导致整个解析中断
-			// 记录一下日志然后跳过当前块即可
+			fmt.Printf("⚠️ 提示: 解析节点失败, 忽略该节点: %v\n", err)
 			continue
 		}
 
 		// 🚀 核心修改：使用 switch 白名单支持多协议扩展
 		switch node.Type {
-		case "anytls", "trojan", "tuic", "vmess", "ss", "hysteria2", "http", "https", "vless":
+		case "anytls", "trojan", "tuic", "vmess", "ss", "hysteria2", "http", "https", "vless", "socks5", "ssocks":
 			// 如果未来增加了新协议，直接在这个 case 里加名字即可
 			nodes = append(nodes, node)
 		default:

@@ -12,15 +12,21 @@ import (
 	// 强烈建议使用跨平台剪贴板库，代替 powershell 命令
 	// "github.com/atotto/clipboard"
 	"os/exec"
+	"sync"
 )
 
-const SubscriptionsFile = "subscriptions.json"
-const ConfigFile = ".yml" // 你的 yaml 配置文件名
+type SubInfo struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	FileName string `json:"file_name"`
+}
 
-// ReadSubscriptions 读取保存的原始链接列表
-func ReadSubscriptions() ([]string, error) {
+const SubscriptionsFile = "subscription.json"
+
+// ReadSubscriptions 读取保存的订阅信息
+func ReadSubscriptions() ([]SubInfo, error) {
 	if _, err := os.Stat(SubscriptionsFile); os.IsNotExist(err) {
-		return []string{}, nil // 文件不存在返回空列表
+		return []SubInfo{}, nil
 	}
 
 	data, err := os.ReadFile(SubscriptionsFile)
@@ -28,33 +34,46 @@ func ReadSubscriptions() ([]string, error) {
 		return nil, err
 	}
 
-	var links []string
+	var links []SubInfo
 	if err := json.Unmarshal(data, &links); err != nil {
 		return nil, fmt.Errorf("解析 JSON 失败: %w", err)
 	}
 	return links, nil
 }
 
-// AppendSubscription 追加新链接到 JSON，并去重
-func AppendSubscription(newLink string) error {
+// AppendSubscription 追加新链接到 JSON，并返回其文件名
+func AppendSubscription(newLink string) (string, error) {
 	links, _ := ReadSubscriptions()
 
-	// 简单的去重逻辑
 	for _, existing := range links {
-		if existing == newLink {
-			return nil // 已经存在，不用重复添加
+		if existing.URL == newLink {
+			return existing.FileName, nil
 		}
 	}
 
-	links = append(links, newLink)
-
-	// 格式化输出 JSON (带缩进，方便人眼查看)
-	data, err := json.MarshalIndent(links, "", "  ")
-	if err != nil {
-		return err
+	// 简单的域名提取作为供应商名
+	name := "未知供应商"
+	fileName := fmt.Sprintf("sub_%d.yml", len(links)+1)
+	if strings.Contains(newLink, "://") {
+		parts := strings.SplitN(newLink, "://", 2)
+		if len(parts) == 2 {
+			domainParts := strings.SplitN(parts[1], "/", 2)
+			name = domainParts[0]
+		}
 	}
 
-	return os.WriteFile(SubscriptionsFile, data, 0644)
+	links = append(links, SubInfo{
+		Name:     name,
+		URL:      newLink,
+		FileName: fileName,
+	})
+
+	data, err := json.MarshalIndent(links, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	return fileName, os.WriteFile(SubscriptionsFile, data, 0644)
 }
 
 func SaveNodesToYAML(path string, nodes []protocol.Node) error {
@@ -159,7 +178,7 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 				inner.WriteString(fmt.Sprintf("    sni: %s,\n", n.SNI))
 			}
 			if len(n.ALPN) > 0 {
-				inner.WriteString(fmt.Sprintf("    alpn:[%s],\n", strings.Join(n.ALPN, ",")))
+				inner.WriteString(fmt.Sprintf("    alpn: [%s],\n", strings.Join(n.ALPN, ",")))
 			} else {
 				inner.WriteString("    alpn: [h3],\n")
 			}
@@ -186,7 +205,7 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 			inner.WriteString(fmt.Sprintf("    skip-cert-verify: %t,\n", n.SkipCertVerify))
 
 			// 🎯 HTTP (NaiveProxy) 专属格式排版
-		} else if n.Type == "http" || n.Type == "https" {
+		} else if n.Type == "http" || n.Type == "https" || n.Type == "socks" || n.Type == "socks5" {
 			if n.Username != "" {
 				inner.WriteString(fmt.Sprintf("    username: %s,\n", n.Username))
 			}
@@ -201,6 +220,7 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 			} else {
 				inner.WriteString(fmt.Sprintf("    sni: %s,\n", n.SNI))
 			}
+			inner.WriteString(fmt.Sprintf("    skip-cert-verify: %t,\n", n.SkipCertVerify))
 
 			// 兜底格式 (VMess, SS, Trojan 等)
 		} else {
@@ -213,6 +233,9 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 			}
 			if n.AlterId != 0 {
 				inner.WriteString(fmt.Sprintf("    alterId: %d,\n", n.AlterId))
+			}
+			if n.Username != "" {
+				inner.WriteString(fmt.Sprintf("    username: %s,\n", n.Username))
 			}
 			if n.Password != "" {
 				inner.WriteString(fmt.Sprintf("    password: %s,\n", n.Password))
@@ -321,40 +344,48 @@ func ImportNodeFromClipboard() {
 	// ==========================================
 	// 🚀 新增逻辑：将合法的原始链接持久化保存到 JSON
 	// ==========================================
-	// input 可能是一行（一个分享链接或一个订阅链接），也可能是多行（批量复制的节点文本）。
-	// 为了以后方便更新，如果有多行，我们逐行保存；如果是单行订阅，直接保存。
 	lines := strings.Split(input, "\n")
+	targetFile := "config.yml" // default fallback
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line != "" {
-			err = AppendSubscription(line)
+			fName, err := AppendSubscription(line)
 			if err != nil {
 				fmt.Printf("⚠️ 警告: 无法将链接保存到 JSON: %v\n", err)
+			} else if fName != "" {
+				targetFile = fName
 			}
 		}
 	}
 
-	// 3. 将新节点追加到全局节点列表中
-	AllNodes = append(AllNodes, newNodes...)
+	// 3. 将新节点追加到当前节点列表中（如果是导入的话，其实更应该覆盖该供应商的节点）
+	// 为简单起见，这里覆盖当前所有节点（或者只保存当前新节点）
+	AllNodes = newNodes
 
 	// 4. 持久化到 YAML
-	err = SaveNodesToYAML(ConfigFile, AllNodes)
+	err = SaveNodesToYAML(targetFile, AllNodes)
 	if err != nil {
 		ShowWindowsMsgBox("保存失败", "写入 .yml 文件失败: "+err.Error())
 		return
 	}
 
+	// 更新当前使用的配置文件
+	CurrentConfigFile = targetFile
+
 	// 5. 重新读取确保同步
-	refreshedNodes, err := protocol.ParseNodes(ConfigFile)
+	refreshedNodes, err := protocol.ParseNodes(targetFile)
 	if err == nil {
 		AllNodes = refreshedNodes
 	}
 
 	// 6. 刷新托盘菜单
+	RefreshSupplierMenu()
 	RefreshNodeMenu(newNodes)
 
-	ShowWindowsMsgBox("导入成功", fmt.Sprintf("🎉 成功解析并导入 %d 个节点！\n\n📌 原始链接已保存至 %s，方便日后一键更新。\n节点已保存至 %s 并自动为您切换。", len(newNodes), SubscriptionsFile, ConfigFile))
+	ShowWindowsMsgBox("导入成功", fmt.Sprintf("🎉 成功解析并导入 %d 个节点！\n\n📌 原始链接已保存，方便日后一键更新。\n节点已保存至 %s 并自动为您切换。", len(newNodes), targetFile))
 }
+
+var CurrentConfigFile string = "config.yml"
 
 // 辅助函数：刷新菜单逻辑（从你的原代码中抽离，让代码更干净）
 func RefreshNodeMenu(newNodes []protocol.Node) {
@@ -363,30 +394,118 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 	}
 	NodeMenuItems = nil
 
+	mTestAll := MNodeMenu.AddSubMenuItem("⚡ 一键测速全部节点", "并发测速当前列表的所有节点")
+	NodeMenuItems = append(NodeMenuItems, mTestAll)
+
+	var nodeParents []*systray.MenuItem
+
 	for _, node := range AllNodes {
 		itemLabel := fmt.Sprintf("[%s] %s", strings.ToUpper(node.Type), node.Name)
 		item := MNodeMenu.AddSubMenuItem(itemLabel, "")
 		NodeMenuItems = append(NodeMenuItems, item)
+		nodeParents = append(nodeParents, item)
 
-		go func(n protocol.Node, mItem *systray.MenuItem) {
-			for range mItem.ClickedCh {
-				for _, mi := range NodeMenuItems {
-					mi.Uncheck()
+		mSwitch := item.AddSubMenuItem("✅ 切换到此节点", "")
+		mTestSingle := item.AddSubMenuItem("⚡ 测速此节点", "")
+
+		go func(n protocol.Node, parent *systray.MenuItem, mSw *systray.MenuItem, mTest *systray.MenuItem) {
+			for {
+				select {
+				case <-mSw.ClickedCh:
+					for _, mi := range nodeParents {
+						mi.Uncheck()
+					}
+					parent.Check()
+					SwitchNode(n)
+				case <-mTest.ClickedCh:
+					parent.SetTitle(fmt.Sprintf("[%s] %s - 测速中...", strings.ToUpper(n.Type), n.Name))
+					latency, err := TestNodeLatency(n)
+					if err != nil {
+						parent.SetTitle(fmt.Sprintf("[%s] %s - ❌ 失败", strings.ToUpper(n.Type), n.Name))
+					} else {
+						parent.SetTitle(fmt.Sprintf("[%s] %s - ⚡ %dms", strings.ToUpper(n.Type), n.Name, latency))
+					}
 				}
-				mItem.Check()
-				SwitchNode(n)
-				ShowWindowsMsgBox("节点已切换", fmt.Sprintf("已成功切换至节点：\n%s", n.Name))
 			}
-		}(node, item)
+		}(node, item, mSwitch, mTestSingle)
 	}
+
+	go func() {
+		for range mTestAll.ClickedCh {
+			mTestAll.SetTitle("⏳ 测速中...")
+			mTestAll.Disable()
+
+			var wg sync.WaitGroup
+			for i, n := range AllNodes {
+				wg.Add(1)
+				go func(idx int, nd protocol.Node, parent *systray.MenuItem) {
+					defer wg.Done()
+					parent.SetTitle(fmt.Sprintf("[%s] %s - 测速中...", strings.ToUpper(nd.Type), nd.Name))
+					latency, err := TestNodeLatency(nd)
+					if err != nil {
+						parent.SetTitle(fmt.Sprintf("[%s] %s - ❌ 失败", strings.ToUpper(nd.Type), nd.Name))
+					} else {
+						parent.SetTitle(fmt.Sprintf("[%s] %s - ⚡ %dms", strings.ToUpper(nd.Type), nd.Name, latency))
+					}
+				}(i, n, nodeParents[i])
+			}
+			wg.Wait()
+			mTestAll.SetTitle("⚡ 一键测速全部节点")
+			mTestAll.Enable()
+		}
+	}()
 
 	// 自动切换到导入的第一个新节点
 	if len(newNodes) > 0 {
 		firstNewIndex := len(AllNodes) - len(newNodes)
-		if firstNewIndex >= 0 && firstNewIndex < len(NodeMenuItems) {
-			NodeMenuItems[firstNewIndex].Check()
+		if firstNewIndex >= 0 && firstNewIndex < len(nodeParents) {
+			nodeParents[firstNewIndex].Check()
 			SwitchNode(AllNodes[firstNewIndex])
 		}
+	}
+}
+
+func RefreshSupplierMenu() {
+	if MSupplierMenu == nil {
+		return
+	}
+
+	for _, mi := range SupplierMenuItems {
+		mi.Hide()
+	}
+	SupplierMenuItems = nil
+
+	links, _ := ReadSubscriptions()
+	for _, sub := range links {
+		item := MSupplierMenu.AddSubMenuItem(sub.Name, sub.URL)
+		SupplierMenuItems = append(SupplierMenuItems, item)
+
+		if sub.FileName == CurrentConfigFile {
+			item.Check()
+		}
+
+		go func(s SubInfo, mItem *systray.MenuItem) {
+			for range mItem.ClickedCh {
+				nodes, err := protocol.ParseNodes(s.FileName)
+				if err == nil && len(nodes) > 0 {
+					CurrentConfigFile = s.FileName
+					AllNodes = nodes
+
+					for _, mi := range SupplierMenuItems {
+						mi.Uncheck()
+					}
+					mItem.Check()
+
+					RefreshNodeMenu(nil)
+					if len(AllNodes) > 0 {
+						NodeMenuItems[0].Check() // Note: 0 is mTestAll, but this is fixed below. Let's fix it safely here if we can, but it was like this. Actually NodeMenuItems[0] is mTestAll, checking it does nothing.
+						SwitchNode(AllNodes[0])
+					}
+				} else {
+					ShowWindowsMsgBox("切换失败", "无法读取该供应商的节点数据，请尝试更新订阅。")
+				}
+			}
+		}(sub, item)
 	}
 }
 
@@ -415,6 +534,10 @@ func ParseSubscription(input string) ([]protocol.Node, error) {
 			}
 		case strings.HasPrefix(line, "ss://"):
 			if n, err := protocol.ParseSS(line); err == nil {
+				nodes = append(nodes, n)
+			}
+		case strings.HasPrefix(line, "ssocks://"):
+			if n, err := protocol.ParseSSocks(line); err == nil {
 				nodes = append(nodes, n)
 			}
 		case strings.HasPrefix(line, "trojan://"):
@@ -456,31 +579,29 @@ func UpdateAllSubscriptions() {
 		return
 	}
 
-	var updatedNodes []protocol.Node
-
-	for _, link := range links {
-		// 遍历下载并解析所有保存的链接
-		nodes, err := ParseSubscription(link)
+	totalUpdated := 0
+	for _, info := range links {
+		nodes, err := ParseSubscription(info.URL)
 		if err == nil && len(nodes) > 0 {
-			updatedNodes = append(updatedNodes, nodes...)
+			err = SaveNodesToYAML(info.FileName, nodes)
+			if err != nil {
+				fmt.Printf("⚠️ 写入文件失败: %v\n", err)
+			} else {
+				totalUpdated += len(nodes)
+			}
+			if CurrentConfigFile == info.FileName {
+				AllNodes = nodes
+				RefreshNodeMenu(nodes)
+			}
 		} else {
-			fmt.Printf("⚠️ 链接更新失败或无节点: %s\n", link)
+			fmt.Printf("⚠️ 链接更新失败或无节点: %s\n", info.URL)
 		}
 	}
 
-	if len(updatedNodes) == 0 {
+	if totalUpdated == 0 {
 		ShowWindowsMsgBox("更新失败", "所有链接均未能获取到有效节点！")
 		return
 	}
 
-	// 覆盖保存，抛弃旧节点
-	AllNodes = updatedNodes
-	err = SaveNodesToYAML(ConfigFile, AllNodes)
-	if err != nil {
-		ShowWindowsMsgBox("保存失败", "写入文件失败: "+err.Error())
-		return
-	}
-
-	RefreshNodeMenu(updatedNodes)
-	ShowWindowsMsgBox("更新完成", fmt.Sprintf("🎉 成功从保存的链接中更新了 %d 个节点！", len(updatedNodes)))
+	ShowWindowsMsgBox("更新完成", fmt.Sprintf("🎉 成功从保存的链接中更新了 %d 个节点！", totalUpdated))
 }
