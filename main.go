@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"high-mae/ins"
 	"high-mae/protocol"
+	"os"
 	"os/exec"
 
 	"github.com/getlantern/systray"
@@ -28,6 +29,11 @@ func onReady() {
 	systray.SetIcon(iconBytes)
 	systray.SetTitle("High Mae")
 	systray.SetTooltip("High Mae")
+
+	// 顶部显示当前节点
+	ins.MCurrentNode = systray.AddMenuItem("📍 当前节点: [未选择]", "")
+	ins.MCurrentNode.Disable()
+	systray.AddSeparator()
 
 	// 动态加载节点功能区
 	ins.MNodeMenu = systray.AddMenuItem("🌐 选择节点", "自由切换配置文件中或导入的节点")
@@ -122,8 +128,8 @@ func onExit() {
 			ins.TunCmd.Process.Kill()
 		}
 	}
-	//os.Remove("tun2socks.exe")
-	//os.Remove("wintun.dll")
+	os.Remove("tun2socks.exe")
+	os.Remove("wintun.dll")
 	//os.Remove(importTempFile)
 
 }

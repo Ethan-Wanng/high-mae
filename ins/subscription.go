@@ -41,13 +41,13 @@ func ReadSubscriptions() ([]SubInfo, error) {
 	return links, nil
 }
 
-// AppendSubscription 追加新链接到 JSON，并返回其文件名
-func AppendSubscription(newLink string) (string, error) {
+// AppendSubscription 追加新链接到 JSON，并返回其文件名以及是否已存在
+func AppendSubscription(newLink string) (string, bool, error) {
 	links, _ := ReadSubscriptions()
 
 	for _, existing := range links {
 		if existing.URL == newLink {
-			return existing.FileName, nil
+			return existing.FileName, true, nil
 		}
 	}
 
@@ -70,10 +70,10 @@ func AppendSubscription(newLink string) (string, error) {
 
 	data, err := json.MarshalIndent(links, "", "  ")
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
-	return fileName, os.WriteFile(SubscriptionsFile, data, 0644)
+	return fileName, false, os.WriteFile(SubscriptionsFile, data, 0644)
 }
 
 func SaveNodesToYAML(path string, nodes []protocol.Node) error {
@@ -346,14 +346,16 @@ func ImportNodeFromClipboard() {
 	// ==========================================
 	lines := strings.Split(input, "\n")
 	targetFile := "config.yml" // default fallback
+	isOldLink := false
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line != "" {
-			fName, err := AppendSubscription(line)
+			fName, existed, err := AppendSubscription(line)
 			if err != nil {
 				fmt.Printf("⚠️ 警告: 无法将链接保存到 JSON: %v\n", err)
 			} else if fName != "" {
 				targetFile = fName
+				isOldLink = existed
 			}
 		}
 	}
@@ -380,9 +382,13 @@ func ImportNodeFromClipboard() {
 
 	// 6. 刷新托盘菜单
 	RefreshSupplierMenu()
-	RefreshNodeMenu(newNodes)
-
-	ShowWindowsMsgBox("导入成功", fmt.Sprintf("🎉 成功解析并导入 %d 个节点！\n\n📌 原始链接已保存，方便日后一键更新。\n节点已保存至 %s 并自动为您切换。", len(newNodes), targetFile))
+	if isOldLink {
+		RefreshNodeMenu(nil)
+		ShowWindowsMsgBox("覆盖成功", fmt.Sprintf("🎉 成功更新/覆盖了已存在的订阅！\n共 %d 个节点。\n节点已保存至 %s", len(newNodes), targetFile))
+	} else {
+		RefreshNodeMenu(newNodes)
+		ShowWindowsMsgBox("导入成功", fmt.Sprintf("🎉 成功解析并导入 %d 个新节点！\n\n📌 原始链接已保存，方便日后一键更新。\n节点已保存至 %s 并自动为您切换。", len(newNodes), targetFile))
+	}
 }
 
 var CurrentConfigFile string = "config.yml"
@@ -484,29 +490,83 @@ func RefreshSupplierMenu() {
 			item.Check()
 		}
 
-		go func(s SubInfo, mItem *systray.MenuItem) {
-			for range mItem.ClickedCh {
-				nodes, err := protocol.ParseNodes(s.FileName)
-				if err == nil && len(nodes) > 0 {
-					CurrentConfigFile = s.FileName
-					AllNodes = nodes
+		mSwitch := item.AddSubMenuItem("✅ 切换至此供应商", "")
+		mUpdate := item.AddSubMenuItem("🔄 更新此订阅", "")
+		mDelete := item.AddSubMenuItem("🗑 删除此供应商", "")
 
-					for _, mi := range SupplierMenuItems {
-						mi.Uncheck()
-					}
-					mItem.Check()
+		go func(s SubInfo, parent *systray.MenuItem, mSw *systray.MenuItem, mUp *systray.MenuItem, mDel *systray.MenuItem) {
+			for {
+				select {
+				case <-mSw.ClickedCh:
+					nodes, err := protocol.ParseNodes(s.FileName)
+					if err == nil && len(nodes) > 0 {
+						CurrentConfigFile = s.FileName
+						AllNodes = nodes
 
-					RefreshNodeMenu(nil)
-					if len(AllNodes) > 0 {
-						NodeMenuItems[0].Check() // Note: 0 is mTestAll, but this is fixed below. Let's fix it safely here if we can, but it was like this. Actually NodeMenuItems[0] is mTestAll, checking it does nothing.
-						SwitchNode(AllNodes[0])
+						for _, mi := range SupplierMenuItems {
+							mi.Uncheck()
+						}
+						parent.Check()
+
+						RefreshNodeMenu(nil)
+						if len(AllNodes) > 0 {
+							SwitchNode(AllNodes[0])
+						}
+					} else {
+						ShowWindowsMsgBox("切换失败", "无法读取该供应商的节点数据，请尝试更新订阅。")
 					}
-				} else {
-					ShowWindowsMsgBox("切换失败", "无法读取该供应商的节点数据，请尝试更新订阅。")
+				case <-mUp.ClickedCh:
+					parent.SetTitle(s.Name + " (🔄 更新中...)")
+					nodes, err := ParseSubscription(s.URL)
+					if err == nil && len(nodes) > 0 {
+						err = SaveNodesToYAML(s.FileName, nodes)
+						if err == nil {
+							if CurrentConfigFile == s.FileName {
+								AllNodes = nodes
+								RefreshNodeMenu(nil) // just refresh, no auto-switch
+							}
+							parent.SetTitle(s.Name)
+							ShowWindowsMsgBox("更新成功", fmt.Sprintf("🎉 成功更新了供应商 %s！\n共获取 %d 个节点。", s.Name, len(nodes)))
+						} else {
+							parent.SetTitle(s.Name + " (❌ 保存失败)")
+							ShowWindowsMsgBox("更新失败", "无法保存节点数据。")
+						}
+					} else {
+						parent.SetTitle(s.Name + " (❌ 失败)")
+						ShowWindowsMsgBox("更新失败", "无法从该链接获取有效节点。")
+					}
+				case <-mDel.ClickedCh:
+					DeleteSubscription(s.URL)
+					parent.Hide()
+					if CurrentConfigFile == s.FileName {
+						// 如果删除的是当前正在使用的，则清空当前状态
+						AllNodes = nil
+						CurrentConfigFile = ""
+						if MCurrentNode != nil {
+							MCurrentNode.SetTitle("📍 当前节点: [未选择]")
+						}
+						RefreshNodeMenu(nil)
+					}
 				}
 			}
-		}(sub, item)
+		}(sub, item, mSwitch, mUpdate, mDelete)
 	}
+}
+
+// DeleteSubscription 从配置文件中删除给定的订阅链接
+func DeleteSubscription(url string) {
+	links, _ := ReadSubscriptions()
+	var newLinks []SubInfo
+	for _, l := range links {
+		if l.URL != url {
+			newLinks = append(newLinks, l)
+		} else {
+			// 删除对应的本地 yaml 文件
+			os.Remove(l.FileName)
+		}
+	}
+	data, _ := json.MarshalIndent(newLinks, "", "  ")
+	os.WriteFile(SubscriptionsFile, data, 0644)
 }
 
 func ParseSubscription(input string) ([]protocol.Node, error) {

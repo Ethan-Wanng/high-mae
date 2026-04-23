@@ -78,6 +78,10 @@ func (s *SingBoxAdapter) CreateProxy(ctx context.Context, dest metadata.Socksadd
 var currentBox *box.Box
 
 func SwitchNode(node protocol.Node) {
+	if MCurrentNode != nil {
+		MCurrentNode.SetTitle(fmt.Sprintf("📍 当前节点: [%s] %s", strings.ToUpper(node.Type), node.Name))
+	}
+
 	clientMu.Lock()
 	defer clientMu.Unlock()
 
