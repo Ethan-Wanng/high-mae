@@ -86,7 +86,9 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 		sb.WriteString(fmt.Sprintf("    server: '%s',\n", n.Server))
 
 		var inner strings.Builder
-		inner.WriteString(fmt.Sprintf("    port: %d,\n", n.Port))
+		if n.Type != "mieru" {
+			inner.WriteString(fmt.Sprintf("    port: %d,\n", n.Port))
+		}
 
 		// 🎯 VLESS 专属格式排版
 		if n.Type == "vless" {
