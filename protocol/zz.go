@@ -39,6 +39,8 @@ type Node struct {
 	SNI               string            `yaml:"sni,omitempty"`
 	ALPN              []string          `yaml:"alpn"`
 	SkipCertVerify    bool              `yaml:"skip-cert-verify,omitempty"`
+	Insecure          bool              `yaml:"insecure,omitempty"`       // Clash 常用
+	AllowInsecure     bool              `yaml:"allow-insecure,omitempty"` // Clash 常用
 	DisableSNI        bool              `yaml:"disable-sni,omitempty"`
 	ReduceRTT         bool              `yaml:"reduce-rtt,omitempty"`
 	CongestionControl string            `yaml:"congestion-control,omitempty"`

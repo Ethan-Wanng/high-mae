@@ -138,6 +138,10 @@ func normalizeYAMLNodes(nodes []Node) []Node {
 		if node.Name == "" {
 			node.Name = node.Server
 		}
+		// 统一不安全连接标志
+		if node.Insecure || node.AllowInsecure {
+			node.SkipCertVerify = true
+		}
 		out = append(out, node)
 	}
 	return out

@@ -271,15 +271,24 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		outbound.Type = "tuic"
 		cc := node.CongestionControl
 		if cc == "" {
-			cc = "cubic"
+			cc = "bbr"
+		}
+		udpMode := node.UDPRelayMode
+		if udpMode == "" {
+			udpMode = "native"
 		}
 		opts := option.TUICOutboundOptions{
 			ServerOptions:     serverOpts,
 			UUID:              node.UUID,
 			Password:          node.Password,
 			CongestionControl: cc,
+			UDPRelayMode:      udpMode,
+			ZeroRTTHandshake:  node.ReduceRTT,
 		}
 		opts.TLS = makeTLS()
+		if len(opts.TLS.ALPN) == 0 {
+			opts.TLS.ALPN = []string{"h3"}
+		}
 		outbound.Options = &opts
 
 	// === 🚀 新增：VLESS 协议 (含 Reality / Vision / WebSocket) ===
