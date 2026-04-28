@@ -30,9 +30,11 @@ type Node struct {
 	Name              string            `yaml:"name"`
 	Server            string            `yaml:"server"`
 	Port              int               `yaml:"port"`
+	PortRange         string            `yaml:"port-range,omitempty"`
 	UUID              string            `yaml:"uuid"`
 	Username          string            `yaml:"username,omitempty"`
 	Password          string            `yaml:"password"`
+	HashedPassword    string            `yaml:"hashed-password,omitempty"`
 	Method            string            `yaml:"method,omitempty"`
 	SNI               string            `yaml:"sni,omitempty"`
 	ALPN              []string          `yaml:"alpn"`
@@ -57,6 +59,10 @@ type Node struct {
 	ServerName        string            `yaml:"servername,omitempty"` // VLESS 专用 SNI 别名
 	RealityOpts       *RealityOpts      `yaml:"reality-opts,omitempty"`
 	GrpcOpts          map[string]string `yaml:"grpc-opts,omitempty"`
+	Transport         string            `yaml:"transport,omitempty"`
+	Multiplexing      string            `yaml:"multiplexing,omitempty"`
+	HandshakeMode     string            `yaml:"handshake-mode,omitempty"`
+	TrafficPattern    string            `yaml:"traffic-pattern,omitempty"`
 }
 
 func PreprocessYAML(data string) string {
@@ -90,7 +96,7 @@ func ParseNodes(path string) ([]Node, error) {
 
 		// 🚀 核心修改：使用 switch 白名单支持多协议扩展
 		switch node.Type {
-		case "anytls", "trojan", "tuic", "vmess", "ss", "hysteria2", "http", "https", "vless", "socks5", "ssocks":
+		case "anytls", "trojan", "tuic", "vmess", "ss", "hysteria2", "http", "https", "vless", "socks5", "ssocks", "mieru":
 			// 如果未来增加了新协议，直接在这个 case 里加名字即可
 			nodes = append(nodes, node)
 		default:
@@ -129,6 +135,10 @@ func tryBase64Variants(s string) ([]byte, bool) {
 }
 
 func LoadInput(input string) ([]byte, error) {
+	return LoadInputWithUserAgent(input, "high-mae/1.0")
+}
+
+func LoadInputWithUserAgent(input string, userAgent string) ([]byte, error) {
 	s := strings.TrimSpace(input)
 	s = strings.Trim(s, "“”\"'")
 
@@ -140,7 +150,10 @@ func LoadInput(input string) ([]byte, error) {
 		}
 
 		// 这里保留正常请求头，不做“伪装绕过”
-		req.Header.Set("User-Agent", "high-mae/1.0")
+		if userAgent == "" {
+			userAgent = "high-mae/1.0"
+		}
+		req.Header.Set("User-Agent", userAgent)
 		req.Header.Set("Accept", "*/*")
 		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 

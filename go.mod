@@ -3,6 +3,7 @@ module high-mae
 go 1.25.0
 
 require (
+	github.com/enfein/mieru/v3 v3.29.0
 	github.com/anytls/sing-anytls v0.0.11
 	github.com/getlantern/systray v1.2.2
 	github.com/refraction-networking/utls v1.8.2
@@ -163,3 +164,7 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 )
+
+replace github.com/sagernet/sing-box => github.com/enfein/mbox v1.11.6-0.20260228064239-6da7e538e122
+
+replace github.com/enfein/mieru/v3 => ./mieru_src_v3.29.0/github.com/enfein/mieru/v3@v3.29.0

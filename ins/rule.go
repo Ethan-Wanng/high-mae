@@ -110,6 +110,10 @@ func SwitchNode(node protocol.Node) {
 		cancelAnyTLS() // 瞬间杀死上一个 AnyTLS 的后台协程
 		cancelAnyTLS = nil
 	}
+	if currentMieru != nil {
+		currentMieru.Close()
+		currentMieru = nil
+	}
 
 	// ==========================================
 	// 专门处理 AnyTLS 节点
@@ -157,6 +161,18 @@ func SwitchNode(node protocol.Node) {
 			return
 		}
 
+		activeClient = newClient
+		return
+	}
+
+	if node.Type == "mieru" {
+		newClient, err := newMieruClientAdapter(node)
+		if err != nil {
+			log.Printf("Mieru Client 创建失败: %v", err)
+			return
+		}
+
+		currentMieru = newClient
 		activeClient = newClient
 		return
 	}
