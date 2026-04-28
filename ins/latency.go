@@ -114,6 +114,19 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 			}
 		}
 
+	} else if node.Type == "mieru" {
+		adapter, err := newMieruClientAdapter(node)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		dialCtx = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return adapter.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
+		}
+		cleanup = func() {
+			adapter.Close()
+		}
+
 	} else {
 		// B. Sing-box 其他多协议节点
 		opts, err := buildSingBoxOptions(node, newIP)

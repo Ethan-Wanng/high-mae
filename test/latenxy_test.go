@@ -31,7 +31,7 @@ func TestProxyLatencyParallel(t *testing.T) {
 		}
 	} else {
 		t.Log("⚠️ 未检测到命令行链接参数，回退读取本地 output.yml...")
-		nodes, err = protocol.ParseNodes("../output.yml")
+		nodes, err = protocol.ParseNodes("../config.yml")
 		if err != nil {
 			t.Fatalf("❌ 解析 output.yml 失败: %v", err)
 		}
@@ -47,8 +47,8 @@ func TestProxyLatencyParallel(t *testing.T) {
 	sem := make(chan struct{}, 10)
 
 	testURLs := []string{
-		"http://www.google.com/generate_204",
-		"https://www.google.com/generate_204",
+		"http://www.gstatic.com/generate_204",
+		"https://www.gstatic.com/generate_204",
 	}
 
 	for i, n := range nodes {

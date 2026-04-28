@@ -110,6 +110,10 @@ func SwitchNode(node protocol.Node) {
 		cancelAnyTLS() // 瞬间杀死上一个 AnyTLS 的后台协程
 		cancelAnyTLS = nil
 	}
+	if currentMieru != nil {
+		currentMieru.Close()
+		currentMieru = nil
+	}
 
 	// ==========================================
 	// 专门处理 AnyTLS 节点
@@ -157,6 +161,18 @@ func SwitchNode(node protocol.Node) {
 			return
 		}
 
+		activeClient = newClient
+		return
+	}
+
+	if node.Type == "mieru" {
+		newClient, err := newMieruClientAdapter(node)
+		if err != nil {
+			log.Printf("Mieru Client 创建失败: %v", err)
+			return
+		}
+
+		currentMieru = newClient
 		activeClient = newClient
 		return
 	}
@@ -255,15 +271,24 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		outbound.Type = "tuic"
 		cc := node.CongestionControl
 		if cc == "" {
-			cc = "cubic"
+			cc = "bbr"
+		}
+		udpMode := node.UDPRelayMode
+		if udpMode == "" {
+			udpMode = "native"
 		}
 		opts := option.TUICOutboundOptions{
 			ServerOptions:     serverOpts,
 			UUID:              node.UUID,
 			Password:          node.Password,
 			CongestionControl: cc,
+			UDPRelayMode:      udpMode,
+			ZeroRTTHandshake:  node.ReduceRTT,
 		}
 		opts.TLS = makeTLS()
+		if len(opts.TLS.ALPN) == 0 {
+			opts.TLS.ALPN = []string{"h3"}
+		}
 		outbound.Options = &opts
 
 	// === 🚀 新增：VLESS 协议 (含 Reality / Vision / WebSocket) ===

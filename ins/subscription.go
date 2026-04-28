@@ -86,7 +86,9 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 		sb.WriteString(fmt.Sprintf("    server: '%s',\n", n.Server))
 
 		var inner strings.Builder
-		inner.WriteString(fmt.Sprintf("    port: %d,\n", n.Port))
+		if n.Type != "mieru" {
+			inner.WriteString(fmt.Sprintf("    port: %d,\n", n.Port))
+		}
 
 		// 🎯 VLESS 专属格式排版
 		if n.Type == "vless" {
@@ -221,6 +223,35 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 				inner.WriteString(fmt.Sprintf("    sni: %s,\n", n.SNI))
 			}
 			inner.WriteString(fmt.Sprintf("    skip-cert-verify: %t,\n", n.SkipCertVerify))
+
+		} else if n.Type == "mieru" {
+			if n.PortRange != "" {
+				inner.WriteString(fmt.Sprintf("    port-range: %s,\n", n.PortRange))
+			} else {
+				inner.WriteString(fmt.Sprintf("    port: %d,\n", n.Port))
+			}
+			if n.Transport != "" {
+				inner.WriteString(fmt.Sprintf("    transport: %s,\n", n.Transport))
+			}
+			if n.Username != "" {
+				inner.WriteString(fmt.Sprintf("    username: %s,\n", n.Username))
+			}
+			if n.Password != "" {
+				inner.WriteString(fmt.Sprintf("    password: %s,\n", n.Password))
+			}
+			if n.HashedPassword != "" {
+				inner.WriteString(fmt.Sprintf("    hashed-password: %s,\n", n.HashedPassword))
+			}
+			if n.Multiplexing != "" {
+				inner.WriteString(fmt.Sprintf("    multiplexing: %s,\n", n.Multiplexing))
+			}
+			if n.HandshakeMode != "" {
+				inner.WriteString(fmt.Sprintf("    handshake-mode: %s,\n", n.HandshakeMode))
+			}
+			if n.TrafficPattern != "" {
+				inner.WriteString(fmt.Sprintf("    traffic-pattern: %s,\n", n.TrafficPattern))
+			}
+			inner.WriteString("    udp: true,\n")
 
 			// 兜底格式 (VMess, SS, Trojan 等)
 		} else {
@@ -574,62 +605,68 @@ func ParseSubscription(input string) ([]protocol.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	content, err := protocol.NormalizeSubscription(raw)
+	nodes, err := protocol.ParseSubscriptionRaw(raw)
 	if err != nil {
 		return nil, err
 	}
-	lines := strings.Split(content, "\n")
-	var nodes []protocol.Node
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		switch {
-		case strings.HasPrefix(line, "vmess://"):
-			if n, err := protocol.ParseVMess(line); err == nil {
-				nodes = append(nodes, n)
+	if isRemoteSubscription(input) {
+		clashRaw, err := protocol.LoadInputWithUserAgent(input, "ClashMeta")
+		if err == nil {
+			if clashNodes, parseErr := protocol.ParseSubscriptionRaw(clashRaw); parseErr == nil {
+				nodes = mergeNodes(nodes, clashNodes)
 			}
-		case strings.HasPrefix(line, "ss://"):
-			if n, err := protocol.ParseSS(line); err == nil {
-				nodes = append(nodes, n)
-			}
-		case strings.HasPrefix(line, "ssocks://"):
-			if n, err := protocol.ParseSSocks(line); err == nil {
-				nodes = append(nodes, n)
-			}
-		case strings.HasPrefix(line, "trojan://"):
-			if n, err := protocol.ParseTrojan(line); err == nil {
-				nodes = append(nodes, n)
-			}
-		case strings.HasPrefix(line, "anytls://"):
-			if n, err := protocol.ParseAnyTLS(line); err == nil {
-				nodes = append(nodes, n)
-			}
-		case strings.HasPrefix(line, "tuic://"):
-			if n, err := protocol.ParseTUIC(line); err == nil {
-				nodes = append(nodes, n)
-			}
-		case strings.HasPrefix(line, "vless://"):
-			if n, err := protocol.ParseVLESS(line); err == nil {
-				nodes = append(nodes, n)
-			}
-		case strings.HasPrefix(line, "hy2://") || strings.HasPrefix(line, "hysteria2://"):
-			if n, err := protocol.ParseHysteria2(line); err == nil {
-				nodes = append(nodes, n)
-			}
-		case strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://"):
-			if n, err := protocol.ParseHTTPLike(line); err == nil {
-				nodes = append(nodes, n)
-			}
-		default:
-			// 其他协议或格式暂不支持，直接跳过
-			fmt.Printf("⚠️ 跳过不支持的链接格式: %s\n", line)
 		}
 	}
+
 	return nodes, nil
+}
+
+func isRemoteSubscription(input string) bool {
+	input = strings.TrimSpace(strings.Trim(input, "“”\"'"))
+	return strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://")
+}
+
+func mergeNodes(base []protocol.Node, extra []protocol.Node) []protocol.Node {
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	merged := make([]protocol.Node, 0, len(base)+len(extra))
+
+	for _, node := range base {
+		key := nodeKey(node)
+		seen[key] = struct{}{}
+		merged = append(merged, node)
+	}
+
+	for _, node := range extra {
+		key := nodeKey(node)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, node)
+	}
+
+	return merged
+}
+
+func nodeKey(node protocol.Node) string {
+	network := strings.ToLower(strings.TrimSpace(node.Network))
+	if network == "tcp" {
+		network = ""
+	}
+
+	return fmt.Sprintf("%s|%s|%d|%s|%s|%s|%s|%s|%s|%s",
+		node.Type,
+		node.Server,
+		node.Port,
+		node.PortRange,
+		node.UUID,
+		node.Username,
+		node.Password,
+		node.HashedPassword,
+		node.Transport,
+		network,
+	)
 }
 
 func UpdateAllSubscriptions() {
