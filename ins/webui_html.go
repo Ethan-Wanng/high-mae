@@ -30,7 +30,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             color: var(--text-main);
             font-family: 'Segoe UI', system-ui, sans-serif;
             margin: 0;
-            padding: 20px 20px 60px 20px;
+            padding: 20px 20px 20px 20px;
             background-image: radial-gradient(circle at top right, #1e1b4b, #0f172a);
             min-height: 100vh;
         }
@@ -68,19 +68,53 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             font-size: 14px;
         }
         .controls {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
             margin-bottom: 20px;
+            padding: 16px 20px;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 80px;
+            z-index: 99;
         }
         .control-card {
-            background: var(--card-bg);
-            padding: 15px;
-            border-radius: 12px;
+            background: rgba(255,255,255,0.05);
+            padding: 10px 16px;
+            border-radius: 10px;
             border: 1px solid var(--card-border);
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            gap: 10px;
+            white-space: nowrap;
+        }
+        .supplier-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .btn-update {
+            background: linear-gradient(135deg, #10b981, #059669) !important;
+            color: white !important;
+            font-size: 12px;
+            padding: 6px 14px;
+        }
+        .btn-update:hover { background: linear-gradient(135deg, #059669, #047857) !important; }
+        .btn-delete {
+            background: linear-gradient(135deg, #ef4444, #dc2626) !important;
+            color: white !important;
+            font-size: 12px;
+            padding: 6px 14px;
+        }
+        .btn-delete:hover { background: linear-gradient(135deg, #dc2626, #b91c1c) !important; }
+        .btn-update:disabled, .btn-delete:disabled {
+            background: #475569 !important;
+            cursor: not-allowed;
+            transform: none;
         }
         select, button {
             background: var(--accent);
@@ -93,7 +127,8 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             transition: all 0.2s;
             outline: none;
         }
-        select { background: rgba(255,255,255,0.1); border: 1px solid var(--card-border); }
+        select { background: rgba(255,255,255,0.1); color: var(--text-main); border: 1px solid var(--card-border); }
+        select option { background: #1e293b; color: #f8fafc; }
         button:hover { background: var(--accent-hover); transform: translateY(-2px); }
         button:disabled { background: #475569; cursor: not-allowed; transform: none; }
         
@@ -190,25 +225,8 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             border-radius: 6px;
         }
         .test-btn:hover { background: rgba(255,255,255,0.1); color: white; }
-        .bottom-bar {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: rgba(15, 23, 42, 0.95);
-            backdrop-filter: blur(16px);
-            border-top: 1px solid var(--card-border);
-            padding: 10px 20px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 30px;
-            font-family: monospace;
-            font-size: 14px;
-            z-index: 100;
-        }
-        .bottom-bar .up { color: var(--accent); }
-        .bottom-bar .down { color: var(--success); }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spin { display: inline-block; animation: spin 1s linear infinite; }
     </style>
 </head>
 <body>
@@ -224,8 +242,12 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 
         <div class="controls">
             <div class="control-card">
-                <span>🗂️ 供应商</span>
+                <span>🗂️</span>
                 <select id="supplierSelect" onchange="switchSupplier(this.value)"></select>
+            </div>
+            <div class="supplier-actions">
+                <button class="btn-update" id="btnUpdate" onclick="updateSupplier()">🔄 更新订阅</button>
+                <button class="btn-delete" id="btnDelete" onclick="deleteSupplier()">🗑 删除订阅</button>
             </div>
             <div class="control-card">
                 <span>🟢 系统代理</span>
@@ -244,12 +266,6 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
         <div class="grid" id="nodeGrid"></div>
     </div>
 
-    <div class="bottom-bar">
-        <span>🚀 实时网速</span>
-        <span class="up" id="speedUp">↑ 0 B/s</span>
-        <span class="down" id="speedDown">↓ 0 B/s</span>
-    </div>
-
     <script>
         let pollTimer = null;
 
@@ -261,8 +277,6 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                 document.getElementById('chkMode').checked = (st.mode === 'Global');
                 document.getElementById('chkTun').checked = st.tun;
                 document.getElementById('speedMonitor').innerHTML = '↑ ' + st.speedOut + ' &nbsp; ↓ ' + st.speedIn;
-                document.getElementById('speedUp').textContent = '↑ ' + st.speedOut;
-                document.getElementById('speedDown').textContent = '↓ ' + st.speedIn;
             } catch(e) {}
         }
 
@@ -362,6 +376,48 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             btn.disabled = false;
             btn.textContent = '⚡ 极速测速';
             loadNodes();
+        }
+
+        async function updateSupplier() {
+            const sel = document.getElementById('supplierSelect');
+            const file = sel.value;
+            if (!file) return;
+            const btn = document.getElementById('btnUpdate');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spin">🔄</span> 更新中...';
+            try {
+                const res = await fetch('/api/update_supplier?file=' + encodeURIComponent(file), { method: 'POST' });
+                const data = await res.json();
+                if (data.ok) {
+                    loadNodes();
+                    loadSuppliers();
+                } else {
+                    alert('更新失败: ' + (data.msg || '未知错误'));
+                }
+            } catch(e) { alert('请求失败'); }
+            btn.disabled = false;
+            btn.innerHTML = '🔄 更新订阅';
+        }
+
+        async function deleteSupplier() {
+            const sel = document.getElementById('supplierSelect');
+            const file = sel.value;
+            const name = sel.options[sel.selectedIndex]?.text || file;
+            if (!file) return;
+            if (!confirm('确定要删除供应商「' + name + '」吗？\n此操作将同时删除对应的本地节点文件，不可恢复。')) return;
+            const btn = document.getElementById('btnDelete');
+            btn.disabled = true;
+            btn.textContent = '🗑 删除中...';
+            try {
+                const res = await fetch('/api/delete_supplier?file=' + encodeURIComponent(file), { method: 'POST' });
+                const data = await res.json();
+                if (data.ok) {
+                    loadSuppliers();
+                    loadNodes();
+                }
+            } catch(e) { alert('请求失败'); }
+            btn.disabled = false;
+            btn.textContent = '🗑 删除订阅';
         }
 
         // Init

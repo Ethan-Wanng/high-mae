@@ -2,8 +2,11 @@ package ins
 
 import (
 	"encoding/json"
+	"fmt"
 	"high-mae/protocol"
 	"net/http"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"sync"
 )
@@ -26,6 +29,8 @@ func StartWebUI() {
 	mux.HandleFunc("/api/action", actionHandler)
 	mux.HandleFunc("/api/suppliers", getSuppliersHandler)
 	mux.HandleFunc("/api/switch_supplier", switchSupplierHandler)
+	mux.HandleFunc("/api/update_supplier", updateSupplierHandler)
+	mux.HandleFunc("/api/delete_supplier", deleteSupplierHandler)
 
 	uiServer = &http.Server{
 		Addr:    "127.0.0.1:10809",
@@ -137,18 +142,24 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 	case "proxy":
 		IsSystemProxyOn = !IsSystemProxyOn
 		SetSystemProxy(IsSystemProxyOn)
-		if IsSystemProxyOn {
-			MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
-		} else {
-			MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
+		if MToggleProxy != nil {
+			if IsSystemProxyOn {
+				MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
+			} else {
+				MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
+			}
 		}
 	case "mode":
 		if ProxyMode == "Rule" {
 			ProxyMode = "Global"
-			MToggleMode.SetTitle("🌐 路由模式: [全局代理]")
+			if MToggleMode != nil {
+				MToggleMode.SetTitle("🌐 路由模式: [全局代理]")
+			}
 		} else {
 			ProxyMode = "Rule"
-			MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
+			if MToggleMode != nil {
+				MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
+			}
 		}
 	case "tun":
 		ToggleTunMode(MToggleTun, Tun2socksBytes, WintunBytes)
@@ -188,4 +199,76 @@ func switchSupplierHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func updateSupplierHandler(w http.ResponseWriter, r *http.Request) {
+	fileName := r.URL.Query().Get("file")
+	links, _ := ReadSubscriptions()
+
+	var target *SubInfo
+	for i := range links {
+		if links[i].FileName == fileName {
+			target = &links[i]
+			break
+		}
+	}
+	if target == nil {
+		http.Error(w, "Supplier not found", http.StatusNotFound)
+		return
+	}
+
+	nodes, err := ParseSubscription(target.URL)
+	if err != nil || len(nodes) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": fmt.Sprintf("无法从该链接获取有效节点: %v", err)})
+		return
+	}
+
+	err = SaveNodesToYAML(target.FileName, nodes)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "保存节点数据失败"})
+		return
+	}
+
+	if CurrentConfigFile == target.FileName {
+		AllNodes = nodes
+		latencyCache = sync.Map{}
+		RefreshNodeMenu(nil)
+		runtime.GC()
+		debug.FreeOSMemory()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": fmt.Sprintf("成功更新 %d 个节点", len(nodes))})
+}
+
+func deleteSupplierHandler(w http.ResponseWriter, r *http.Request) {
+	fileName := r.URL.Query().Get("file")
+	links, _ := ReadSubscriptions()
+
+	found := false
+	for _, l := range links {
+		if l.FileName == fileName {
+			DeleteSubscription(l.URL)
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		http.Error(w, "Supplier not found", http.StatusNotFound)
+		return
+	}
+
+	if CurrentConfigFile == fileName {
+		AllNodes = nil
+		CurrentConfigFile = ""
+		latencyCache = sync.Map{}
+		RefreshNodeMenu(nil)
+	}
+
+	RefreshSupplierMenu()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }

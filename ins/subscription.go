@@ -441,6 +441,11 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 
 	var nodeParents []*systray.MenuItem
 
+	if MNodeMenu == nil {
+		// Web-only mode: systray not initialized, skip tray menu updates
+		return
+	}
+
 	for _, node := range AllNodes {
 		itemLabel := fmt.Sprintf("[%s] %s", strings.ToUpper(node.Type), node.Name)
 		item := MNodeMenu.AddSubMenuItem(itemLabel, "")
@@ -463,49 +468,51 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 		}(ctx, node, item)
 	}
 
-	go func(ctx context.Context) {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-MTestAll.ClickedCh:
-				MTestAll.SetTitle("⏳ 极速测速中...")
-				MTestAll.Disable()
+	if MTestAll != nil {
+		go func(ctx context.Context) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-MTestAll.ClickedCh:
+					MTestAll.SetTitle("⏳ 极速测速中...")
+					MTestAll.Disable()
 
-				// 🚀 核心优化：改用极低内存消耗的 FastTCPPing，并将并发放宽到 50
-				sem := make(chan struct{}, 50) 
-				var wg sync.WaitGroup
-				for i, n := range AllNodes {
-					wg.Add(1)
-					go func(idx int, nd protocol.Node, parent *systray.MenuItem) {
-						defer wg.Done()
-						sem <- struct{}{}        // 获取令牌
-						defer func() { <-sem }() // 释放令牌
+					// 🚀 核心优化：改用极低内存消耗的 FastTCPPing，并将并发放宽到 50
+					sem := make(chan struct{}, 50) 
+					var wg sync.WaitGroup
+					for i, n := range AllNodes {
+						wg.Add(1)
+						go func(idx int, nd protocol.Node, parent *systray.MenuItem) {
+							defer wg.Done()
+							sem <- struct{}{}        // 获取令牌
+							defer func() { <-sem }() // 释放令牌
 
-						select {
-						case <-ctx.Done():
-							return
-						default:
-						}
+							select {
+							case <-ctx.Done():
+								return
+							default:
+							}
 
-						parent.SetTitle(fmt.Sprintf("[%s] %s - 测速中...", strings.ToUpper(nd.Type), nd.Name))
-						latency, err := FastTCPPing(nd)
-						if err != nil {
-							parent.SetTitle(fmt.Sprintf("[%s] %s - ❌ 失败", strings.ToUpper(nd.Type), nd.Name))
-						} else {
-							parent.SetTitle(fmt.Sprintf("[%s] %s - ⚡ %dms", strings.ToUpper(nd.Type), nd.Name, latency))
-						}
-					}(i, n, nodeParents[i])
+							parent.SetTitle(fmt.Sprintf("[%s] %s - 测速中...", strings.ToUpper(nd.Type), nd.Name))
+							latency, err := FastTCPPing(nd)
+							if err != nil {
+								parent.SetTitle(fmt.Sprintf("[%s] %s - ❌ 失败", strings.ToUpper(nd.Type), nd.Name))
+							} else {
+								parent.SetTitle(fmt.Sprintf("[%s] %s - ⚡ %dms", strings.ToUpper(nd.Type), nd.Name, latency))
+							}
+						}(i, n, nodeParents[i])
+					}
+					wg.Wait()
+					MTestAll.SetTitle("⚡ 极速测速所有节点 (TCP)")
+					MTestAll.Enable()
+					// 强制进行一次垃圾回收并释放系统内存
+					runtime.GC()
+					debug.FreeOSMemory()
 				}
-				wg.Wait()
-				MTestAll.SetTitle("⚡ 极速测速所有节点 (TCP)")
-				MTestAll.Enable()
-				// 强制进行一次垃圾回收并释放系统内存
-				runtime.GC()
-				debug.FreeOSMemory()
 			}
-		}
-	}(ctx)
+		}(ctx)
+	}
 
 	// 自动切换到导入的第一个新节点
 	if len(newNodes) > 0 {
