@@ -439,9 +439,6 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 	}
 	NodeMenuItems = nil
 
-	mTestAll := MNodeMenu.AddSubMenuItem("⚡ 极速测速全部节点 (TCP)", "使用 TCP 握手并发测速，零内存消耗，并绕过 TUN")
-	NodeMenuItems = append(NodeMenuItems, mTestAll)
-
 	var nodeParents []*systray.MenuItem
 
 	for _, node := range AllNodes {
@@ -450,31 +447,20 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 		NodeMenuItems = append(NodeMenuItems, item)
 		nodeParents = append(nodeParents, item)
 
-		mSwitch := item.AddSubMenuItem("✅ 切换到此节点", "")
-		mTestSingle := item.AddSubMenuItem("⚡ 测速此节点", "")
-
-		go func(ctx context.Context, n protocol.Node, parent *systray.MenuItem, mSw *systray.MenuItem, mTest *systray.MenuItem) {
+		go func(ctx context.Context, n protocol.Node, parent *systray.MenuItem) {
 			for {
 				select {
 				case <-ctx.Done():
 					return
-				case <-mSw.ClickedCh:
+				case <-parent.ClickedCh:
 					for _, mi := range nodeParents {
 						mi.Uncheck()
 					}
 					parent.Check()
 					SwitchNode(n)
-				case <-mTest.ClickedCh:
-					parent.SetTitle(fmt.Sprintf("[%s] %s - 测速中...", strings.ToUpper(n.Type), n.Name))
-					latency, err := TestNodeLatency(n)
-					if err != nil {
-						parent.SetTitle(fmt.Sprintf("[%s] %s - ❌ 失败", strings.ToUpper(n.Type), n.Name))
-					} else {
-						parent.SetTitle(fmt.Sprintf("[%s] %s - ⚡ %dms", strings.ToUpper(n.Type), n.Name, latency))
-					}
 				}
 			}
-		}(ctx, node, item, mSwitch, mTestSingle)
+		}(ctx, node, item)
 	}
 
 	go func(ctx context.Context) {
@@ -482,9 +468,9 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-mTestAll.ClickedCh:
-				mTestAll.SetTitle("⏳ 极速测速中...")
-				mTestAll.Disable()
+			case <-MTestAll.ClickedCh:
+				MTestAll.SetTitle("⏳ 极速测速中...")
+				MTestAll.Disable()
 
 				// 🚀 核心优化：改用极低内存消耗的 FastTCPPing，并将并发放宽到 50
 				sem := make(chan struct{}, 50) 
@@ -512,8 +498,8 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 					}(i, n, nodeParents[i])
 				}
 				wg.Wait()
-				mTestAll.SetTitle("⚡ 极速测速全部节点 (TCP)")
-				mTestAll.Enable()
+				MTestAll.SetTitle("⚡ 极速测速所有节点 (TCP)")
+				MTestAll.Enable()
 				// 强制进行一次垃圾回收并释放系统内存
 				runtime.GC()
 				debug.FreeOSMemory()

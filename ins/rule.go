@@ -3,12 +3,12 @@ package ins
 import (
 	"context"
 	"fmt"
+	"io"
 	anytls_util "github.com/anytls/sing-anytls/util"
 	"github.com/sagernet/sing/common/json/badoption"
 	"log"
 	"net"
 	"net/http"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -91,15 +91,16 @@ func SwitchNode(node protocol.Node) {
 	if IsTunModeOn {
 		realGateway := GetDefaultGateway()
 		if GlobalNodeIP != "" && GlobalNodeIP != newIP {
-			exec.Command("route", "delete", GlobalNodeIP, "mask", "255.255.255.255").Run()
+			RunHiddenCommand("route", "delete", GlobalNodeIP, "mask", "255.255.255.255")
 		}
 		if newIP != "" && realGateway != "" && GlobalNodeIP != newIP {
-			exec.Command("route", "add", newIP, "mask", "255.255.255.255", realGateway, "metric", "1").Run()
+			RunHiddenCommand("route", "add", newIP, "mask", "255.255.255.255", realGateway, "metric", "1")
 		}
 	}
 
 	globalNodeServer = node.Server
 	GlobalNodeIP = newIP
+	ActiveNodeName = node.Name
 
 	// 🚀 修复 2：彻底清理上一个节点的残留资源（无论是 Sing-box 还是 AnyTLS）
 	if currentBox != nil {
@@ -114,6 +115,10 @@ func SwitchNode(node protocol.Node) {
 		currentMieru.Close()
 		currentMieru = nil
 	}
+	if closer, ok := activeClient.(io.Closer); ok {
+		closer.Close()
+	}
+	activeClient = nil
 
 	// ==========================================
 	// 专门处理 AnyTLS 节点

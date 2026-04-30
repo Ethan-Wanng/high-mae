@@ -25,12 +25,21 @@ var (
 	TunCmd           *exec.Cmd
 	globalNodeServer string
 	GlobalNodeIP     string
+	ActiveNodeName   string // 当前激活的节点名称（用于精准匹配）
 
 	clientMu          sync.RWMutex
 	activeClient      GenericClient       // 当前正在工作的代理客户端引擎
 	AllNodes          []protocol.Node     // 保存所有已加载的节点
 	MCurrentNode      *systray.MenuItem   // 顶部显示的当前节点
-	MNodeMenu         *systray.MenuItem   // 托盘上的节点菜单父级
+	MNodeMenu          *systray.MenuItem   // 托盘上的节点菜单父级
+	MTestAll           *systray.MenuItem   // 根菜单上的一键测速按钮
+	MToggleProxy       *systray.MenuItem
+	MToggleMode        *systray.MenuItem
+	MToggleTun         *systray.MenuItem
+	MQuit              *systray.MenuItem
+
+	Tun2socksBytes     []byte
+	WintunBytes        []byte
 	NodeMenuItems      []*systray.MenuItem // 保存所有的节点子菜单项，用于动态刷新
 	nodeMenuCancel     context.CancelFunc  // 用于取消旧节点的监听协程，防止内存泄漏
 	MSupplierMenu      *systray.MenuItem   // 托盘上的供应商菜单父级

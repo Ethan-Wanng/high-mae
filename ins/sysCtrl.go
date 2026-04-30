@@ -35,15 +35,15 @@ func SetSystemProxy(enable bool) {
 	}
 	proxyStr := fmt.Sprintf("127.0.0.1:%s", LocalHttpPort)
 	if enable {
-		exec.Command("reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "1", "/f").Run()
-		exec.Command("reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", "/v", "ProxyServer", "/t", "REG_SZ", "/d", proxyStr, "/f").Run()
+		RunHiddenCommand("reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "1", "/f")
+		RunHiddenCommand("reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", "/v", "ProxyServer", "/t", "REG_SZ", "/d", proxyStr, "/f")
 	} else {
-		exec.Command("reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "0", "/f").Run()
+		RunHiddenCommand("reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "0", "/f")
 	}
 }
 
 func GetDefaultGatewayAndIP() (gateway string, localIP string) {
-	out, err := exec.Command("cmd", "/c", "route print 0.0.0.0").Output()
+	out, err := RunHiddenCommand("cmd", "/c", "route print 0.0.0.0")
 	if err != nil {
 		return "", ""
 	}
@@ -70,4 +70,40 @@ func GetDefaultGateway() string {
 func GetRealLocalIP() string {
 	_, ip := GetDefaultGatewayAndIP()
 	return ip
+}
+
+// RunHiddenCommand 运行命令并隐藏终端窗口
+func RunHiddenCommand(name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	return cmd.Output()
+}
+
+// RestartAsAdmin 自动提权重启
+func RestartAsAdmin() error {
+	verb := "runas"
+	exe, _ := os.Executable()
+	cwd, _ := os.Getwd()
+	args := strings.Join(os.Args[1:], " ")
+
+	verbPtr, _ := syscall.UTF16PtrFromString(verb)
+	exePtr, _ := syscall.UTF16PtrFromString(exe)
+	cwdPtr, _ := syscall.UTF16PtrFromString(cwd)
+	argPtr, _ := syscall.UTF16PtrFromString(args)
+
+	var showCmd int32 = 1 // SW_NORMAL
+	shell32 := syscall.NewLazyDLL("shell32.dll")
+	shellExecute := shell32.NewProc("ShellExecuteW")
+
+	ret, _, err := shellExecute.Call(0,
+		uintptr(unsafe.Pointer(verbPtr)),
+		uintptr(unsafe.Pointer(exePtr)),
+		uintptr(unsafe.Pointer(argPtr)),
+		uintptr(unsafe.Pointer(cwdPtr)),
+		uintptr(showCmd))
+
+	if ret <= 32 {
+		return fmt.Errorf("ShellExecute failed with code %d: %v", ret, err)
+	}
+	return nil
 }

@@ -2,11 +2,12 @@ package ins
 
 import (
 	_ "embed"
-	"github.com/getlantern/systray"
 	"os"
 	"os/exec"
 	"syscall"
 	"time"
+
+	"github.com/getlantern/systray"
 )
 
 func ToggleTunMode(mToggleTun *systray.MenuItem, tun2socksBytes []byte, wintunBytes []byte) {
@@ -18,21 +19,24 @@ func ToggleTunMode(mToggleTun *systray.MenuItem, tun2socksBytes []byte, wintunBy
 		if TunCmd != nil && TunCmd.Process != nil {
 			TunCmd.Process.Kill()
 		}
-		exec.Command("route", "delete", "0.0.0.0", "mask", "0.0.0.0", TunIP).Run()
+		RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", TunIP)
 		if GlobalNodeIP != "" {
-			exec.Command("route", "delete", GlobalNodeIP, "mask", "255.255.255.255").Run()
+			RunHiddenCommand("route", "delete", GlobalNodeIP, "mask", "255.255.255.255")
 		}
 		os.Remove("tun2socks.exe")
 		os.Remove("wintun.dll")
 		IsTunModeOn = false
-		mToggleTun.SetTitle("🔌 虚拟网卡 (TUN): [已关闭]")
-		ShowWindowsMsgBox("TUN 已关闭", "虚拟网卡已安全卸载。")
 	} else {
 		realGateway := GetDefaultGateway()
 		if realGateway == "" {
 			ShowWindowsMsgBox("网关错误", "无法识别系统的默认网关。")
 			return
 		}
+
+		// 增强健壮性：启动前确保没有僵尸进程和残留路由
+		RunHiddenCommand("taskkill", "/F", "/IM", "tun2socks.exe")
+		RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", TunIP)
+
 		os.WriteFile("tun2socks.exe", tun2socksBytes, 0755)
 		os.WriteFile("wintun.dll", wintunBytes, 0644)
 
@@ -42,19 +46,17 @@ func ToggleTunMode(mToggleTun *systray.MenuItem, tun2socksBytes []byte, wintunBy
 			ShowWindowsMsgBox("启动失败", "无法启动底层引擎: "+err.Error())
 			return
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(3 * time.Second) // 增加到 3 秒，防止 wintun 还没初始化完毕导致 netsh 失败
 
-		exec.Command("netsh", "interface", "ip", "set", "address", "AnyTLS-TUN", "static", TunIP, "255.255.255.0", "10.0.0.1").Run()
+		RunHiddenCommand("netsh", "interface", "ip", "set", "address", "AnyTLS-TUN", "static", TunIP, "255.255.255.0", "10.0.0.1")
 
 		if GlobalNodeIP != "" {
-			exec.Command("route", "add", GlobalNodeIP, "mask", "255.255.255.255", realGateway, "metric", "1").Run()
+			RunHiddenCommand("route", "add", GlobalNodeIP, "mask", "255.255.255.255", realGateway, "metric", "1")
 		}
 
-		exec.Command("route", "add", "0.0.0.0", "mask", "0.0.0.0", TunIP, "metric", "1").Run()
-		exec.Command("netsh", "interface", "ip", "set", "dns", "AnyTLS-TUN", "static", "127.0.0.2").Run()
+		RunHiddenCommand("route", "add", "0.0.0.0", "mask", "0.0.0.0", TunIP, "metric", "1")
+		RunHiddenCommand("netsh", "interface", "ip", "set", "dns", "AnyTLS-TUN", "static", "127.0.0.2")
 
 		IsTunModeOn = true
-		mToggleTun.SetTitle("🔌 虚拟网卡 (TUN): [已开启]")
-		ShowWindowsMsgBox("启动成功", "全网流量接管已启动！现在命令行、游戏等都会强制经过代理。")
 	}
 }
