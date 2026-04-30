@@ -1,0 +1,7 @@
+.gocache/
+.gomodcache/
+gomodcache2/
+.tmp_mieru_src
+tmp_dump_mieru.go
+tmp_probe_mieru_ua.go
+.idea

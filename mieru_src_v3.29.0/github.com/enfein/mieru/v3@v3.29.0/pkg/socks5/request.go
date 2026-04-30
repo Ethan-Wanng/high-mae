@@ -1,0 +1,510 @@
+package socks5
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"strconv"
+	"strings"
+
+	apicommon "github.com/enfein/mieru/v3/apis/common"
+	"github.com/enfein/mieru/v3/apis/constant"
+	"github.com/enfein/mieru/v3/apis/model"
+	"github.com/enfein/mieru/v3/pkg/appctl/appctlpb"
+	"github.com/enfein/mieru/v3/pkg/common"
+	"github.com/enfein/mieru/v3/pkg/log"
+	"github.com/enfein/mieru/v3/pkg/stderror"
+)
+
+// handleRequest is used for request processing after authentication.
+func (s *Server) handleRequest(ctx context.Context, req *model.Request, conn net.Conn) error {
+	// Resolve the address if we have a FQDN.
+	dst := &req.DstAddr
+	if dst.FQDN != "" {
+		ips, err := s.config.Resolver.LookupIP(ctx, "ip", dst.FQDN)
+		if err != nil || len(ips) == 0 {
+			DNSResolveErrors.Add(1)
+			resp := &model.Response{
+				Reply:    constant.Socks5ReplyHostUnreachable,
+				BindAddr: model.AddrSpec{IP: net.IPv4(0, 0, 0, 0)},
+			}
+			if err := resp.WriteToSocks5(conn); err != nil {
+				return fmt.Errorf("failed to send reply: %w", err)
+			}
+			if err != nil {
+				return fmt.Errorf("failed to resolve destination %q: %w", dst.FQDN, err)
+			} else {
+				return fmt.Errorf(stderror.IPAddressNotFound, dst.FQDN)
+			}
+		} else {
+			dst.IP = common.SelectIPFromList(ips, s.config.DualStackPreference)
+			if dst.IP == nil {
+				DNSResolveErrors.Add(1)
+				resp := &model.Response{
+					Reply:    constant.Socks5ReplyNetworkUnreachable,
+					BindAddr: model.AddrSpec{IP: net.IPv4(0, 0, 0, 0)},
+				}
+				if err := resp.WriteToSocks5(conn); err != nil {
+					return fmt.Errorf("failed to send reply: %w", err)
+				}
+				return fmt.Errorf("resolved domain name %s to IP addresses %v, but no IP address satisfy DNS dual stack preference", dst.FQDN, ips)
+			}
+			log.Debugf("Resolved domain name %s to IP addresses %v, selected IP address %v", dst.FQDN, ips, dst.IP)
+		}
+	}
+
+	// Switch on the command.
+	switch req.Command {
+	case constant.Socks5ConnectCmd:
+		return s.handleConnect(ctx, req, conn)
+	case constant.Socks5BindCmd:
+		return s.handleBind(ctx, req, conn)
+	case constant.Socks5UDPAssociateCmd:
+		return s.handleAssociate(ctx, req, conn)
+	default:
+		UnsupportedCommandErrors.Add(1)
+		resp := &model.Response{
+			Reply:    constant.Socks5ReplyCommandNotSupported,
+			BindAddr: model.AddrSpec{IP: net.IPv4(0, 0, 0, 0)},
+		}
+		if err := resp.WriteToSocks5(conn); err != nil {
+			return fmt.Errorf("failed to send reply: %w", err)
+		}
+		return fmt.Errorf("unsupported command: %v", req.Command)
+	}
+}
+
+// handleConnect is used to handle a connect command.
+func (s *Server) handleConnect(ctx context.Context, req *model.Request, conn net.Conn) error {
+	var d net.Dialer
+	target, err := d.DialContext(ctx, "tcp", req.DstAddr.String())
+	if err != nil {
+		msg := err.Error()
+		var replyCode uint8
+		if strings.Contains(msg, "refused") {
+			replyCode = constant.Socks5ReplyConnectionRefused
+			ConnectionRefusedErrors.Add(1)
+		} else if strings.Contains(msg, "network is unreachable") {
+			replyCode = constant.Socks5ReplyNetworkUnreachable
+			NetworkUnreachableErrors.Add(1)
+		} else {
+			replyCode = constant.Socks5ReplyHostUnreachable
+			HostUnreachableErrors.Add(1)
+		}
+		resp := &model.Response{
+			Reply:    replyCode,
+			BindAddr: model.AddrSpec{IP: net.IPv4(0, 0, 0, 0)},
+		}
+		if err := resp.WriteToSocks5(conn); err != nil {
+			return fmt.Errorf("failed to send reply: %w", err)
+		}
+		return fmt.Errorf("connect to %v failed: %w", req.DstAddr, err)
+	}
+	defer target.Close()
+
+	// Send success.
+	local := target.LocalAddr().(*net.TCPAddr)
+	bind := model.AddrSpec{IP: local.IP, Port: local.Port}
+	resp := &model.Response{
+		Reply:    constant.Socks5ReplySuccess,
+		BindAddr: bind,
+	}
+	if err := resp.WriteToSocks5(conn); err != nil {
+		HandshakeErrors.Add(1)
+		return fmt.Errorf("failed to send reply: %w", err)
+	}
+
+	return common.BidiCopy(conn, target)
+}
+
+// handleBind is used to handle a bind command.
+func (s *Server) handleBind(_ context.Context, _ *model.Request, conn net.Conn) error {
+	UnsupportedCommandErrors.Add(1)
+	resp := &model.Response{
+		Reply:    constant.Socks5ReplyCommandNotSupported,
+		BindAddr: model.AddrSpec{IP: net.IPv4(0, 0, 0, 0)},
+	}
+	if err := resp.WriteToSocks5(conn); err != nil {
+		HandshakeErrors.Add(1)
+		return fmt.Errorf("failed to send reply: %w", err)
+	}
+	return nil
+}
+
+// handleAssociate is used to handle a associate command.
+func (s *Server) handleAssociate(ctx context.Context, _ *model.Request, conn net.Conn) error {
+	// Create a UDP listener on a random port.
+	// All the requests associated to this connection will go through this port.
+	udpListenerAddr, err := apicommon.ResolveUDPAddr(ctx, s.config.Resolver, "udp", common.MaybeDecorateIPv6(common.AllIPAddr())+":0")
+	if err != nil {
+		UDPAssociateErrors.Add(1)
+		return fmt.Errorf("failed to resolve UDP address: %w", err)
+	}
+	udpConn, err := net.ListenUDP("udp", udpListenerAddr)
+	if err != nil {
+		UDPAssociateErrors.Add(1)
+		return fmt.Errorf("failed to listen UDP: %w", err)
+	}
+
+	// Use 0.0.0.0:<port> as the bind address.
+	// This is the port used by the server. Client will rewrite the port number.
+	// As the traffic between the client and the server goes through tunnel,
+	// it is OK to use an IPv4 bind address even though the UDP listener is IPv6.
+	_, udpPortStr, err := net.SplitHostPort(udpConn.LocalAddr().String())
+	if err != nil {
+		UDPAssociateErrors.Add(1)
+		return fmt.Errorf("net.SplitHostPort() failed: %w", err)
+	}
+	udpPort, err := strconv.Atoi(udpPortStr)
+	if err != nil {
+		UDPAssociateErrors.Add(1)
+		return fmt.Errorf("strconv.Atoi() failed: %w", err)
+	}
+	bind := model.AddrSpec{IP: net.IP{0, 0, 0, 0}, Port: udpPort}
+	resp := &model.Response{
+		Reply:    constant.Socks5ReplySuccess,
+		BindAddr: bind,
+	}
+	if err := resp.WriteToSocks5(conn); err != nil {
+		HandshakeErrors.Add(1)
+		return fmt.Errorf("failed to send reply: %w", err)
+	}
+
+	return RunUDPAssociateLoop(udpConn, apicommon.NewPacketOverStreamTunnel(conn), s.config.Resolver)
+}
+
+func (s *Server) handleForwarding(req *model.Request, conn net.Conn, proxy *appctlpb.EgressProxy) error {
+	forwardHost := proxy.GetHost()
+	forwardPort := proxy.GetPort()
+	proxyConn, err := net.Dial("tcp", common.MaybeDecorateIPv6(forwardHost)+":"+strconv.Itoa(int(forwardPort)))
+	if err != nil {
+		HandshakeErrors.Add(1)
+		return fmt.Errorf("dial to egress proxy failed: %w", err)
+	}
+
+	if err := s.dialWithAuthentication(proxyConn, proxy.GetSocks5Authentication()); err != nil {
+		return err
+	}
+
+	// Handle based on command type
+	switch req.Command {
+	case constant.Socks5ConnectCmd:
+		if _, err := proxyConn.Write(req.Raw); err != nil {
+			HandshakeErrors.Add(1)
+			proxyConn.Close()
+			return fmt.Errorf("failed to write socks5 request to egress proxy: %w", err)
+		}
+		return common.BidiCopy(conn, proxyConn)
+	case constant.Socks5UDPAssociateCmd:
+		return s.handleForwardingUDP(req, conn, proxyConn)
+	default:
+		return fmt.Errorf("unsupported command: %v", req.Command)
+	}
+}
+
+func (s *Server) handleForwardingUDP(req *model.Request, conn net.Conn, proxyConn net.Conn) error {
+	// Write UDP associate request to downstream server.
+	if _, err := proxyConn.Write(req.Raw); err != nil {
+		HandshakeErrors.Add(1)
+		proxyConn.Close()
+		return fmt.Errorf("failed to write socks5 request to egress proxy: %w", err)
+	}
+
+	// Read response header from downstream server.
+	respHeader := make([]byte, 4)
+	if _, err := io.ReadFull(proxyConn, respHeader); err != nil {
+		HandshakeErrors.Add(1)
+		proxyConn.Close()
+		return fmt.Errorf("failed to read socks5 response from egress proxy: %w", err)
+	}
+
+	// Read bind address based on address type.
+	respAddrType := respHeader[3]
+	var bindAddr []byte
+	switch respAddrType {
+	case constant.Socks5IPv4Address:
+		bindAddr = make([]byte, 6)
+	case constant.Socks5FQDNAddress:
+		fqdnLen := []byte{0}
+		if _, err := io.ReadFull(proxyConn, fqdnLen); err != nil {
+			HandshakeErrors.Add(1)
+			proxyConn.Close()
+			return fmt.Errorf("failed to read FQDN length: %w", err)
+		}
+		bindAddr = make([]byte, fqdnLen[0]+2)
+		respHeader = append(respHeader, fqdnLen...)
+	case constant.Socks5IPv6Address:
+		bindAddr = make([]byte, 18)
+	default:
+		HandshakeErrors.Add(1)
+		proxyConn.Close()
+		return fmt.Errorf("unsupported address type: %d", respAddrType)
+	}
+	if _, err := io.ReadFull(proxyConn, bindAddr); err != nil {
+		HandshakeErrors.Add(1)
+		proxyConn.Close()
+		return fmt.Errorf("failed to read bind address: %w", err)
+	}
+	respHeader = append(respHeader, bindAddr...)
+
+	// Check if response indicates success, and forward the error response to client.
+	if respHeader[1] != constant.Socks5ReplySuccess {
+		HandshakeErrors.Add(1)
+		proxyConn.Close()
+		conn.Write(respHeader)
+		return fmt.Errorf("egress proxy returned error: %d", respHeader[1])
+	}
+
+	// Parse socks5 proxy server's bind address from response.
+	var downstreamUDPAddr *net.UDPAddr
+	switch respAddrType {
+	case constant.Socks5IPv4Address:
+		downstreamIP := net.IP(bindAddr[:4])
+		downstreamPort := int(bindAddr[4])<<8 | int(bindAddr[5])
+		downstreamUDPAddr = &net.UDPAddr{IP: downstreamIP, Port: downstreamPort}
+	case constant.Socks5IPv6Address:
+		downstreamIP := net.IP(bindAddr[:16])
+		downstreamPort := int(bindAddr[16])<<8 | int(bindAddr[17])
+		downstreamUDPAddr = &net.UDPAddr{IP: downstreamIP, Port: downstreamPort}
+	case constant.Socks5FQDNAddress:
+		// For FQDN, use the proxy connection's IP with the returned port.
+		fqdnLen := int(respHeader[4])
+		downstreamPort := int(bindAddr[fqdnLen])<<8 | int(bindAddr[fqdnLen+1])
+		remoteAddr := proxyConn.RemoteAddr().(*net.TCPAddr)
+		downstreamUDPAddr = &net.UDPAddr{IP: remoteAddr.IP, Port: downstreamPort}
+	}
+
+	// If the socks5 proxy server returned 0.0.0.0, use the proxy connection's IP.
+	if downstreamUDPAddr.IP.IsUnspecified() {
+		remoteAddr := proxyConn.RemoteAddr().(*net.TCPAddr)
+		downstreamUDPAddr.IP = remoteAddr.IP
+	}
+
+	// Create local UDP listener for communicating with the socks5 proxy server.
+	udpAddr := &net.UDPAddr{IP: net.IP{0, 0, 0, 0}, Port: 0}
+	udpConn, err := net.ListenUDP("udp4", udpAddr)
+	if err != nil {
+		UDPAssociateErrors.Add(1)
+		proxyConn.Close()
+		return fmt.Errorf("failed to listen UDP: %w", err)
+	}
+
+	// Rewrite response port with local UDP port.
+	_, portStr, err := net.SplitHostPort(udpConn.LocalAddr().String())
+	if err != nil {
+		UDPAssociateErrors.Add(1)
+		udpConn.Close()
+		proxyConn.Close()
+		return fmt.Errorf("net.SplitHostPort() failed: %w", err)
+	}
+	udpPort, err := strconv.Atoi(portStr)
+	if err != nil {
+		UDPAssociateErrors.Add(1)
+		udpConn.Close()
+		proxyConn.Close()
+		return fmt.Errorf("strconv.Atoi() failed: %w", err)
+	}
+	lenResp := len(respHeader)
+	respHeader[lenResp-2] = byte(udpPort >> 8)
+	respHeader[lenResp-1] = byte(udpPort)
+
+	// Send response to client.
+	if _, err := conn.Write(respHeader); err != nil {
+		UDPAssociateErrors.Add(1)
+		udpConn.Close()
+		proxyConn.Close()
+		return fmt.Errorf("failed to send socks5 response to client: %w", err)
+	}
+
+	clientTunnel := apicommon.NewPacketOverStreamTunnel(conn)
+	return RunUDPForwardingLoop(udpConn, clientTunnel, downstreamUDPAddr, proxyConn)
+}
+
+// proxySocks5AuthReq transfers the socks5 authentication request and response
+// between socks5 client and server.
+func (s *Server) proxySocks5AuthReq(conn, proxyConn net.Conn) error {
+	// Send the version and authtication methods to the server.
+	defer common.SetReadTimeout(conn, 0)
+	defer common.SetReadTimeout(proxyConn, 0)
+	common.SetReadTimeout(conn, s.config.HandshakeTimeout)
+	version := []byte{0}
+	if _, err := io.ReadFull(conn, version); err != nil {
+		return fmt.Errorf("failed to get version byte: %w", err)
+	}
+	if version[0] != constant.Socks5Version {
+		return fmt.Errorf("unsupported SOCKS version: %v", version)
+	}
+	nMethods := []byte{0}
+	if _, err := io.ReadFull(conn, nMethods); err != nil {
+		return fmt.Errorf("failed to get the length of authentication methods: %w", err)
+	}
+	methods := make([]byte, int(nMethods[0]))
+	if _, err := io.ReadFull(conn, methods); err != nil {
+		return fmt.Errorf("failed to get authentication methods: %w", err)
+	}
+	authReq := []byte{}
+	authReq = append(authReq, version...)
+	authReq = append(authReq, nMethods...)
+	authReq = append(authReq, methods...)
+	if _, err := proxyConn.Write(authReq); err != nil {
+		return fmt.Errorf("failed to write authentication request to the server: %w", err)
+	}
+
+	// Get server authentication response.
+	common.SetReadTimeout(proxyConn, s.config.HandshakeTimeout)
+	authResp := make([]byte, 2)
+	if _, err := io.ReadFull(proxyConn, authResp); err != nil {
+		return fmt.Errorf("failed to read authentication response from the socks5 server: %w", err)
+	}
+	if _, err := conn.Write(authResp); err != nil {
+		return fmt.Errorf("failed to write authentication response to the socks5 client: %w", err)
+	}
+
+	return nil
+}
+
+// proxySocks5ConnReq transfers the socks5 connection request and response
+// between socks5 client and server.
+// If HandshakeNoWait is true, socks5 client will fake the connection response
+// and return the pending connection request to the server.
+// If UDP association is used, return the created UDP connection.
+func (s *Server) proxySocks5ConnReq(conn, proxyConn net.Conn) (*net.UDPConn, []byte, error) {
+	defer common.SetReadTimeout(conn, 0)
+	defer common.SetReadTimeout(proxyConn, 0)
+	common.SetReadTimeout(conn, s.config.HandshakeTimeout)
+
+	connReq := make([]byte, 4)
+	if _, err := io.ReadFull(conn, connReq); err != nil {
+		return nil, nil, fmt.Errorf("failed to get socks5 connection request: %w", err)
+	}
+	cmd := connReq[1]
+	reqAddrType := connReq[3]
+	var reqFQDNLen []byte
+	var dstAddr []byte
+	switch reqAddrType {
+	case constant.Socks5IPv4Address:
+		dstAddr = make([]byte, 6)
+	case constant.Socks5FQDNAddress:
+		reqFQDNLen = []byte{0}
+		if _, err := io.ReadFull(conn, reqFQDNLen); err != nil {
+			return nil, nil, fmt.Errorf("failed to get FQDN length: %w", err)
+		}
+		dstAddr = make([]byte, reqFQDNLen[0]+2)
+	case constant.Socks5IPv6Address:
+		dstAddr = make([]byte, 18)
+	default:
+		return nil, nil, fmt.Errorf("unsupported address type: %d", reqAddrType)
+	}
+	if _, err := io.ReadFull(conn, dstAddr); err != nil {
+		return nil, nil, fmt.Errorf("failed to get destination address: %w", err)
+	}
+	if len(reqFQDNLen) != 0 {
+		connReq = append(connReq, reqFQDNLen...)
+	}
+	connReq = append(connReq, dstAddr...)
+
+	// Fake server connection response if HandshakeNoWait is true.
+	if s.config.HandshakeNoWait && cmd == constant.Socks5ConnectCmd {
+		var resp bytes.Buffer
+		// Instead of using server bound address and port, use the proxy connection address and port.
+		serverBoundAddr := model.NetAddrSpec{}
+		if err := serverBoundAddr.From(proxyConn.RemoteAddr()); err != nil {
+			return nil, nil, fmt.Errorf("failed to get proxy connection address: %w", err)
+		}
+		resp.Write([]byte{constant.Socks5Version, constant.Socks5ReplySuccess, 0})
+		if err := serverBoundAddr.WriteToSocks5(&resp); err != nil {
+			return nil, nil, fmt.Errorf("failed to write proxy connection address: %w", err)
+		}
+
+		if _, err := conn.Write(resp.Bytes()); err != nil {
+			return nil, nil, fmt.Errorf("failed to write fake connection response to the socks5 client: %w", err)
+		}
+		return nil, connReq, nil
+	}
+
+	// Send the connection request to the server.
+	if _, err := proxyConn.Write(connReq); err != nil {
+		return nil, nil, fmt.Errorf("failed to write connection request to the server: %w", err)
+	}
+	log.Debugf("Sent socks5 request %v to server", connReq)
+
+	// Get server connection response.
+	common.SetReadTimeout(proxyConn, s.config.HandshakeTimeout)
+	connResp := make([]byte, 4)
+	if _, err := io.ReadFull(proxyConn, connResp); err != nil {
+		return nil, nil, fmt.Errorf("failed to read connection response from the server: %w", err)
+	}
+	respAddrType := connResp[3]
+	var respFQDNLen []byte
+	var bindAddr []byte
+	switch respAddrType {
+	case constant.Socks5IPv4Address:
+		bindAddr = make([]byte, 6)
+	case constant.Socks5FQDNAddress:
+		respFQDNLen = []byte{0}
+		if _, err := io.ReadFull(proxyConn, respFQDNLen); err != nil {
+			return nil, nil, fmt.Errorf("failed to get FQDN length: %w", err)
+		}
+		bindAddr = make([]byte, respFQDNLen[0]+2)
+	case constant.Socks5IPv6Address:
+		bindAddr = make([]byte, 18)
+	default:
+		return nil, nil, fmt.Errorf("unsupported address type: %d", respAddrType)
+	}
+	if _, err := io.ReadFull(proxyConn, bindAddr); err != nil {
+		return nil, nil, fmt.Errorf("failed to get bind address: %w", err)
+	}
+	if len(respFQDNLen) != 0 {
+		connResp = append(connResp, respFQDNLen...)
+	}
+	connResp = append(connResp, bindAddr...)
+	log.Debugf("Received socks5 response %v from server", connResp)
+
+	// Handle UDP association.
+	var udpConn *net.UDPConn
+	if cmd == constant.Socks5UDPAssociateCmd {
+		// Create a UDP listener on a random port in IPv4 network.
+		// Assume server uses 0.0.0.0:<port> as the bind address so we only need to change port number.
+		var err error
+		udpAddr := &net.UDPAddr{IP: net.IP{0, 0, 0, 0}, Port: 0}
+		udpConn, err = net.ListenUDP("udp4", udpAddr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("net.ListenUDP() failed: %w", err)
+		}
+		// Get the port number and rewrite the response.
+		_, udpPortStr, err := net.SplitHostPort(udpConn.LocalAddr().String())
+		if err != nil {
+			udpConn.Close()
+			return nil, nil, fmt.Errorf("net.SplitHostPort() failed: %w", err)
+		}
+		udpPort, err := strconv.Atoi(udpPortStr)
+		if err != nil {
+			udpConn.Close()
+			return nil, nil, fmt.Errorf("strconv.Atoi() failed: %w", err)
+		}
+		lenResp := len(connResp)
+		connResp[lenResp-2] = byte(udpPort >> 8)
+		connResp[lenResp-1] = byte(udpPort)
+	}
+
+	if _, err := conn.Write(connResp); err != nil {
+		return nil, nil, fmt.Errorf("failed to write connection response to the socks5 client: %w", err)
+	}
+	return udpConn, nil, nil
+}
+
+// readRequest creates a new Request from the connection.
+func (s *Server) readRequest(conn io.Reader) (*model.Request, error) {
+	if netConn, ok := conn.(net.Conn); ok {
+		common.SetReadTimeout(netConn, s.config.HandshakeTimeout)
+		defer common.SetReadTimeout(netConn, 0)
+	}
+
+	req := &model.Request{}
+	if err := req.ReadFromSocks5(conn); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
