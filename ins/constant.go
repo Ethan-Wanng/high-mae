@@ -31,9 +31,11 @@ var (
 	AllNodes          []protocol.Node     // 保存所有已加载的节点
 	MCurrentNode      *systray.MenuItem   // 顶部显示的当前节点
 	MNodeMenu         *systray.MenuItem   // 托盘上的节点菜单父级
-	NodeMenuItems     []*systray.MenuItem // 保存所有的节点子菜单项，用于动态刷新
-	MSupplierMenu     *systray.MenuItem   // 托盘上的供应商菜单父级
-	SupplierMenuItems []*systray.MenuItem // 供应商子菜单项
+	NodeMenuItems      []*systray.MenuItem // 保存所有的节点子菜单项，用于动态刷新
+	nodeMenuCancel     context.CancelFunc  // 用于取消旧节点的监听协程，防止内存泄漏
+	MSupplierMenu      *systray.MenuItem   // 托盘上的供应商菜单父级
+	SupplierMenuItems  []*systray.MenuItem // 供应商子菜单项
+	supplierMenuCancel context.CancelFunc  // 用于取消旧供应商的监听协程
 )
 
 func GetActiveClient() GenericClient {

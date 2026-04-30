@@ -42,17 +42,32 @@ func SetSystemProxy(enable bool) {
 	}
 }
 
-func GetDefaultGateway() string {
+func GetDefaultGatewayAndIP() (gateway string, localIP string) {
 	out, err := exec.Command("cmd", "/c", "route print 0.0.0.0").Output()
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	lines := strings.Split(string(out), "\n")
 	for _, line := range lines {
 		fields := strings.Fields(line)
-		if len(fields) >= 3 && fields[0] == "0.0.0.0" {
-			return fields[2]
+		if len(fields) >= 4 && fields[0] == "0.0.0.0" {
+			gw := fields[2]
+			ip := fields[3]
+			// 排除 TUN 的网关和 IP
+			if gw != "10.0.0.1" && ip != "10.0.0.2" && !strings.HasPrefix(gw, "10.0.0.") {
+				return gw, ip
+			}
 		}
 	}
-	return ""
+	return "", ""
+}
+
+func GetDefaultGateway() string {
+	gw, _ := GetDefaultGatewayAndIP()
+	return gw
+}
+
+func GetRealLocalIP() string {
+	_, ip := GetDefaultGatewayAndIP()
+	return ip
 }

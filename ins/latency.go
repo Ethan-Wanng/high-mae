@@ -134,12 +134,15 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 			return nil, nil, err
 		}
 
-		b, err := box.New(box.Options{Options: opts, Context: include.Context(context.Background())})
+		boxCtx, cancelBox := context.WithCancel(context.Background())
+		b, err := box.New(box.Options{Options: opts, Context: include.Context(boxCtx)})
 		if err != nil {
+			cancelBox()
 			return nil, nil, err
 		}
 		if err := b.Start(); err != nil {
 			b.Close()
+			cancelBox()
 			return nil, nil, err
 		}
 
@@ -147,19 +150,33 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 		dialCtx = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return adapter.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
 		}
-		cleanup = func() { b.Close() } // 测完手动关闭释放内存
+		cleanup = func() { 
+			b.Close()
+			cancelBox() 
+		}
+	}
+
+	tr := &http.Transport{
+		DialContext:       dialCtx,
+		ForceAttemptHTTP2: false,
+		MaxIdleConns:      1,
+		IdleConnTimeout:   1 * time.Second,
 	}
 
 	// 直接组装成原生 HTTP Client 返回
 	httpClient := &http.Client{
-		Transport: &http.Transport{
-			DialContext:       dialCtx,
-			ForceAttemptHTTP2: true,
-		},
-		Timeout: 5 * time.Second,
+		Transport: tr,
+		Timeout:   5 * time.Second,
 	}
 
-	return httpClient, cleanup, nil
+	finalCleanup := func() {
+		tr.CloseIdleConnections()
+		if cleanup != nil {
+			cleanup()
+		}
+	}
+
+	return httpClient, finalCleanup, nil
 }
 
 // =======================================================
@@ -174,7 +191,9 @@ func CheckProxyLatency(proxyURL string, targetURL string, timeout time.Duration)
 	client := &http.Client{
 		Transport: &http.Transport{
 			Proxy:             http.ProxyURL(pUrl),
-			ForceAttemptHTTP2: true, // 强制尝试 HTTP/2 以提速
+			ForceAttemptHTTP2: false,
+			MaxIdleConns:      1,
+			IdleConnTimeout:   1 * time.Second,
 		},
 		Timeout: timeout,
 	}
@@ -227,6 +246,48 @@ func TestNodeLatency(node protocol.Node) (int64, error) {
 
 	return time.Since(start).Milliseconds(), nil
 }
+
+// FastTCPPing 提供极低内存、极快速度的 TCP 握手测速，专门用于“一键测速全部节点”
+// 它不会启动任何代理内核，因此内存消耗几乎为 0，并且可以轻松绕过 TUN 网卡防止死循环
+func FastTCPPing(node protocol.Node) (int64, error) {
+	newIP := resolveDirect(node.Server)
+	dialHost := node.Server
+	if newIP != "" {
+		dialHost = newIP
+	}
+
+	port := node.Port
+	if port <= 0 {
+		if node.PortRange != "" {
+			return 0, fmt.Errorf("不支持端口段测速")
+		}
+		port = 443 // 默认回退
+	}
+	addr := net.JoinHostPort(dialHost, fmt.Sprint(port))
+
+	// 获取真实的本地 IP，绕过 TUN
+	var localAddr *net.TCPAddr
+	if IsTunModeOn {
+		realIP := GetRealLocalIP()
+		if realIP != "" && realIP != "10.0.0.1" && realIP != "10.0.0.2" {
+			localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
+		}
+	}
+
+	dialer := &net.Dialer{
+		Timeout:   3 * time.Second,
+		LocalAddr: localAddr,
+	}
+
+	start := time.Now()
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return 0, err
+	}
+	conn.Close()
+	return time.Since(start).Milliseconds(), nil
+}
+
 
 // =======================================================
 // 2. GUI 菜单绑定的触发函数 (处理弹窗交互)

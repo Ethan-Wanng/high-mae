@@ -9,7 +9,16 @@ import (
 	"os/exec"
 
 	"github.com/getlantern/systray"
+	"runtime/debug"
 )
+
+func init() {
+	// Set Go Memory Limit to ~150MB to force aggressive GC
+	// This helps keeping the memory reported in Task Manager low.
+	os.Setenv("GOMEMLIMIT", "150MiB")
+	// Reduce GC threshold to make it collect garbage more frequently
+	debug.SetGCPercent(20)
+}
 
 ////go:embed .yml
 //var embeddedConfig []byte

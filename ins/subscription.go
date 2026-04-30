@@ -1,6 +1,7 @@
 package ins
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	// 强烈建议使用跨平台剪贴板库，代替 powershell 命令
 	// "github.com/atotto/clipboard"
 	"os/exec"
+	"runtime"
+	"runtime/debug"
 	"sync"
 )
 
@@ -424,14 +427,19 @@ func ImportNodeFromClipboard() {
 
 var CurrentConfigFile string = "config.yml"
 
-// 辅助函数：刷新菜单逻辑（从你的原代码中抽离，让代码更干净）
 func RefreshNodeMenu(newNodes []protocol.Node) {
+	if nodeMenuCancel != nil {
+		nodeMenuCancel()
+	}
+	var ctx context.Context
+	ctx, nodeMenuCancel = context.WithCancel(context.Background())
+
 	for _, mi := range NodeMenuItems {
 		mi.Hide()
 	}
 	NodeMenuItems = nil
 
-	mTestAll := MNodeMenu.AddSubMenuItem("⚡ 一键测速全部节点", "并发测速当前列表的所有节点")
+	mTestAll := MNodeMenu.AddSubMenuItem("⚡ 极速测速全部节点 (TCP)", "使用 TCP 握手并发测速，零内存消耗，并绕过 TUN")
 	NodeMenuItems = append(NodeMenuItems, mTestAll)
 
 	var nodeParents []*systray.MenuItem
@@ -445,9 +453,11 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 		mSwitch := item.AddSubMenuItem("✅ 切换到此节点", "")
 		mTestSingle := item.AddSubMenuItem("⚡ 测速此节点", "")
 
-		go func(n protocol.Node, parent *systray.MenuItem, mSw *systray.MenuItem, mTest *systray.MenuItem) {
+		go func(ctx context.Context, n protocol.Node, parent *systray.MenuItem, mSw *systray.MenuItem, mTest *systray.MenuItem) {
 			for {
 				select {
+				case <-ctx.Done():
+					return
 				case <-mSw.ClickedCh:
 					for _, mi := range nodeParents {
 						mi.Uncheck()
@@ -464,33 +474,52 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 					}
 				}
 			}
-		}(node, item, mSwitch, mTestSingle)
+		}(ctx, node, item, mSwitch, mTestSingle)
 	}
 
-	go func() {
-		for range mTestAll.ClickedCh {
-			mTestAll.SetTitle("⏳ 测速中...")
-			mTestAll.Disable()
+	go func(ctx context.Context) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-mTestAll.ClickedCh:
+				mTestAll.SetTitle("⏳ 极速测速中...")
+				mTestAll.Disable()
 
-			var wg sync.WaitGroup
-			for i, n := range AllNodes {
-				wg.Add(1)
-				go func(idx int, nd protocol.Node, parent *systray.MenuItem) {
-					defer wg.Done()
-					parent.SetTitle(fmt.Sprintf("[%s] %s - 测速中...", strings.ToUpper(nd.Type), nd.Name))
-					latency, err := TestNodeLatency(nd)
-					if err != nil {
-						parent.SetTitle(fmt.Sprintf("[%s] %s - ❌ 失败", strings.ToUpper(nd.Type), nd.Name))
-					} else {
-						parent.SetTitle(fmt.Sprintf("[%s] %s - ⚡ %dms", strings.ToUpper(nd.Type), nd.Name, latency))
-					}
-				}(i, n, nodeParents[i])
+				// 🚀 核心优化：改用极低内存消耗的 FastTCPPing，并将并发放宽到 50
+				sem := make(chan struct{}, 50) 
+				var wg sync.WaitGroup
+				for i, n := range AllNodes {
+					wg.Add(1)
+					go func(idx int, nd protocol.Node, parent *systray.MenuItem) {
+						defer wg.Done()
+						sem <- struct{}{}        // 获取令牌
+						defer func() { <-sem }() // 释放令牌
+
+						select {
+						case <-ctx.Done():
+							return
+						default:
+						}
+
+						parent.SetTitle(fmt.Sprintf("[%s] %s - 测速中...", strings.ToUpper(nd.Type), nd.Name))
+						latency, err := FastTCPPing(nd)
+						if err != nil {
+							parent.SetTitle(fmt.Sprintf("[%s] %s - ❌ 失败", strings.ToUpper(nd.Type), nd.Name))
+						} else {
+							parent.SetTitle(fmt.Sprintf("[%s] %s - ⚡ %dms", strings.ToUpper(nd.Type), nd.Name, latency))
+						}
+					}(i, n, nodeParents[i])
+				}
+				wg.Wait()
+				mTestAll.SetTitle("⚡ 极速测速全部节点 (TCP)")
+				mTestAll.Enable()
+				// 强制进行一次垃圾回收并释放系统内存
+				runtime.GC()
+				debug.FreeOSMemory()
 			}
-			wg.Wait()
-			mTestAll.SetTitle("⚡ 一键测速全部节点")
-			mTestAll.Enable()
 		}
-	}()
+	}(ctx)
 
 	// 自动切换到导入的第一个新节点
 	if len(newNodes) > 0 {
@@ -506,6 +535,12 @@ func RefreshSupplierMenu() {
 	if MSupplierMenu == nil {
 		return
 	}
+
+	if supplierMenuCancel != nil {
+		supplierMenuCancel()
+	}
+	var ctx context.Context
+	ctx, supplierMenuCancel = context.WithCancel(context.Background())
 
 	for _, mi := range SupplierMenuItems {
 		mi.Hide()
@@ -525,9 +560,11 @@ func RefreshSupplierMenu() {
 		mUpdate := item.AddSubMenuItem("🔄 更新此订阅", "")
 		mDelete := item.AddSubMenuItem("🗑 删除此供应商", "")
 
-		go func(s SubInfo, parent *systray.MenuItem, mSw *systray.MenuItem, mUp *systray.MenuItem, mDel *systray.MenuItem) {
+		go func(ctx context.Context, s SubInfo, parent *systray.MenuItem, mSw *systray.MenuItem, mUp *systray.MenuItem, mDel *systray.MenuItem) {
 			for {
 				select {
+				case <-ctx.Done():
+					return
 				case <-mSw.ClickedCh:
 					nodes, err := protocol.ParseNodes(s.FileName)
 					if err == nil && len(nodes) > 0 {
@@ -580,7 +617,7 @@ func RefreshSupplierMenu() {
 					}
 				}
 			}
-		}(sub, item, mSwitch, mUpdate, mDelete)
+		}(ctx, sub, item, mSwitch, mUpdate, mDelete)
 	}
 }
 
