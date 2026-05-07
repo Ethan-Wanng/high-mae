@@ -146,8 +146,8 @@ func onExit() {
 			ins.TunCmd.Process.Kill()
 		}
 	}
-	os.Remove("tun2socks.exe")
-	os.Remove("wintun.dll")
+	// os.Remove("tun2socks.exe")
+	// os.Remove("wintun.dll")
 	//os.Remove(importTempFile)
 
 }

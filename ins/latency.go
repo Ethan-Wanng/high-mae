@@ -54,18 +54,24 @@ func resolveDirect(host string) string {
 	return ips[0]
 }
 
-// CreateTempHTTPClient 直接返回一个装载了特定节点的原生 http.Client，专供并发测速
+	// CreateTempHTTPClient 直接返回一个装载了特定节点的原生 http.Client，专供并发测速
 func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 	newIP := resolveDirect(node.Server)
 	var dialCtx func(ctx context.Context, network, addr string) (net.Conn, error)
 	var cleanup func()
 
-	// A. AnyTLS 节点
+	var localAddr *net.TCPAddr
+	if IsTunModeOn {
+		realIP := GetRealLocalIP()
+		if realIP != "" && realIP != "10.0.0.1" && realIP != "10.0.0.2" {
+			localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
+		}
+	}
 	if node.Type == "anytls" {
 		// 1. 创建带生命周期控制的 Context
 		clientCtx, cancelClient := context.WithCancel(context.Background())
 
-		dialer := &net.Dialer{Timeout: 10 * time.Second}
+		dialer := &net.Dialer{Timeout: 10 * time.Second, LocalAddr: localAddr}
 		dialOut := func(ctx context.Context) (net.Conn, error) {
 			dialHost := node.Server
 			if newIP != "" {
@@ -102,7 +108,11 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 		}
 
 		dialCtx = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return client.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
+			conn, err := client.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
+			if err == nil {
+				conn = &TrackingConn{conn}
+			}
+			return conn, err
 		}
 
 		// 3. 测速完成后的安全清理逻辑
@@ -121,7 +131,11 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 		}
 
 		dialCtx = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return adapter.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
+			conn, err := adapter.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
+			if err == nil {
+				conn = &TrackingConn{conn}
+			}
+			return conn, err
 		}
 		cleanup = func() {
 			adapter.Close()
@@ -148,7 +162,11 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 
 		adapter := &SingBoxAdapter{Instance: b}
 		dialCtx = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return adapter.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
+			conn, err := adapter.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
+			if err == nil {
+				conn = &TrackingConn{conn}
+			}
+			return conn, err
 		}
 		cleanup = func() { 
 			b.Close()
@@ -258,7 +276,7 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 
 	port := node.Port
 	if port <= 0 {
-		if node.PortRange != "" {
+		if node.PortRange != "" || node.Ports != "" || node.MPort != "" {
 			return 0, fmt.Errorf("不支持端口段测速")
 		}
 		port = 443 // 默认回退
@@ -266,11 +284,21 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 	addr := net.JoinHostPort(dialHost, fmt.Sprint(port))
 
 	// 获取真实的本地 IP，绕过 TUN
-	var localAddr *net.TCPAddr
+	var localAddr net.Addr
+	
+	network := "tcp"
+	if node.Type == "hysteria2" || node.Type == "hy2" || node.Type == "wireguard" {
+		network = "udp"
+	}
+
 	if IsTunModeOn {
 		realIP := GetRealLocalIP()
 		if realIP != "" && realIP != "10.0.0.1" && realIP != "10.0.0.2" {
-			localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
+			if network == "tcp" {
+				localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
+			} else {
+				localAddr = &net.UDPAddr{IP: net.ParseIP(realIP), Port: 0}
+			}
 		}
 	}
 
@@ -280,7 +308,7 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 	}
 
 	start := time.Now()
-	conn, err := dialer.Dial("tcp", addr)
+	conn, err := dialer.Dial(network, addr)
 	if err != nil {
 		return 0, err
 	}

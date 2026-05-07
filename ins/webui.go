@@ -9,6 +9,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sync"
+	"time"
 )
 
 var (
@@ -25,6 +26,8 @@ func StartWebUI() {
 	mux.HandleFunc("/api/switch", switchNodeHandler)
 	mux.HandleFunc("/api/test_single", testSingleHandler)
 	mux.HandleFunc("/api/test_all", testAllHandler)
+	mux.HandleFunc("/api/speedtest", speedtestHandler)
+	mux.HandleFunc("/api/add_node", addNodeHandler)
 	mux.HandleFunc("/api/status", getStatusHandler)
 	mux.HandleFunc("/api/action", actionHandler)
 	mux.HandleFunc("/api/suppliers", getSuppliersHandler)
@@ -99,18 +102,131 @@ func testSingleHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]int64{"latency": lat})
 }
 
+func speedtestHandler(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.URL.Query().Get("idx")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil || idx < 0 || idx >= len(AllNodes) {
+		http.Error(w, "Invalid index", http.StatusBadRequest)
+		return
+	}
+	node := AllNodes[idx]
+
+	client, cleanup, err := CreateTempHTTPClient(node)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	// 10MB test payload from Cloudflare
+	req, _ := http.NewRequest("GET", "https://speed.cloudflare.com/__down?bytes=10000000", nil)
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// 限制测速时间最长 10 秒
+	var written int64
+	buf := make([]byte, 128*1024)
+	timer := time.NewTimer(15 * time.Second)
+	done := make(chan struct{})
+
+	go func() {
+		for {
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				written += int64(n)
+			}
+			if err != nil {
+				break
+			}
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		timer.Stop()
+	case <-timer.C:
+		client.CloseIdleConnections()
+	}
+
+	duration := time.Since(start).Seconds()
+	if duration <= 0 {
+		duration = 1
+	}
+
+	speed := float64(written) / duration // Bytes per second
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"speed": speed,
+	})
+}
+
+func addNodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	input := req["input"]
+	if input == "" {
+		http.Error(w, "Empty input", http.StatusBadRequest)
+		return
+	}
+
+	newNodes, err := ParseSubscription(input)
+	if err != nil || len(newNodes) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": fmt.Sprintf("解析节点失败: %v", err)})
+		return
+	}
+
+	targetFile := CurrentConfigFile
+	if targetFile == "" {
+		targetFile = "config.yml"
+	}
+
+	// 检查该节点是否已经存在？（按需，这里直接追加）
+	AllNodes = append(AllNodes, newNodes...)
+	err = SaveNodesToYAML(targetFile, AllNodes)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "保存节点数据失败"})
+		return
+	}
+
+	CurrentConfigFile = targetFile
+	RefreshNodeMenu(newNodes)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": fmt.Sprintf("成功添加 %d 个节点", len(newNodes))})
+}
+
 func testAllHandler(w http.ResponseWriter, r *http.Request) {
 	// Execute FastTCPPing for all nodes
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 50)
-	
+
 	for i, node := range AllNodes {
 		wg.Add(1)
 		go func(idx int, n protocol.Node) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			
+
 			lat, err := FastTCPPing(n)
 			if err != nil {
 				lat = -1

@@ -321,6 +321,17 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 					Headers: headers,
 				},
 			}
+		} else if node.Network == "grpc" {
+			serviceName := node.GrpcOpts["grpc-service-name"]
+			if serviceName == "" && node.WSOpts.Path != "" {
+				serviceName = node.WSOpts.Path
+			}
+			opts.Transport = &option.V2RayTransportOptions{
+				Type: "grpc",
+				GRPCOptions: option.V2RayGRPCOptions{
+					ServiceName: serviceName,
+				},
+			}
 		}
 		outbound.Options = &opts
 
@@ -399,10 +410,14 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 				WebsocketOptions: wsOpts,
 			}
 		} else if node.Network == "grpc" {
+			serviceName := node.GrpcOpts["grpc-service-name"]
+			if serviceName == "" && node.WSOpts.Path != "" {
+				serviceName = node.WSOpts.Path
+			}
 			opts.Transport = &option.V2RayTransportOptions{
 				Type: "grpc",
 				GRPCOptions: option.V2RayGRPCOptions{
-					ServiceName: node.WSOpts.Path,
+					ServiceName: serviceName,
 				},
 			}
 		}
@@ -420,9 +435,13 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 
 	case "ss", "shadowsocks":
 		outbound.Type = "shadowsocks"
+		method := node.Method
+		if method == "" {
+			method = node.Cipher
+		}
 		opts := option.ShadowsocksOutboundOptions{
 			ServerOptions: serverOpts,
-			Method:        node.Method,
+			Method:        method,
 			Password:      node.Password,
 		}
 		outbound.Options = &opts

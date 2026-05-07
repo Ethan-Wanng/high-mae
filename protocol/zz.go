@@ -31,6 +31,8 @@ type Node struct {
 	Server            string            `yaml:"server"`
 	Port              int               `yaml:"port"`
 	PortRange         string            `yaml:"port-range,omitempty"`
+	Ports             string            `yaml:"ports,omitempty"`
+	MPort             string            `yaml:"mport,omitempty"`
 	UUID              string            `yaml:"uuid"`
 	Username          string            `yaml:"username,omitempty"`
 	Password          string            `yaml:"password"`

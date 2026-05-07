@@ -8,8 +8,29 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+type TrackingConn struct {
+	net.Conn
+}
+
+func (c *TrackingConn) Read(b []byte) (n int, err error) {
+	n, err = c.Conn.Read(b)
+	if n > 0 {
+		atomic.AddUint64(&GlobalProxyIn, uint64(n))
+	}
+	return
+}
+
+func (c *TrackingConn) Write(b []byte) (n int, err error) {
+	n, err = c.Conn.Write(b)
+	if n > 0 {
+		atomic.AddUint64(&GlobalProxyOut, uint64(n))
+	}
+	return
+}
 
 type HTTPProxyHandler struct{}
 
@@ -49,6 +70,9 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	defer upstream.Close()
+
+	// 代理节点流量监控包装
+	upstream = &TrackingConn{upstream}
 
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
@@ -103,10 +127,11 @@ func StartLocalDNS() {
 			}
 
 			dest := metadata.ParseSocksaddr("8.8.8.8:53")
-			stream, err := client.CreateProxy(context.Background(), dest)
+			streamRaw, err := client.CreateProxy(context.Background(), dest)
 			if err != nil {
 				return
 			}
+			stream := &TrackingConn{streamRaw}
 			defer stream.Close()
 
 			length := uint16(len(request))
