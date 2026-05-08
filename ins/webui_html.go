@@ -73,7 +73,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 
         .container {
             position: relative;
-            max-width: 1240px;
+            max-width: 1440px;
             margin: 0 auto;
         }
 
@@ -159,10 +159,8 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
         }
 
         .controls {
-            display: flex;
-            flex-wrap: wrap;
+            display: grid;
             gap: 12px;
-            align-items: center;
             margin-bottom: 20px;
             padding: 16px;
             background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.82));
@@ -172,6 +170,13 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             position: sticky;
             top: 86px;
             z-index: 99;
+        }
+
+        .control-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
         }
 
         .control-card {
@@ -192,9 +197,32 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             flex-wrap: wrap;
         }
 
+        .supplier-traffic {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            color: var(--text-sub);
+            font-size: 12px;
+            line-height: 1.4;
+            min-height: 38px;
+            align-items: center;
+        }
+
+        .traffic-pill {
+            padding: 5px 8px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(148, 163, 184, 0.12);
+            white-space: nowrap;
+        }
+
+        .traffic-pill strong {
+            color: var(--text-main);
+        }
+
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 18px;
             padding-bottom: 10px;
         }
@@ -573,7 +601,8 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             }
 
             .header-actions,
-            .supplier-actions {
+            .supplier-actions,
+            .control-row {
                 width: 100%;
             }
 
@@ -585,7 +614,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             }
 
             .grid {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
         }
 
@@ -609,6 +638,10 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 
             .card {
                 min-height: 0;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
             }
         }
 
@@ -650,33 +683,49 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                 <button class="btn-success" onclick="openAddModal()">➕ 添加节点</button>
                 <button class="btn-ghost" onclick="doAction('import')">📋 导入订阅</button>
                 <button class="btn-primary" id="btnTestAll" onclick="testAll()">⚡ 极速测速</button>
+                <button class="btn-ghost" onclick="openRuleModal()">🛠 规则管理</button>
+                <button class="btn-ghost" onclick="openAggGroupModal()">📁 创建聚合分组</button>
             </div>
         </div>
 
         <div class="controls">
-            <div class="control-card">
-                <span>🗂️</span>
-                <select id="supplierSelect" onchange="switchSupplier(this.value)"></select>
+            <div class="control-row">
+                <div class="control-card">
+                    <span>🗂️ 订阅组</span>
+                    <select id="supplierSelect" onchange="switchSupplier(this.value)"></select>
+                </div>
+
+                <div class="control-card">
+                    <span>📁 聚合组</span>
+                    <select id="aggregateSelect" onchange="switchAggregateGroup(this.value)"></select>
+                </div>
+
+                <div class="supplier-actions">
+                    <button class="btn-update" id="btnUpdate" onclick="updateSupplier()">🔄 更新订阅</button>
+                    <button class="btn-delete" id="btnDelete" onclick="deleteSupplier()">🗑 删除订阅</button>
+                    <button class="btn-delete" id="btnDeleteAgg" onclick="deleteAggregateGroup()">🗑 删除聚合组</button>
+                </div>
             </div>
 
-            <div class="supplier-actions">
-                <button class="btn-update" id="btnUpdate" onclick="updateSupplier()">🔄 更新</button>
-                <button class="btn-delete" id="btnDelete" onclick="deleteSupplier()">🗑 删除</button>
+            <div class="control-row">
+                <div class="control-card">
+                    <span>🟢 代理</span>
+                    <label class="toggle"><input type="checkbox" id="chkProxy" onchange="doAction('proxy')"><span class="slider"></span></label>
+                </div>
+
+                <div class="control-card">
+                    <span>🔄 全局</span>
+                    <label class="toggle"><input type="checkbox" id="chkMode" onchange="doAction('mode')"><span class="slider"></span></label>
+                </div>
+
+                <div class="control-card">
+                    <span>🔌 TUN</span>
+                    <label class="toggle"><input type="checkbox" id="chkTun" onchange="doAction('tun')"><span class="slider"></span></label>
+                </div>
             </div>
 
-            <div class="control-card">
-                <span>🟢 代理</span>
-                <label class="toggle"><input type="checkbox" id="chkProxy" onchange="doAction('proxy')"><span class="slider"></span></label>
-            </div>
-
-            <div class="control-card">
-                <span>🔄 全局</span>
-                <label class="toggle"><input type="checkbox" id="chkMode" onchange="doAction('mode')"><span class="slider"></span></label>
-            </div>
-
-            <div class="control-card">
-                <span>🔌 TUN</span>
-                <label class="toggle"><input type="checkbox" id="chkTun" onchange="doAction('tun')"><span class="slider"></span></label>
+            <div class="control-row">
+                <div class="supplier-traffic" id="supplierTraffic"></div>
             </div>
         </div>
 
@@ -703,8 +752,66 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
         </div>
     </div>
 
+    <div class="modal-overlay" id="ruleModal">
+        <div class="modal" style="width: min(860px, 100%);">
+            <h2>规则组管理</h2>
+            <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+                <select id="ruleGroupSelect" style="min-width:180px;" onchange="selectRuleGroup(this.value)"></select>
+                <input type="text" id="ruleGroupName" placeholder="规则组名称" style="flex:1;min-width:160px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                <select id="ruleGroupAction" style="min-width:110px;">
+                    <option value="direct">直连</option>
+                    <option value="proxy">代理</option>
+                    <option value="reject">拦截</option>
+                </select>
+                <button class="btn-success" onclick="addRuleGroup()">新建组</button>
+                <button class="btn-delete" onclick="deleteRuleGroup()">删除组</button>
+            </div>
+            <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+                <select id="ruleType" style="min-width:120px;">
+                    <option value="domain_suffix">域名后缀</option>
+                    <option value="domain_keyword">域名关键字</option>
+                    <option value="domain">完整域名</option>
+                </select>
+                <input type="text" id="ruleValue" placeholder="例如: google.com" style="flex:1;min-width:220px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                <button class="btn-success" onclick="addRule()">添加规则</button>
+            </div>
+            <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+                <input type="text" id="ruleSearch" placeholder="搜索全部规则，确认是否已存在..." oninput="renderRules()" style="flex:1;min-width:220px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                <span id="ruleSearchInfo" style="color:var(--text-sub);font-size:12px;"></span>
+            </div>
+            <div id="ruleList" style="max-height: 300px; overflow-y: auto; margin-bottom: 14px; border: 1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 10px; background: rgba(255,255,255,0.02);">
+            </div>
+            <div class="action-bar">
+                <button class="btn-ghost" onclick="closeRuleModal()">关闭</button>
+                <button class="btn-primary" onclick="saveRules()">保存并应用</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="aggGroupModal">
+        <div class="modal" style="width: min(700px, 100%);">
+            <h2>创建聚合分组</h2>
+            <div style="margin-bottom:14px;">
+                <input type="text" id="aggGroupName" placeholder="输入分组名称 (如: AI专用, 备用节点)" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+            </div>
+            <div id="aggNodeList" style="max-height: 350px; overflow-y: auto; margin-bottom: 14px; border: 1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 10px; background: rgba(255,255,255,0.02);">
+                <div style="text-align:center;color:var(--text-dim);padding:20px;">加载中...</div>
+            </div>
+            <div class="action-bar">
+                <button class="btn-ghost" onclick="closeAggGroupModal()">取消</button>
+                <button class="btn-success" onclick="submitAggGroup()">保存聚合分组</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let pollTimer = null;
+        let allNodesList = [];
+        let suppliersCache = [];
+        let aggregateGroupsCache = [];
+        let currentGroupFilter = "";
+        let ruleGroups = [];
+        let currentRuleGroupIndex = 0;
 
         async function loadStatus() {
             try {
@@ -721,6 +828,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             try {
                 const res = await fetch('/api/suppliers');
                 const suppliers = await res.json();
+                suppliersCache = suppliers || [];
                 const sel = document.getElementById('supplierSelect');
                 sel.innerHTML = '';
 
@@ -730,6 +838,8 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                     opt.disabled = true;
                     opt.selected = true;
                     sel.appendChild(opt);
+                    renderSupplierTraffic(null);
+                    loadAggregateGroups();
                     return;
                 }
 
@@ -740,13 +850,93 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                     if (s.active) opt.selected = true;
                     sel.appendChild(opt);
                 });
+                renderSupplierTraffic(sel.value);
+                loadAggregateGroups();
+            } catch(e) {}
+        }
+
+        async function loadAggregateGroups() {
+            try {
+                const res = await fetch('/api/aggregate_groups');
+                const groups = await res.json();
+                aggregateGroupsCache = groups || [];
+                const sel = document.getElementById('aggregateSelect');
+                sel.innerHTML = '';
+                const empty = document.createElement('option');
+                empty.value = '';
+                empty.textContent = aggregateGroupsCache.length ? '选择聚合组' : '暂无聚合组';
+                sel.appendChild(empty);
+                aggregateGroupsCache.forEach(g => {
+                    const opt = document.createElement('option');
+                    opt.value = g.fileName;
+                    opt.textContent = g.name;
+                    if (g.active) opt.selected = true;
+                    sel.appendChild(opt);
+                });
             } catch(e) {}
         }
 
         async function switchSupplier(fileName) {
             if (!fileName) return;
             await fetch('/api/switch_supplier?file=' + encodeURIComponent(fileName), { method: 'POST' });
+            document.getElementById('aggregateSelect').value = '';
+            renderSupplierTraffic(fileName);
             loadNodes();
+        }
+
+        async function switchAggregateGroup(fileName) {
+            if (!fileName) return;
+            await fetch('/api/switch_aggregate_group?file=' + encodeURIComponent(fileName), { method: 'POST' });
+            document.getElementById('supplierSelect').value = '';
+            renderSupplierTraffic(null);
+            loadNodes();
+        }
+
+        async function deleteAggregateGroup() {
+            const sel = document.getElementById('aggregateSelect');
+            const file = sel.value;
+            const name = sel.options[sel.selectedIndex]?.text || file;
+            if (!file) return;
+            if (!confirm('确定要删除聚合组「' + name + '」吗？')) return;
+            const btn = document.getElementById('btnDeleteAgg');
+            btn.disabled = true;
+            btn.textContent = '🗑 删除中...';
+            try {
+                const res = await fetch('/api/delete_aggregate_group?file=' + encodeURIComponent(file), { method: 'POST' });
+                if (res.ok) {
+                    loadAggregateGroups();
+                    loadNodes();
+                }
+            } catch(e) {
+                alert('请求失败');
+            }
+            btn.disabled = false;
+            btn.textContent = '🗑 删除聚合组';
+        }
+
+        function renderSupplierTraffic(fileName) {
+            const el = document.getElementById('supplierTraffic');
+            if (!el) return;
+            const supplier = suppliersCache.find(s => s.fileName === fileName);
+            if (!supplier || !supplier.traffic || !supplier.traffic.total) {
+                el.innerHTML = '<span class="traffic-pill">流量信息：<strong>暂无</strong></span>';
+                return;
+            }
+            const t = supplier.traffic;
+            const expire = t.expire ? new Date(t.expire * 1000).toLocaleDateString() : '未提供';
+            let resetText = '一次性/未提供';
+            if (t.reset_at) {
+                resetText = new Date(t.reset_at * 1000).toLocaleString();
+            } else if (t.reset_day) {
+                resetText = '每月 ' + t.reset_day + ' 日';
+            }
+            el.innerHTML = ` + "`" + `
+                <span class="traffic-pill">剩余 <strong>${formatBytes(t.remaining)}</strong></span>
+                <span class="traffic-pill">已用 <strong>${formatBytes(t.used)}</strong></span>
+                <span class="traffic-pill">总量 <strong>${formatBytes(t.total)}</strong></span>
+                <span class="traffic-pill">重置 <strong>${resetText}</strong></span>
+                <span class="traffic-pill">到期 <strong>${expire}</strong></span>
+            ` + "`" + `;
         }
 
         async function doAction(type) {
@@ -762,52 +952,65 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             try {
                 const res = await fetch('/api/nodes');
                 const nodes = await res.json();
-                const grid = document.getElementById('nodeGrid');
-                grid.innerHTML = '';
+                allNodesList = nodes || [];
+                
+                renderNodes();
+            } catch(e) {}
+        }
 
-                if (!nodes || nodes.length === 0) {
-                    grid.innerHTML = '<div class="empty-state">当前没有节点，点击 <strong>添加节点</strong> 或 <strong>导入订阅</strong> 开始使用。</div>';
-                    return;
+        function renderNodes() {
+            const grid = document.getElementById('nodeGrid');
+            grid.innerHTML = '';
+
+            let displayNodes = allNodesList;
+            if (currentGroupFilter !== "") {
+                displayNodes = allNodesList.filter(n => n.group === currentGroupFilter);
+            }
+
+            if (!displayNodes || displayNodes.length === 0) {
+                grid.innerHTML = '<div class="empty-state">当前没有节点，点击 <strong>添加节点</strong> 或 <strong>导入订阅</strong> 开始使用。</div>';
+                return;
+            }
+
+            displayNodes.forEach(n => {
+                let latClass = 'unknown';
+                let latText = '-- ms';
+                if (n.latency > 0 && n.latency < 500) {
+                    latClass = 'good';
+                    latText = n.latency + ' ms';
+                } else if (n.latency >= 500) {
+                    latClass = 'bad';
+                    latText = n.latency + ' ms';
+                } else if (n.latency === -1) {
+                    latClass = 'bad';
+                    latText = 'Timeout';
                 }
 
-                nodes.forEach(n => {
-                    let latClass = 'unknown';
-                    let latText = '-- ms';
-                    if (n.latency > 0 && n.latency < 500) {
-                        latClass = 'good';
-                        latText = n.latency + ' ms';
-                    } else if (n.latency >= 500) {
-                        latClass = 'bad';
-                        latText = n.latency + ' ms';
-                    } else if (n.latency === -1) {
-                        latClass = 'bad';
-                        latText = 'Timeout';
-                    }
+                const card = document.createElement('div');
+                card.className = 'card ' + (n.active ? 'active' : '');
+                card.onclick = (e) => {
+                    if (e.target.tagName !== 'BUTTON') switchNode(n.index);
+                };
 
-                    const card = document.createElement('div');
-                    card.className = 'card ' + (n.active ? 'active' : '');
-                    card.onclick = (e) => {
-                        if (e.target.tagName !== 'BUTTON') switchNode(n.index);
-                    };
-
-                    card.innerHTML = ` + "`" + `
-                        <div class="card-header">
+                card.innerHTML = ` + "`" + `
+                    <div class="card-header">
+                        <div style="display:flex;align-items:center;">
                             <span class="node-type">${n.type}</span>
-                            ${n.active ? '<span style="color:#34d399;font-size:12px;font-weight:800;">✅ 运行中</span>' : ''}
                         </div>
-                        <div class="node-name">${n.name}</div>
-                        <div class="card-footer">
-                            <span class="latency ${latClass}" id="lat-${n.index}">⚡ ${latText}</span>
-                            <span class="latency unknown" id="speed-${n.index}" style="margin-right:auto;margin-left:10px;"></span>
-                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                                <button class="test-btn" onclick="testSingle(${n.index})">TCP测速</button>
-                                <button class="bw-btn" onclick="testSpeed(${n.index})">带宽测速</button>
-                            </div>
+                        ${n.active ? '<span style="color:#34d399;font-size:12px;font-weight:800;">✅ 运行中</span>' : ''}
+                    </div>
+                    <div class="node-name">${n.name}</div>
+                    <div class="card-footer">
+                        <span class="latency ${latClass}" id="lat-${n.index}">⚡ ${latText}</span>
+                        <span class="latency unknown" id="speed-${n.index}" style="margin-right:auto;margin-left:10px;"></span>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button class="test-btn" onclick="testSingle(${n.index})">测速</button>
+                            <button class="bw-btn" onclick="testSpeed(${n.index})">带宽</button>
                         </div>
-                    ` + "`" + `;
-                    grid.appendChild(card);
-                });
-            } catch(e) {}
+                    </div>
+                ` + "`" + `;
+                grid.appendChild(card);
+            });
         }
 
         async function switchNode(idx) {
@@ -828,6 +1031,15 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             if (bytesPerSec < 1024) return bytesPerSec.toFixed(0) + ' B/s';
             if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
             return (bytesPerSec / 1024 / 1024).toFixed(2) + ' MB/s';
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes || bytes < 0) return '0 B';
+            if (bytes < 1024) return bytes.toFixed(0) + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+            if (bytes < 1024 * 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+            return (bytes / 1024 / 1024 / 1024 / 1024).toFixed(2) + ' TB';
         }
 
         async function testSpeed(idx) {
@@ -899,7 +1111,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                 alert('请求失败');
             }
             btn.disabled = false;
-            btn.textContent = '🗑 删除';
+            btn.textContent = '🗑 删除订阅';
         }
 
         function openAddModal() {
@@ -980,7 +1192,296 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             btn.textContent = '确定添加';
         }
 
+        async function loadRules() {
+            try {
+                const res = await fetch('/api/rules');
+                const data = await res.json();
+                ruleGroups = data || [];
+                currentRuleGroupIndex = 0;
+                renderRuleGroups();
+            } catch(e) {}
+        }
+
+        function selectedRuleGroup() {
+            return ruleGroups[currentRuleGroupIndex];
+        }
+
+        function actionName(action) {
+            if (action === 'direct') return '直连';
+            if (action === 'reject') return '拦截';
+            return '代理';
+        }
+
+        function typeName(type) {
+            if (type === 'domain_suffix') return '后缀';
+            if (type === 'domain_keyword') return '关键字';
+            if (type === 'domain') return '完整域名';
+            return type;
+        }
+
+        function renderRuleGroups() {
+            const sel = document.getElementById('ruleGroupSelect');
+            sel.innerHTML = '';
+            ruleGroups.forEach((group, idx) => {
+                const opt = document.createElement('option');
+                opt.value = idx;
+                opt.textContent = group.name + ' · ' + actionName(group.action) + ' · ' + (group.rules || []).length + ' 条';
+                if (idx === currentRuleGroupIndex) opt.selected = true;
+                sel.appendChild(opt);
+            });
+            const group = selectedRuleGroup();
+            document.getElementById('ruleGroupName').value = group ? group.name : '';
+            document.getElementById('ruleGroupAction').value = group ? group.action : 'direct';
+            renderRules();
+        }
+
+        function syncRuleGroupForm() {
+            const group = selectedRuleGroup();
+            if (!group) return;
+            group.name = document.getElementById('ruleGroupName').value.trim() || group.name;
+            group.action = document.getElementById('ruleGroupAction').value;
+        }
+
+        function selectRuleGroup(idx) {
+            syncRuleGroupForm();
+            currentRuleGroupIndex = Number(idx) || 0;
+            renderRuleGroups();
+        }
+
+        function renderRules() {
+            const list = document.getElementById('ruleList');
+            const infoEl = document.getElementById('ruleSearchInfo');
+            const keyword = (document.getElementById('ruleSearch').value || '').trim().toLowerCase();
+
+            // ── 搜索模式：跨所有规则组查找匹配项 ──
+            if (keyword) {
+                let html = '';
+                let matchCount = 0;
+                ruleGroups.forEach((g, gIdx) => {
+                    (g.rules || []).forEach((r, rIdx) => {
+                        const haystack = (typeName(r.type) + ' ' + r.value).toLowerCase();
+                        if (!haystack.includes(keyword)) return;
+                        matchCount++;
+                        const actionColor = g.action === 'proxy' ? 'var(--accent)' : (g.action === 'reject' ? 'var(--danger)' : 'var(--success)');
+                        html += ` + "`" + `
+                            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid rgba(148,163,184,0.1);font-size:14px;">
+                                <div>
+                                    <span style="background:rgba(99,102,241,0.15);padding:2px 6px;border-radius:4px;font-size:11px;margin-right:6px;color:var(--accent);">${g.name}</span>
+                                    <span style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;font-size:12px;margin-right:8px;">${typeName(r.type)}</span>
+                                    <span>${r.value}</span>
+                                    <span style="color:${actionColor};font-weight:bold;margin-left:8px;font-size:12px;">[${actionName(g.action)}]</span>
+                                </div>
+                            </div>
+                        ` + "`" + `;
+                    });
+                });
+                if (matchCount === 0) {
+                    list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">未找到匹配的规则</div>';
+                } else {
+                    list.innerHTML = html;
+                }
+                if (infoEl) infoEl.textContent = '共匹配 ' + matchCount + ' 条规则';
+                return;
+            }
+
+            // ── 普通模式：显示当前选中规则组 ──
+            if (infoEl) infoEl.textContent = '';
+            const group = selectedRuleGroup();
+            if (!group) {
+                list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">暂无规则组</div>';
+                return;
+            }
+            const rules = group.rules || [];
+            if (rules.length === 0) {
+                list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">当前规则组暂无规则</div>';
+                return;
+            }
+            let html = '';
+            rules.forEach((r, idx) => {
+                const actionColor = group.action === 'proxy' ? 'var(--accent)' : (group.action === 'reject' ? 'var(--danger)' : 'var(--success)');
+                html += ` + "`" + `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid rgba(148,163,184,0.1);font-size:14px;">
+                        <div>
+                            <span style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;font-size:12px;margin-right:8px;">${typeName(r.type)}</span>
+                            <span>${r.value}</span>
+                            <span style="color:${actionColor};font-weight:bold;margin-left:8px;font-size:12px;">[${actionName(group.action)}]</span>
+                        </div>
+                        <button class="btn-ghost" style="padding:4px 8px;font-size:12px;border-color:rgba(239,68,68,0.3);color:var(--danger);" onclick="deleteRule(${idx})">删除</button>
+                    </div>
+                ` + "`" + `;
+            });
+            list.innerHTML = html;
+        }
+
+        function addRuleGroup() {
+            syncRuleGroupForm();
+            const id = 'group_' + Date.now();
+            ruleGroups.push({ id, name: '新规则组', action: 'direct', rules: [] });
+            currentRuleGroupIndex = ruleGroups.length - 1;
+            renderRuleGroups();
+        }
+
+        function deleteRuleGroup() {
+            syncRuleGroupForm();
+            if (!ruleGroups.length) return;
+            const group = selectedRuleGroup();
+            if (!confirm('确定删除规则组「' + group.name + '」吗？')) return;
+            ruleGroups.splice(currentRuleGroupIndex, 1);
+            currentRuleGroupIndex = Math.max(0, currentRuleGroupIndex - 1);
+            renderRuleGroups();
+        }
+
+        function addRule() {
+            syncRuleGroupForm();
+            const group = selectedRuleGroup();
+            if (!group) return;
+            const type = document.getElementById('ruleType').value;
+            const val = document.getElementById('ruleValue').value.trim();
+            if (!val) return;
+            group.rules = group.rules || [];
+            group.rules.push({ type: type, value: val });
+            document.getElementById('ruleValue').value = '';
+            renderRuleGroups();
+            renderRules();
+        }
+
+        function deleteRule(idx) {
+            const group = selectedRuleGroup();
+            if (!group || !group.rules) return;
+            group.rules.splice(idx, 1);
+            renderRuleGroups();
+        }
+
+        async function saveRules() {
+            syncRuleGroupForm();
+            try {
+                await fetch('/api/rules', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(ruleGroups)
+                });
+                alert('规则保存成功！');
+                closeRuleModal();
+            } catch(e) {
+                alert('保存失败');
+            }
+        }
+
+        function openRuleModal() {
+            document.getElementById('ruleModal').style.display = 'flex';
+            loadRules();
+        }
+
+        function closeRuleModal() {
+            document.getElementById('ruleModal').style.display = 'none';
+        }
+
+        let allSubsNodesCache = [];
+        let expandedAggSubs = {};
+        let selectedAggNodes = {};
+        async function openAggGroupModal() {
+            document.getElementById('aggGroupModal').style.display = 'flex';
+            const list = document.getElementById('aggNodeList');
+            list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">加载中...</div>';
+            
+            try {
+                const res = await fetch('/api/all_nodes_all_subs');
+                const groups = await res.json();
+                allSubsNodesCache = groups || [];
+                
+                if (!allSubsNodesCache || allSubsNodesCache.length === 0) {
+                    list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">暂无任何订阅</div>';
+                    return;
+                }
+                
+                expandedAggSubs = {};
+                selectedAggNodes = {};
+                renderAggSubscriptions();
+            } catch(e) {
+                list.innerHTML = '<div style="text-align:center;color:var(--danger);padding:20px;">加载失败</div>';
+            }
+        }
+
+        function renderAggSubscriptions() {
+            const list = document.getElementById('aggNodeList');
+            let html = '';
+            allSubsNodesCache.forEach((group, gIdx) => {
+                const expanded = !!expandedAggSubs[gIdx];
+                html += ` + "`" + `
+                    <div style="margin-top:10px;">
+                        <button class="btn-ghost" style="width:100%;display:flex;justify-content:space-between;align-items:center;text-align:left;" onclick="toggleAggSubscription(${gIdx})">
+                            <span>${expanded ? '▾' : '▸'} ${group.subName}</span>
+                            <span style="font-size:11px;opacity:0.65;">${group.nodes.length} 个节点</span>
+                        </button>
+                        <div id="aggSubNodes_${gIdx}" style="display:${expanded ? 'block' : 'none'};padding-left:10px;">
+                ` + "`" + `;
+                if (expanded) {
+                    group.nodes.forEach((n, nIdx) => {
+                        html += ` + "`" + `
+                            <label style="display:flex;align-items:center;padding:8px;border-bottom:1px solid rgba(148,163,184,0.1);cursor:pointer;font-size:13px;transition:all 0.2s;">
+                                <input type="checkbox" id="aggNodeCheck_${gIdx}_${nIdx}" data-gidx="${gIdx}" data-nidx="${nIdx}" ${selectedAggNodes[gIdx + '_' + nIdx] ? 'checked' : ''} onchange="setAggNodeSelected(${gIdx}, ${nIdx}, this.checked)" style="margin-right:10px;">
+                                <span style="flex:1;">${n.Name}</span>
+                                <span style="color:var(--text-dim);font-size:11px;">[${n.Type}]</span>
+                            </label>
+                        ` + "`" + `;
+                    });
+                }
+                html += '</div></div>';
+            });
+            list.innerHTML = html;
+        }
+
+        function toggleAggSubscription(gIdx) {
+            expandedAggSubs[gIdx] = !expandedAggSubs[gIdx];
+            renderAggSubscriptions();
+        }
+
+        function setAggNodeSelected(gIdx, nIdx, checked) {
+            const key = gIdx + '_' + nIdx;
+            if (checked) selectedAggNodes[key] = true;
+            else delete selectedAggNodes[key];
+        }
+
+        function closeAggGroupModal() {
+            document.getElementById('aggGroupModal').style.display = 'none';
+        }
+
+        async function submitAggGroup() {
+            const name = document.getElementById('aggGroupName').value.trim();
+            if (!name) return alert('请输入分组名称');
+
+            const selectedNodes = [];
+            Object.keys(selectedAggNodes).forEach(key => {
+                const parts = key.split('_');
+                const gIdx = Number(parts[0]);
+                const nIdx = Number(parts[1]);
+                const node = allSubsNodesCache[gIdx]?.nodes?.[nIdx];
+                if (node) selectedNodes.push(node);
+            });
+
+            if (selectedNodes.length === 0) return alert('请至少选择一个节点');
+
+            try {
+                const res = await fetch('/api/create_aggregated_group', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ name: name, nodes: selectedNodes })
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    alert('聚合分组创建成功！');
+                    closeAggGroupModal();
+                    loadAggregateGroups();
+                } else {
+                    alert('创建失败');
+                }
+            } catch(e) {
+                alert('请求失败');
+            }
+        }
+
         loadSuppliers();
+        loadAggregateGroups();
         loadNodes();
         loadStatus();
         setInterval(loadStatus, 3000);

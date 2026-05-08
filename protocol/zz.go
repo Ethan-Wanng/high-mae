@@ -67,6 +67,7 @@ type Node struct {
 	Multiplexing      string            `yaml:"multiplexing,omitempty"`
 	HandshakeMode     string            `yaml:"handshake-mode,omitempty"`
 	TrafficPattern    string            `yaml:"traffic-pattern,omitempty"`
+	Group             string            `yaml:"group,omitempty"`
 }
 
 func PreprocessYAML(data string) string {
@@ -143,6 +144,19 @@ func LoadInput(input string) ([]byte, error) {
 }
 
 func LoadInputWithUserAgent(input string, userAgent string) ([]byte, error) {
+	result, err := LoadInputWithUserAgentInfo(input, userAgent)
+	if err != nil {
+		return nil, err
+	}
+	return result.Body, nil
+}
+
+type LoadInputResult struct {
+	Body    []byte
+	Headers http.Header
+}
+
+func LoadInputWithUserAgentInfo(input string, userAgent string) (LoadInputResult, error) {
 	s := strings.TrimSpace(input)
 	s = strings.Trim(s, "“”\"'")
 
@@ -150,7 +164,7 @@ func LoadInputWithUserAgent(input string, userAgent string) ([]byte, error) {
 	if (strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")) && isSingleLine && !strings.Contains(s, "@") {
 		req, err := http.NewRequest(http.MethodGet, s, nil)
 		if err != nil {
-			return nil, err
+			return LoadInputResult{}, err
 		}
 
 		// 这里保留正常请求头，不做“伪装绕过”
@@ -180,23 +194,23 @@ func LoadInputWithUserAgent(input string, userAgent string) ([]byte, error) {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("HTTP 请求失败: %w", err)
+			return LoadInputResult{}, fmt.Errorf("HTTP 请求失败: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-			return nil, fmt.Errorf("订阅下载失败，HTTP 状态码: %d, 响应: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			return LoadInputResult{}, fmt.Errorf("订阅下载失败，HTTP 状态码: %d, 响应: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		}
 
 		b, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, err
+			return LoadInputResult{}, err
 		}
-		return b, nil
+		return LoadInputResult{Body: b, Headers: resp.Header.Clone()}, nil
 	}
 
-	return []byte(s), nil
+	return LoadInputResult{Body: []byte(s), Headers: http.Header{}}, nil
 }
 
 func NormalizeSubscription(raw []byte) (string, error) {

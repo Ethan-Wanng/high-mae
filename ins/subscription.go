@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/getlantern/systray"
 	"high-mae/protocol"
@@ -19,12 +22,27 @@ import (
 )
 
 type SubInfo struct {
-	Name     string `json:"name"`
-	URL      string `json:"url"`
-	FileName string `json:"file_name"`
+	Name     string               `json:"name"`
+	URL      string               `json:"url"`
+	FileName string               `json:"file_name"`
+	Traffic  *SubscriptionTraffic `json:"traffic,omitempty"`
 }
 
 const SubscriptionsFile = "subscription.json"
+
+type SubscriptionTraffic struct {
+	Upload                int64  `json:"upload"`
+	Download              int64  `json:"download"`
+	Used                  int64  `json:"used"`
+	Total                 int64  `json:"total"`
+	Remaining             int64  `json:"remaining"`
+	Expire                int64  `json:"expire,omitempty"`
+	ResetAt               int64  `json:"reset_at,omitempty"`
+	ResetDay              int64  `json:"reset_day,omitempty"`
+	ProfileUpdateInterval int64  `json:"profile_update_interval,omitempty"`
+	UpdatedAt             int64  `json:"updated_at"`
+	Raw                   string `json:"raw,omitempty"`
+}
 
 // ReadSubscriptions 读取保存的订阅信息
 func ReadSubscriptions() ([]SubInfo, error) {
@@ -46,10 +64,19 @@ func ReadSubscriptions() ([]SubInfo, error) {
 
 // AppendSubscription 追加新链接到 JSON，并返回其文件名以及是否已存在
 func AppendSubscription(newLink string) (string, bool, error) {
+	return AppendSubscriptionWithTraffic(newLink, nil)
+}
+
+func AppendSubscriptionWithTraffic(newLink string, traffic *SubscriptionTraffic) (string, bool, error) {
 	links, _ := ReadSubscriptions()
 
 	for _, existing := range links {
 		if existing.URL == newLink {
+			if traffic != nil {
+				if err := UpdateSubscriptionTraffic(existing.URL, traffic); err != nil {
+					return "", true, err
+				}
+			}
 			return existing.FileName, true, nil
 		}
 	}
@@ -69,6 +96,7 @@ func AppendSubscription(newLink string) (string, bool, error) {
 		Name:     name,
 		URL:      newLink,
 		FileName: fileName,
+		Traffic:  traffic,
 	})
 
 	data, err := json.MarshalIndent(links, "", "  ")
@@ -77,6 +105,32 @@ func AppendSubscription(newLink string) (string, bool, error) {
 	}
 
 	return fileName, false, os.WriteFile(SubscriptionsFile, data, 0644)
+}
+
+func UpdateSubscriptionTraffic(url string, traffic *SubscriptionTraffic) error {
+	if traffic == nil {
+		return nil
+	}
+	links, err := ReadSubscriptions()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i := range links {
+		if links[i].URL == url {
+			links[i].Traffic = traffic
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return nil
+	}
+	data, err := json.MarshalIndent(links, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(SubscriptionsFile, data, 0644)
 }
 
 func SaveNodesToYAML(path string, nodes []protocol.Node) error {
@@ -369,7 +423,7 @@ func ImportNodeFromClipboard() {
 	}
 
 	// 2. 解析节点 (使用你强大的解析器)
-	newNodes, err := ParseSubscription(input)
+	newNodes, traffic, err := ParseSubscriptionWithInfo(input)
 	if err != nil || len(newNodes) == 0 {
 		ShowWindowsMsgBox("导入失败", fmt.Sprintf("无法解析剪贴板内的节点或订阅。\n原因: %v", err))
 		return
@@ -384,7 +438,7 @@ func ImportNodeFromClipboard() {
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line != "" {
-			fName, existed, err := AppendSubscription(line)
+			fName, existed, err := AppendSubscriptionWithTraffic(line, traffic)
 			if err != nil {
 				fmt.Printf("⚠️ 警告: 无法将链接保存到 JSON: %v\n", err)
 			} else if fName != "" {
@@ -479,7 +533,7 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 					MTestAll.Disable()
 
 					// 🚀 核心优化：改用极低内存消耗的 FastTCPPing，并将并发放宽到 50
-					sem := make(chan struct{}, 50) 
+					sem := make(chan struct{}, 50)
 					var wg sync.WaitGroup
 					for i, n := range AllNodes {
 						wg.Add(1)
@@ -578,10 +632,13 @@ func RefreshSupplierMenu() {
 					}
 				case <-mUp.ClickedCh:
 					parent.SetTitle(s.Name + " (🔄 更新中...)")
-					nodes, err := ParseSubscription(s.URL)
+					nodes, traffic, err := ParseSubscriptionWithInfo(s.URL)
 					if err == nil && len(nodes) > 0 {
 						err = SaveNodesToYAML(s.FileName, nodes)
 						if err == nil {
+							if traffic != nil {
+								UpdateSubscriptionTraffic(s.URL, traffic)
+							}
 							if CurrentConfigFile == s.FileName {
 								AllNodes = nodes
 								RefreshNodeMenu(nil) // just refresh, no auto-switch
@@ -630,26 +687,106 @@ func DeleteSubscription(url string) {
 	os.WriteFile(SubscriptionsFile, data, 0644)
 }
 
+func ParseSubscriptionTraffic(headers http.Header) *SubscriptionTraffic {
+	raw := strings.TrimSpace(headers.Get("subscription-userinfo"))
+	if raw == "" {
+		raw = strings.TrimSpace(headers.Get("Subscription-Userinfo"))
+	}
+	if raw == "" {
+		return nil
+	}
+
+	values := map[string]int64{}
+	for _, part := range strings.Split(raw, ";") {
+		pair := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(pair) != 2 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(pair[0]))
+		value := strings.TrimSpace(pair[1])
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			continue
+		}
+		values[key] = n
+	}
+
+	total := values["total"]
+	upload := values["upload"]
+	download := values["download"]
+	resetAt := firstNonZero(values, "reset", "reset_at", "next_reset", "next_reset_at", "reset_time")
+	resetDay := firstNonZero(values, "reset_day", "resetday")
+	updateInterval, _ := strconv.ParseInt(strings.TrimSpace(headers.Get("profile-update-interval")), 10, 64)
+	used := upload + download
+	remaining := total - used
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	return &SubscriptionTraffic{
+		Upload:                upload,
+		Download:              download,
+		Used:                  used,
+		Total:                 total,
+		Remaining:             remaining,
+		Expire:                values["expire"],
+		ResetAt:               resetAt,
+		ResetDay:              resetDay,
+		ProfileUpdateInterval: updateInterval,
+		UpdatedAt:             time.Now().Unix(),
+		Raw:                   raw,
+	}
+}
+
+func firstNonZero(values map[string]int64, keys ...string) int64 {
+	for _, key := range keys {
+		if values[key] != 0 {
+			return values[key]
+		}
+	}
+	return 0
+}
+
 func ParseSubscription(input string) ([]protocol.Node, error) {
-	raw, err := protocol.LoadInput(input)
-	if err != nil {
-		return nil, err
+	nodes, _, err := ParseSubscriptionWithInfo(input)
+	return nodes, err
+}
+
+func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraffic, error) {
+	var traffic *SubscriptionTraffic
+	var raw []byte
+	if isRemoteSubscription(input) {
+		info, infoErr := protocol.LoadInputWithUserAgentInfo(input, "high-mae/1.0")
+		if infoErr != nil {
+			return nil, nil, infoErr
+		}
+		raw = info.Body
+		traffic = ParseSubscriptionTraffic(info.Headers)
+	} else {
+		var err error
+		raw, err = protocol.LoadInput(input)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	nodes, err := protocol.ParseSubscriptionRaw(raw)
 	if err != nil {
-		return nil, err
+		return nil, traffic, err
 	}
 
 	if isRemoteSubscription(input) {
-		clashRaw, err := protocol.LoadInputWithUserAgent(input, "ClashMeta")
+		clashInfo, err := protocol.LoadInputWithUserAgentInfo(input, "ClashMeta")
 		if err == nil {
-			if clashNodes, parseErr := protocol.ParseSubscriptionRaw(clashRaw); parseErr == nil {
+			if traffic == nil {
+				traffic = ParseSubscriptionTraffic(clashInfo.Headers)
+			}
+			if clashNodes, parseErr := protocol.ParseSubscriptionRaw(clashInfo.Body); parseErr == nil {
 				nodes = mergeNodes(nodes, clashNodes)
 			}
 		}
 	}
 
-	return nodes, nil
+	return nodes, traffic, nil
 }
 
 func isRemoteSubscription(input string) bool {
@@ -708,8 +845,11 @@ func UpdateAllSubscriptions() {
 
 	totalUpdated := 0
 	for _, info := range links {
-		nodes, err := ParseSubscription(info.URL)
+		nodes, traffic, err := ParseSubscriptionWithInfo(info.URL)
 		if err == nil && len(nodes) > 0 {
+			if traffic != nil {
+				UpdateSubscriptionTraffic(info.URL, traffic)
+			}
 			err = SaveNodesToYAML(info.FileName, nodes)
 			if err != nil {
 				fmt.Printf("⚠️ 写入文件失败: %v\n", err)

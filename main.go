@@ -66,6 +66,8 @@ func onReady() {
 		fmt.Println("⚠️ 启动时未找到有效的配置文件，节点列表将为空。请通过 Web 面板导入节点或订阅。")
 	}
 
+	ins.LoadUserRules()
+
 	if len(ins.AllNodes) > 0 {
 		ins.SwitchNode(ins.AllNodes[0])
 	}

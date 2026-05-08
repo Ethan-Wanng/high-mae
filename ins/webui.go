@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"high-mae/protocol"
 	"net/http"
+	"os"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -17,6 +18,14 @@ var (
 	// Cache latency to avoid re-testing constantly
 	latencyCache sync.Map
 )
+
+type AggregateGroup struct {
+	Name     string `json:"name"`
+	FileName string `json:"fileName"`
+	Active   bool   `json:"active"`
+}
+
+const AggregateGroupsFile = "aggregate_groups.json"
 
 func StartWebUI() {
 	mux := http.NewServeMux()
@@ -34,6 +43,13 @@ func StartWebUI() {
 	mux.HandleFunc("/api/switch_supplier", switchSupplierHandler)
 	mux.HandleFunc("/api/update_supplier", updateSupplierHandler)
 	mux.HandleFunc("/api/delete_supplier", deleteSupplierHandler)
+	mux.HandleFunc("/api/rules", rulesHandler)
+	mux.HandleFunc("/api/set_node_group", setNodeGroupHandler)
+	mux.HandleFunc("/api/all_nodes_all_subs", getAllNodesAllSubsHandler)
+	mux.HandleFunc("/api/create_aggregated_group", createAggregatedGroupHandler)
+	mux.HandleFunc("/api/aggregate_groups", aggregateGroupsHandler)
+	mux.HandleFunc("/api/switch_aggregate_group", switchAggregateGroupHandler)
+	mux.HandleFunc("/api/delete_aggregate_group", deleteAggregateGroupHandler)
 
 	uiServer = &http.Server{
 		Addr:    "127.0.0.1:10809",
@@ -50,6 +66,7 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 		Type    string `json:"type"`
 		Latency int64  `json:"latency"`
 		Active  bool   `json:"active"`
+		Group   string `json:"group"`
 	}
 
 	var res []NodeInfo
@@ -63,11 +80,184 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 			Type:    n.Type,
 			Latency: latency,
 			Active:  n.Name == ActiveNodeName,
+			Group:   n.Group,
 		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
+}
+
+func rulesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(RuleGroups)
+		return
+	}
+	if r.Method == http.MethodPost {
+		var groups []RuleGroup
+		if err := json.NewDecoder(r.Body).Decode(&groups); err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		if err := SaveRuleGroups(groups); err != nil {
+			http.Error(w, "Save failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		return
+	}
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+func setNodeGroupHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	idxStr := r.URL.Query().Get("idx")
+	group := r.URL.Query().Get("group")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil || idx < 0 || idx >= len(AllNodes) {
+		http.Error(w, "Invalid index", http.StatusBadRequest)
+		return
+	}
+
+	AllNodes[idx].Group = group
+	if CurrentConfigFile != "" {
+		SaveNodesToYAML(CurrentConfigFile, AllNodes)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func getAllNodesAllSubsHandler(w http.ResponseWriter, r *http.Request) {
+	links, _ := ReadSubscriptions()
+
+	type SubGroup struct {
+		FileName string          `json:"fileName"`
+		SubName  string          `json:"subName"`
+		Nodes    []protocol.Node `json:"nodes"`
+	}
+
+	var res []SubGroup
+	for _, l := range links {
+		nodes, err := protocol.ParseNodes(l.FileName)
+		if err == nil && len(nodes) > 0 {
+			res = append(res, SubGroup{
+				FileName: l.FileName,
+				SubName:  l.Name,
+				Nodes:    nodes,
+			})
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
+}
+
+func createAggregatedGroupHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Name  string          `json:"name"`
+		Nodes []protocol.Node `json:"nodes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	fileName := "group_" + strconv.FormatInt(time.Now().Unix(), 10) + ".yml"
+	SaveNodesToYAML(fileName, req.Nodes)
+
+	groups, _ := ReadAggregateGroups()
+	groups = append(groups, AggregateGroup{Name: req.Name, FileName: fileName})
+	SaveAggregateGroups(groups)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func ReadAggregateGroups() ([]AggregateGroup, error) {
+	if _, err := os.Stat(AggregateGroupsFile); os.IsNotExist(err) {
+		return []AggregateGroup{}, nil
+	}
+	data, err := os.ReadFile(AggregateGroupsFile)
+	if err != nil {
+		return nil, err
+	}
+	var groups []AggregateGroup
+	if err := json.Unmarshal(data, &groups); err != nil {
+		return nil, err
+	}
+	for i := range groups {
+		groups[i].Active = groups[i].FileName == CurrentConfigFile
+	}
+	return groups, nil
+}
+
+func SaveAggregateGroups(groups []AggregateGroup) error {
+	for i := range groups {
+		groups[i].Active = false
+	}
+	data, err := json.MarshalIndent(groups, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(AggregateGroupsFile, data, 0644)
+}
+
+func aggregateGroupsHandler(w http.ResponseWriter, r *http.Request) {
+	groups, _ := ReadAggregateGroups()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(groups)
+}
+
+func switchAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
+	fileName := r.URL.Query().Get("file")
+	nodes, err := protocol.ParseNodes(fileName)
+	if err == nil && len(nodes) > 0 {
+		CurrentConfigFile = fileName
+		AllNodes = nodes
+		latencyCache = sync.Map{}
+		RefreshNodeMenu(nil)
+		if len(AllNodes) > 0 {
+			SwitchNode(AllNodes[0])
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func deleteAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
+	fileName := r.URL.Query().Get("file")
+	groups, _ := ReadAggregateGroups()
+	var next []AggregateGroup
+	found := false
+	for _, group := range groups {
+		if group.FileName == fileName {
+			found = true
+			os.Remove(group.FileName)
+			continue
+		}
+		next = append(next, group)
+	}
+	if !found {
+		http.Error(w, "Group not found", http.StatusNotFound)
+		return
+	}
+	SaveAggregateGroups(next)
+	if CurrentConfigFile == fileName {
+		AllNodes = nil
+		CurrentConfigFile = ""
+		latencyCache = sync.Map{}
+		RefreshNodeMenu(nil)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
 func switchNodeHandler(w http.ResponseWriter, r *http.Request) {
@@ -286,9 +476,10 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
 	links, _ := ReadSubscriptions()
 	type SupplierInfo struct {
-		Name     string `json:"name"`
-		FileName string `json:"fileName"`
-		Active   bool   `json:"active"`
+		Name     string               `json:"name"`
+		FileName string               `json:"fileName"`
+		Active   bool                 `json:"active"`
+		Traffic  *SubscriptionTraffic `json:"traffic,omitempty"`
 	}
 	var list []SupplierInfo
 	for _, l := range links {
@@ -296,6 +487,7 @@ func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
 			Name:     l.Name,
 			FileName: l.FileName,
 			Active:   l.FileName == CurrentConfigFile,
+			Traffic:  l.Traffic,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -333,7 +525,7 @@ func updateSupplierHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes, err := ParseSubscription(target.URL)
+	nodes, traffic, err := ParseSubscriptionWithInfo(target.URL)
 	if err != nil || len(nodes) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": fmt.Sprintf("无法从该链接获取有效节点: %v", err)})
@@ -354,9 +546,14 @@ func updateSupplierHandler(w http.ResponseWriter, r *http.Request) {
 		runtime.GC()
 		debug.FreeOSMemory()
 	}
+	if traffic != nil {
+		target.Traffic = traffic
+		data, _ := json.MarshalIndent(links, "", "  ")
+		os.WriteFile(SubscriptionsFile, data, 0644)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": fmt.Sprintf("成功更新 %d 个节点", len(nodes))})
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": fmt.Sprintf("成功更新 %d 个节点", len(nodes)), "traffic": traffic})
 }
 
 func deleteSupplierHandler(w http.ResponseWriter, r *http.Request) {

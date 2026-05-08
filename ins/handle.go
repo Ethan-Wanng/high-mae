@@ -55,7 +55,12 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	var upstream net.Conn
 	var err error
-	if ShouldDirect(targetAddr) {
+	routeResult := EvaluateRouting(targetAddr)
+	
+	if routeResult == 2 {
+		http.Error(w, "已根据规则拦截", http.StatusForbidden)
+		return
+	} else if routeResult == 1 {
 		upstream, err = net.DialTimeout("tcp", targetAddr, 5*time.Second)
 		if err != nil {
 			http.Error(w, "直连失败: "+err.Error(), http.StatusBadGateway)
