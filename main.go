@@ -129,7 +129,9 @@ func onReady() {
 					ins.MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
 				}
 			case <-ins.MToggleTun.ClickedCh:
-				ins.ToggleTunMode(ins.MToggleTun, tun2socksBytes, wintunBytes)
+				if msg := ins.ToggleTunMode(ins.MToggleTun, tun2socksBytes, wintunBytes); msg != "" {
+					ins.ShowWindowsMsgBox("TUN 模式", msg)
+				}
 			case <-ins.MQuit.ClickedCh:
 				systray.Quit()
 			}

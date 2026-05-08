@@ -663,17 +663,54 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
         ::-webkit-scrollbar-thumb:hover {
             background: rgba(148, 163, 184, 0.46);
         }
+
+        /* ── Toast 通知 ── */
+        .toast-container {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            z-index: 99999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
+        }
+        .toast {
+            pointer-events: auto;
+            min-width: 280px;
+            max-width: 420px;
+            padding: 14px 20px;
+            border-radius: 14px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: var(--text-main);
+            backdrop-filter: blur(18px);
+            border: 1px solid rgba(148,163,184,0.18);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+            animation: toastIn 0.35s cubic-bezier(0.16,1,0.3,1) forwards;
+            transition: opacity 0.3s, transform 0.3s;
+        }
+        .toast.success { background: rgba(16,185,129,0.18); border-color: rgba(16,185,129,0.35); }
+        .toast.error   { background: rgba(239,68,68,0.18);  border-color: rgba(239,68,68,0.35);  }
+        .toast.info    { background: rgba(96,165,250,0.18);  border-color: rgba(96,165,250,0.35); }
+        .toast.warning { background: rgba(245,158,11,0.18);  border-color: rgba(245,158,11,0.35); }
+        .toast.fade-out { opacity: 0; transform: translateX(30px); }
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateX(50px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 </head>
 <body>
+    <div class="toast-container" id="toastContainer"></div>
     <div class="container">
         <div class="header">
             <div class="brand">
                 <div class="brand-badge">HM</div>
                 <div>
                     <h1>High-Mae 控制面板</h1>
-                    <div class="subtitle">节点管理 · 订阅更新 · 极速测速 · TUN / 全局模式</div>
+                    <div class="subtitle"></div>
                 </div>
             </div>
 
@@ -681,10 +718,10 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 
             <div class="header-actions">
                 <button class="btn-success" onclick="openAddModal()">➕ 添加节点</button>
-                <button class="btn-ghost" onclick="doAction('import')">📋 导入订阅</button>
+                <button class="btn-ghost" id="btnImport" onclick="importSubscription()">📋 导入订阅</button>
                 <button class="btn-primary" id="btnTestAll" onclick="testAll()">⚡ 极速测速</button>
                 <button class="btn-ghost" onclick="openRuleModal()">🛠 规则管理</button>
-                <button class="btn-ghost" onclick="openAggGroupModal()">📁 创建聚合分组</button>
+                <button class="btn-ghost" onclick="openAggGroupModal()">📁 聚合分组管理</button>
             </div>
         </div>
 
@@ -789,17 +826,23 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
     </div>
 
     <div class="modal-overlay" id="aggGroupModal">
-        <div class="modal" style="width: min(700px, 100%);">
-            <h2>创建聚合分组</h2>
-            <div style="margin-bottom:14px;">
-                <input type="text" id="aggGroupName" placeholder="输入分组名称 (如: AI专用, 备用节点)" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+        <div class="modal" style="width: min(800px, 100%);">
+            <h2>聚合分组管理</h2>
+            <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+                <select id="aggModeSelect" onchange="onAggModeChange(this.value)" style="min-width:200px;"></select>
+                <input type="text" id="aggGroupName" placeholder="分组名称" style="flex:1;min-width:160px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
             </div>
-            <div id="aggNodeList" style="max-height: 350px; overflow-y: auto; margin-bottom: 14px; border: 1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 10px; background: rgba(255,255,255,0.02);">
+            <div id="aggCurrentSection" style="display:none;margin-bottom:14px;">
+                <div style="font-size:13px;color:var(--text-sub);margin-bottom:8px;">📋 当前节点</div>
+                <div id="aggCurrentNodeList" style="max-height:200px;overflow-y:auto;border:1px solid rgba(148,163,184,0.18);border-radius:12px;padding:8px;background:rgba(255,255,255,0.02);"></div>
+            </div>
+            <div style="font-size:13px;color:var(--text-sub);margin-bottom:8px;">📦 从订阅中选择节点</div>
+            <div id="aggNodeList" style="max-height: 250px; overflow-y: auto; margin-bottom: 14px; border: 1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 10px; background: rgba(255,255,255,0.02);">
                 <div style="text-align:center;color:var(--text-dim);padding:20px;">加载中...</div>
             </div>
             <div class="action-bar">
-                <button class="btn-ghost" onclick="closeAggGroupModal()">取消</button>
-                <button class="btn-success" onclick="submitAggGroup()">保存聚合分组</button>
+                <button class="btn-ghost" onclick="closeAggGroupModal()">关闭</button>
+                <button class="btn-success" id="btnAggSubmit" onclick="submitAggAction()">保存聚合分组</button>
             </div>
         </div>
     </div>
@@ -832,9 +875,10 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                 const sel = document.getElementById('supplierSelect');
                 sel.innerHTML = '';
 
-                if (!suppliers || suppliers.length === 0) {
+                if (!suppliersCache.length) {
                     const opt = document.createElement('option');
-                    opt.textContent = '暂无供应商';
+                    opt.value = '';
+                    opt.textContent = '暂无';
                     opt.disabled = true;
                     opt.selected = true;
                     sel.appendChild(opt);
@@ -843,7 +887,12 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                     return;
                 }
 
-                suppliers.forEach(s => {
+                const empty = document.createElement('option');
+                empty.value = '';
+                empty.textContent = '';
+                sel.appendChild(empty);
+
+                suppliersCache.forEach(s => {
                     const opt = document.createElement('option');
                     opt.value = s.fileName;
                     opt.textContent = s.name;
@@ -862,10 +911,18 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                 aggregateGroupsCache = groups || [];
                 const sel = document.getElementById('aggregateSelect');
                 sel.innerHTML = '';
-                const empty = document.createElement('option');
-                empty.value = '';
-                empty.textContent = aggregateGroupsCache.length ? '选择聚合组' : '暂无聚合组';
-                sel.appendChild(empty);
+                if (!aggregateGroupsCache.length) {
+                    const empty = document.createElement('option');
+                    empty.value = '';
+                    empty.textContent = '暂无';
+                    empty.disabled = true;
+                    sel.appendChild(empty);
+                } else {
+                    const empty = document.createElement('option');
+                    empty.value = '';
+                    empty.textContent = '';
+                    sel.appendChild(empty);
+                }
                 aggregateGroupsCache.forEach(g => {
                     const opt = document.createElement('option');
                     opt.value = g.fileName;
@@ -939,12 +996,47 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             ` + "`" + `;
         }
 
-        async function doAction(type) {
-            await fetch('/api/action?type=' + type, { method: 'POST' });
-            if (type === 'import') {
-                setTimeout(loadSuppliers, 1500);
-                setTimeout(loadNodes, 1500);
+        function showToast(msg, type = 'info', duration = 4000) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'toast ' + type;
+            toast.textContent = msg;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.add('fade-out');
+                setTimeout(() => toast.remove(), 350);
+            }, duration);
+        }
+
+        async function importSubscription() {
+            const btn = document.getElementById('btnImport');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spin">📋</span> 导入中...';
+            try {
+                const res = await fetch('/api/import_subscription', { method: 'POST' });
+                const data = await res.json();
+                if (data.ok) {
+                    showToast(data.msg, 'success', 5000);
+                    loadSuppliers();
+                    loadNodes();
+                } else {
+                    showToast(data.msg || '导入失败', 'error', 5000);
+                }
+            } catch(e) {
+                showToast('导入请求失败，请检查服务是否正常运行。', 'error');
             }
+            btn.disabled = false;
+            btn.innerHTML = '📋 导入订阅';
+        }
+
+        async function doAction(type) {
+            const res = await fetch('/api/action?type=' + type, { method: 'POST' });
+            try {
+                const data = await res.json();
+                if (data && data.msg) {
+                    showToast(data.msg, data.ok === false ? 'error' : 'info');
+                }
+            } catch(e) {}
             setTimeout(loadStatus, 300);
         }
 
@@ -1379,21 +1471,37 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
         let allSubsNodesCache = [];
         let expandedAggSubs = {};
         let selectedAggNodes = {};
+        let aggEditFile = '';
+        let aggCurrentNodesList = [];
+
         async function openAggGroupModal() {
             document.getElementById('aggGroupModal').style.display = 'flex';
             const list = document.getElementById('aggNodeList');
             list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">加载中...</div>';
-            
+
+            // 构建模式选择器
+            const sel = document.getElementById('aggModeSelect');
+            sel.innerHTML = '<option value="new">➕ 新建分组</option>';
+            aggregateGroupsCache.forEach(g => {
+                const opt = document.createElement('option');
+                opt.value = g.fileName;
+                opt.textContent = '✏️ ' + g.name;
+                sel.appendChild(opt);
+            });
+
+            // 如果已选中聚合组，默认进入编辑模式
+            const currentAggFile = document.getElementById('aggregateSelect').value;
+            if (currentAggFile) {
+                sel.value = currentAggFile;
+            }
+
+            onAggModeChange(sel.value);
+
+            // 加载所有订阅节点
             try {
                 const res = await fetch('/api/all_nodes_all_subs');
                 const groups = await res.json();
                 allSubsNodesCache = groups || [];
-                
-                if (!allSubsNodesCache || allSubsNodesCache.length === 0) {
-                    list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">暂无任何订阅</div>';
-                    return;
-                }
-                
                 expandedAggSubs = {};
                 selectedAggNodes = {};
                 renderAggSubscriptions();
@@ -1402,8 +1510,74 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             }
         }
 
+        async function onAggModeChange(value) {
+            aggEditFile = (value === 'new') ? '' : value;
+            const currentSection = document.getElementById('aggCurrentSection');
+            const nameInput = document.getElementById('aggGroupName');
+            const btnSubmit = document.getElementById('btnAggSubmit');
+
+            if (aggEditFile) {
+                currentSection.style.display = 'block';
+                btnSubmit.textContent = '添加选中节点到此分组';
+                const group = aggregateGroupsCache.find(g => g.fileName === aggEditFile);
+                nameInput.value = group ? group.name : '';
+                nameInput.disabled = true;
+                try {
+                    const res = await fetch('/api/aggregate_group_nodes?file=' + encodeURIComponent(aggEditFile));
+                    aggCurrentNodesList = await res.json() || [];
+                } catch(e) { aggCurrentNodesList = []; }
+                renderAggCurrentNodes();
+            } else {
+                currentSection.style.display = 'none';
+                nameInput.value = '';
+                nameInput.disabled = false;
+                btnSubmit.textContent = '保存聚合分组';
+                aggCurrentNodesList = [];
+            }
+        }
+
+        function renderAggCurrentNodes() {
+            const list = document.getElementById('aggCurrentNodeList');
+            if (!aggCurrentNodesList || aggCurrentNodesList.length === 0) {
+                list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:12px;">暂无节点</div>';
+                return;
+            }
+            let html = '';
+            aggCurrentNodesList.forEach((n, idx) => {
+                html += ` + "`" + `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px;border-bottom:1px solid rgba(148,163,184,0.1);font-size:13px;">
+                        <div style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            <span style="color:var(--text-dim);font-size:11px;margin-right:6px;">[${n.Type}]</span>
+                            <span>${n.Name}</span>
+                        </div>
+                        <button class="btn-ghost" style="padding:3px 8px;font-size:11px;border-color:rgba(239,68,68,0.3);color:var(--danger);flex-shrink:0;margin-left:8px;" onclick="removeAggNode(${idx})">移除</button>
+                    </div>
+                ` + "`" + `;
+            });
+            list.innerHTML = html;
+        }
+
+        async function removeAggNode(idx) {
+            if (!aggEditFile) return;
+            try {
+                const res = await fetch('/api/aggregate_group_remove_node?file=' + encodeURIComponent(aggEditFile) + '&idx=' + idx, { method: 'POST' });
+                const data = await res.json();
+                if (data.ok) {
+                    showToast('节点已移除', 'success');
+                    const res2 = await fetch('/api/aggregate_group_nodes?file=' + encodeURIComponent(aggEditFile));
+                    aggCurrentNodesList = await res2.json() || [];
+                    renderAggCurrentNodes();
+                    if (document.getElementById('aggregateSelect').value === aggEditFile) loadNodes();
+                }
+            } catch(e) { showToast('移除失败', 'error'); }
+        }
+
         function renderAggSubscriptions() {
             const list = document.getElementById('aggNodeList');
+            if (!allSubsNodesCache || allSubsNodesCache.length === 0) {
+                list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">暂无任何订阅</div>';
+                return;
+            }
             let html = '';
             allSubsNodesCache.forEach((group, gIdx) => {
                 const expanded = !!expandedAggSubs[gIdx];
@@ -1419,7 +1593,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                     group.nodes.forEach((n, nIdx) => {
                         html += ` + "`" + `
                             <label style="display:flex;align-items:center;padding:8px;border-bottom:1px solid rgba(148,163,184,0.1);cursor:pointer;font-size:13px;transition:all 0.2s;">
-                                <input type="checkbox" id="aggNodeCheck_${gIdx}_${nIdx}" data-gidx="${gIdx}" data-nidx="${nIdx}" ${selectedAggNodes[gIdx + '_' + nIdx] ? 'checked' : ''} onchange="setAggNodeSelected(${gIdx}, ${nIdx}, this.checked)" style="margin-right:10px;">
+                                <input type="checkbox" id="aggNodeCheck_${gIdx}_${nIdx}" ${selectedAggNodes[gIdx + '_' + nIdx] ? 'checked' : ''} onchange="setAggNodeSelected(${gIdx}, ${nIdx}, this.checked)" style="margin-right:10px;">
                                 <span style="flex:1;">${n.Name}</span>
                                 <span style="color:var(--text-dim);font-size:11px;">[${n.Type}]</span>
                             </label>
@@ -1446,37 +1620,63 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             document.getElementById('aggGroupModal').style.display = 'none';
         }
 
-        async function submitAggGroup() {
-            const name = document.getElementById('aggGroupName').value.trim();
-            if (!name) return alert('请输入分组名称');
-
-            const selectedNodes = [];
+        function getSelectedAggNodes() {
+            const nodes = [];
             Object.keys(selectedAggNodes).forEach(key => {
                 const parts = key.split('_');
                 const gIdx = Number(parts[0]);
                 const nIdx = Number(parts[1]);
                 const node = allSubsNodesCache[gIdx]?.nodes?.[nIdx];
-                if (node) selectedNodes.push(node);
+                if (node) nodes.push(node);
             });
+            return nodes;
+        }
 
-            if (selectedNodes.length === 0) return alert('请至少选择一个节点');
+        async function submitAggAction() {
+            const selectedNodes = getSelectedAggNodes();
 
-            try {
-                const res = await fetch('/api/create_aggregated_group', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ name: name, nodes: selectedNodes })
-                });
-                const data = await res.json();
-                if (data.ok) {
-                    alert('聚合分组创建成功！');
-                    closeAggGroupModal();
-                    loadAggregateGroups();
-                } else {
-                    alert('创建失败');
-                }
-            } catch(e) {
-                alert('请求失败');
+            if (aggEditFile) {
+                // 编辑模式：添加节点到已有分组
+                if (selectedNodes.length === 0) return showToast('请从下方订阅中勾选要添加的节点', 'warning');
+                try {
+                    const res = await fetch('/api/aggregate_group_add_nodes', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ file: aggEditFile, nodes: selectedNodes })
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                        showToast('成功添加 ' + selectedNodes.length + ' 个节点！', 'success');
+                        selectedAggNodes = {};
+                        renderAggSubscriptions();
+                        const res2 = await fetch('/api/aggregate_group_nodes?file=' + encodeURIComponent(aggEditFile));
+                        aggCurrentNodesList = await res2.json() || [];
+                        renderAggCurrentNodes();
+                        if (document.getElementById('aggregateSelect').value === aggEditFile) loadNodes();
+                    } else {
+                        showToast('添加失败', 'error');
+                    }
+                } catch(e) { showToast('请求失败', 'error'); }
+            } else {
+                // 新建模式
+                const name = document.getElementById('aggGroupName').value.trim();
+                if (!name) return showToast('请输入分组名称', 'warning');
+                if (selectedNodes.length === 0) return showToast('请至少选择一个节点', 'warning');
+                try {
+                    const res = await fetch('/api/create_aggregated_group', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ name: name, nodes: selectedNodes })
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                        showToast('聚合分组创建成功！', 'success');
+                        closeAggGroupModal();
+                        loadAggregateGroups();
+                    } else {
+                        showToast('创建失败', 'error');
+                    }
+                } catch(e) { showToast('请求失败', 'error'); }
             }
         }
 

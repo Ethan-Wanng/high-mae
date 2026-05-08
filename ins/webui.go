@@ -6,17 +6,23 @@ import (
 	"high-mae/protocol"
 	"net/http"
 	"os"
+	"os/exec"
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"sync/atomic"
 )
 
 var (
 	uiServer *http.Server
 	// Cache latency to avoid re-testing constantly
 	latencyCache sync.Map
+	// TUN 切换中标记，防止轮询期间闪烁
+	tunPending      atomic.Bool
+	tunPendingState atomic.Bool
 )
 
 type AggregateGroup struct {
@@ -50,6 +56,10 @@ func StartWebUI() {
 	mux.HandleFunc("/api/aggregate_groups", aggregateGroupsHandler)
 	mux.HandleFunc("/api/switch_aggregate_group", switchAggregateGroupHandler)
 	mux.HandleFunc("/api/delete_aggregate_group", deleteAggregateGroupHandler)
+	mux.HandleFunc("/api/import_subscription", importSubscriptionHandler)
+	mux.HandleFunc("/api/aggregate_group_nodes", aggGroupNodesHandler)
+	mux.HandleFunc("/api/aggregate_group_add_nodes", aggGroupAddNodesHandler)
+	mux.HandleFunc("/api/aggregate_group_remove_node", aggGroupRemoveNodeHandler)
 
 	uiServer = &http.Server{
 		Addr:    "127.0.0.1:10809",
@@ -429,10 +439,14 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getStatusHandler(w http.ResponseWriter, r *http.Request) {
+	tunState := IsTunModeOn
+	if tunPending.Load() {
+		tunState = tunPendingState.Load()
+	}
 	status := map[string]interface{}{
 		"proxy":    IsSystemProxyOn,
 		"mode":     ProxyMode,
-		"tun":      IsTunModeOn,
+		"tun":      tunState,
 		"speedIn":  CurrentSpeedIn,
 		"speedOut": CurrentSpeedOut,
 	}
@@ -442,9 +456,8 @@ func getStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 func actionHandler(w http.ResponseWriter, r *http.Request) {
 	actionType := r.URL.Query().Get("type")
+	w.Header().Set("Content-Type", "application/json")
 	switch actionType {
-	case "import":
-		ImportNodeFromClipboard()
 	case "proxy":
 		IsSystemProxyOn = !IsSystemProxyOn
 		SetSystemProxy(IsSystemProxyOn)
@@ -468,9 +481,25 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "tun":
-		ToggleTunMode(MToggleTun, Tun2socksBytes, WintunBytes)
+		if !IsAdmin() {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "开启虚拟网卡(TUN)需要管理员权限！请以管理员身份运行。"})
+			return
+		}
+		// 标记 TUN 正在切换中，防止轮询期间把 checkbox 闪回旧状态
+		tunTarget := !IsTunModeOn
+		tunPending.Store(true)
+		tunPendingState.Store(tunTarget)
+		go func() {
+			defer tunPending.Store(false)
+			msg := ToggleTunMode(MToggleTun, Tun2socksBytes, WintunBytes)
+			if msg != "" {
+				// 失败时不需要额外处理，ToggleTunMode 内部不会修改 IsTunModeOn
+			}
+		}()
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+		return
 	}
-	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }
 
 func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
@@ -582,6 +611,149 @@ func deleteSupplierHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RefreshSupplierMenu()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+}
+
+func importSubscriptionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	respond := func(ok bool, msg string) {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": ok, "msg": msg})
+	}
+
+	// 1. 读取剪贴板
+	out, err := exec.Command("powershell", "-command", "Get-Clipboard").Output()
+	if err != nil {
+		respond(false, "无法读取剪贴板内容！")
+		return
+	}
+
+	input := strings.TrimSpace(string(out))
+	if input == "" {
+		respond(false, "剪贴板为空！请复制订阅链接或节点内容。")
+		return
+	}
+
+	// 2. 解析节点
+	newNodes, traffic, err := ParseSubscriptionWithInfo(input)
+	if err != nil || len(newNodes) == 0 {
+		respond(false, fmt.Sprintf("无法解析剪贴板内的节点或订阅: %v", err))
+		return
+	}
+
+	// 3. 持久化链接到 JSON
+	lines := strings.Split(input, "\n")
+	targetFile := "config.yml"
+	isOldLink := false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			fName, existed, saveErr := AppendSubscriptionWithTraffic(line, traffic)
+			if saveErr != nil {
+				fmt.Printf("⚠️ 警告: 无法将链接保存到 JSON: %v\n", saveErr)
+			} else if fName != "" {
+				targetFile = fName
+				isOldLink = existed
+			}
+		}
+	}
+
+	AllNodes = newNodes
+	if err := SaveNodesToYAML(targetFile, AllNodes); err != nil {
+		respond(false, "写入 .yml 文件失败: "+err.Error())
+		return
+	}
+
+	CurrentConfigFile = targetFile
+	refreshedNodes, err := protocol.ParseNodes(targetFile)
+	if err == nil {
+		AllNodes = refreshedNodes
+	}
+
+	latencyCache = sync.Map{}
+	RefreshSupplierMenu()
+	if isOldLink {
+		RefreshNodeMenu(nil)
+		respond(true, fmt.Sprintf("🎉 成功更新/覆盖了已存在的订阅！共 %d 个节点。", len(newNodes)))
+	} else {
+		RefreshNodeMenu(newNodes)
+		respond(true, fmt.Sprintf("🎉 成功解析并导入 %d 个新节点！原始链接已保存。", len(newNodes)))
+	}
+}
+
+func aggGroupNodesHandler(w http.ResponseWriter, r *http.Request) {
+	fileName := r.URL.Query().Get("file")
+	nodes, err := protocol.ParseNodes(fileName)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil || nodes == nil {
+		json.NewEncoder(w).Encode([]interface{}{})
+		return
+	}
+	json.NewEncoder(w).Encode(nodes)
+}
+
+func aggGroupAddNodesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		File  string          `json:"file"`
+		Nodes []protocol.Node `json:"nodes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+	existing, _ := protocol.ParseNodes(req.File)
+	existing = append(existing, req.Nodes...)
+	if err := SaveNodesToYAML(req.File, existing); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
+		return
+	}
+	if CurrentConfigFile == req.File {
+		AllNodes = existing
+		latencyCache = sync.Map{}
+		RefreshNodeMenu(nil)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "count": len(existing)})
+}
+
+func aggGroupRemoveNodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	fileName := r.URL.Query().Get("file")
+	idxStr := r.URL.Query().Get("idx")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "Invalid index", http.StatusBadRequest)
+		return
+	}
+	nodes, _ := protocol.ParseNodes(fileName)
+	if idx < 0 || idx >= len(nodes) {
+		http.Error(w, "Index out of range", http.StatusBadRequest)
+		return
+	}
+	nodes = append(nodes[:idx], nodes[idx+1:]...)
+	if err := SaveNodesToYAML(fileName, nodes); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false})
+		return
+	}
+	if CurrentConfigFile == fileName {
+		AllNodes = nodes
+		latencyCache = sync.Map{}
+		RefreshNodeMenu(nil)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }
