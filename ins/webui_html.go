@@ -1,7 +1,7 @@
 package ins
 
 import (
-	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -1688,5 +1688,5 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
     </script>
 </body>
 </html>`
-	fmt.Fprint(w, html)
+	io.WriteString(w, html)
 }

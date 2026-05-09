@@ -114,8 +114,8 @@ func StartLocalDNS() {
 		return
 	}
 
+	buf := make([]byte, 2048) // 复用缓冲区，避免每次 DNS 查询都分配
 	for {
-		buf := make([]byte, 2048)
 		n, clientAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			continue

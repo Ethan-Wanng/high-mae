@@ -80,8 +80,18 @@ func onReady() {
 	systray.AddSeparator()
 	ins.MQuit = systray.AddMenuItem("❌ 安全退出", "退出程序")
 
-	ins.Tun2socksBytes = tun2socksBytes
-	ins.WintunBytes = wintunBytes
+	// 🚀 预释放嵌入二进制到磁盘，随后清除内存引用节省 ~11MB
+	if _, err := os.Stat("tun2socks.exe"); os.IsNotExist(err) {
+		os.WriteFile("tun2socks.exe", tun2socksBytes, 0755)
+	}
+	if _, err := os.Stat("wintun.dll"); os.IsNotExist(err) {
+		os.WriteFile("wintun.dll", wintunBytes, 0644)
+	}
+	// 嵌入字节不再需要驻留内存
+	ins.Tun2socksBytes = nil
+	ins.WintunBytes = nil
+	tun2socksBytes = nil
+	wintunBytes = nil
 
 	go ins.StartLocalDNS()
 	go ins.StartWebUI()
@@ -129,7 +139,7 @@ func onReady() {
 					ins.MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
 				}
 			case <-ins.MToggleTun.ClickedCh:
-				if msg := ins.ToggleTunMode(ins.MToggleTun, tun2socksBytes, wintunBytes); msg != "" {
+				if msg := ins.ToggleTunMode(ins.MToggleTun); msg != "" {
 					ins.ShowWindowsMsgBox("TUN 模式", msg)
 				}
 			case <-ins.MQuit.ClickedCh:

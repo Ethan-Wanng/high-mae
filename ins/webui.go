@@ -353,6 +353,7 @@ func speedtestHandler(w http.ResponseWriter, r *http.Request) {
 	case <-done:
 		timer.Stop()
 	case <-timer.C:
+		resp.Body.Close()           // 必须先关 Body，让阻塞的 Read goroutine 返回
 		client.CloseIdleConnections()
 	}
 
@@ -491,7 +492,7 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 		tunPendingState.Store(tunTarget)
 		go func() {
 			defer tunPending.Store(false)
-			msg := ToggleTunMode(MToggleTun, Tun2socksBytes, WintunBytes)
+			msg := ToggleTunMode(MToggleTun)
 			if msg != "" {
 				// 失败时不需要额外处理，ToggleTunMode 内部不会修改 IsTunModeOn
 			}

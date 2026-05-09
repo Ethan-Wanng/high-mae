@@ -11,7 +11,7 @@ import (
 )
 
 // ToggleTunMode 切换 TUN 模式，返回非空字符串表示错误信息
-func ToggleTunMode(mToggleTun *systray.MenuItem, tun2socksBytes []byte, wintunBytes []byte) string {
+func ToggleTunMode(mToggleTun *systray.MenuItem) string {
 	if !IsAdmin() {
 		return "开启虚拟网卡(TUN)需要管理员权限！\n请退出程序，右键选择「以管理员身份运行」。"
 	}
@@ -23,8 +23,6 @@ func ToggleTunMode(mToggleTun *systray.MenuItem, tun2socksBytes []byte, wintunBy
 		if GlobalNodeIP != "" {
 			RunHiddenCommand("route", "delete", GlobalNodeIP, "mask", "255.255.255.255")
 		}
-		os.Remove("tun2socks.exe")
-		os.Remove("wintun.dll")
 		IsTunModeOn = false
 	} else {
 		realGateway := GetDefaultGateway()
@@ -36,12 +34,12 @@ func ToggleTunMode(mToggleTun *systray.MenuItem, tun2socksBytes []byte, wintunBy
 		RunHiddenCommand("taskkill", "/F", "/IM", "tun2socks.exe")
 		RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", TunIP)
 
-		// 🚀 优化：仅在文件不存在时才释放嵌入的二进制，避免每次开关都重写磁盘
+		// 🚀 优化：不再写入，如果文件被意外删除则提示用户重启程序释放
 		if _, err := os.Stat("tun2socks.exe"); os.IsNotExist(err) {
-			os.WriteFile("tun2socks.exe", tun2socksBytes, 0755)
+			return "核心文件 tun2socks.exe 不存在，请重启程序以释放。"
 		}
 		if _, err := os.Stat("wintun.dll"); os.IsNotExist(err) {
-			os.WriteFile("wintun.dll", wintunBytes, 0644)
+			return "核心文件 wintun.dll 不存在，请重启程序以释放。"
 		}
 
 		TunCmd = exec.Command("./tun2socks.exe", "-device", "tun://AnyTLS-TUN", "-proxy", "http://127.0.0.1:"+LocalHttpPort, "-loglevel", "error")

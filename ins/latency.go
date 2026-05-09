@@ -206,14 +206,17 @@ func CheckProxyLatency(proxyURL string, targetURL string, timeout time.Duration)
 		return 0, fmt.Errorf("代理地址解析失败: %v", err)
 	}
 
+	tr := &http.Transport{
+		Proxy:             http.ProxyURL(pUrl),
+		ForceAttemptHTTP2: false,
+		MaxIdleConns:      1,
+		IdleConnTimeout:   1 * time.Second,
+	}
+	defer tr.CloseIdleConnections()
+
 	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy:             http.ProxyURL(pUrl),
-			ForceAttemptHTTP2: false,
-			MaxIdleConns:      1,
-			IdleConnTimeout:   1 * time.Second,
-		},
-		Timeout: timeout,
+		Transport: tr,
+		Timeout:   timeout,
 	}
 
 	start := time.Now()
@@ -265,7 +268,7 @@ func TestNodeLatency(node protocol.Node) (int64, error) {
 	return time.Since(start).Milliseconds(), nil
 }
 
-// FastTCPPing 提供极低内存、极快速度的 TCP 握手测速，专门用于“一键测速全部节点”
+// FastTCPPing 提供极低内存、极快速度的 TCP 握手测速，专门用于"一键测速全部节点"
 // 它不会启动任何代理内核，因此内存消耗几乎为 0，并且可以轻松绕过 TUN 网卡防止死循环
 func FastTCPPing(node protocol.Node) (int64, error) {
 	newIP := resolveDirect(node.Server)
@@ -285,19 +288,20 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 
 	// 获取真实的本地 IP，绕过 TUN
 	var localAddr net.Addr
-	
+
+	isUDP := node.Type == "hysteria2" || node.Type == "hy2" || node.Type == "wireguard"
 	network := "tcp"
-	if node.Type == "hysteria2" || node.Type == "hy2" || node.Type == "wireguard" {
+	if isUDP {
 		network = "udp"
 	}
 
 	if IsTunModeOn {
 		realIP := GetRealLocalIP()
 		if realIP != "" && realIP != "10.0.0.1" && realIP != "10.0.0.2" {
-			if network == "tcp" {
-				localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
-			} else {
+			if isUDP {
 				localAddr = &net.UDPAddr{IP: net.ParseIP(realIP), Port: 0}
+			} else {
+				localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
 			}
 		}
 	}
@@ -307,12 +311,81 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 		LocalAddr: localAddr,
 	}
 
+	// 🚀 核心修复：UDP 的 Dial 是无连接的，永远"成功"且延迟为 0，根本测不出连通性！
+	// 对于 Hysteria2 等基于 QUIC 的 UDP 协议，必须发一个真实的 QUIC Initial 包，
+	// 等服务器回一个 Version Negotiation / Retry / Handshake 包，才能证明对端存活。
+	if isUDP {
+		return fastQUICPing(dialer, network, addr)
+	}
+
 	start := time.Now()
 	conn, err := dialer.Dial(network, addr)
 	if err != nil {
 		return 0, err
 	}
 	conn.Close()
+	return time.Since(start).Milliseconds(), nil
+}
+
+// fastQUICPing 发送一个故意使用无效版本号的 QUIC Long Header 包，验证 UDP 服务器是否存活。
+// 根据 RFC 9000 §6.1，QUIC 服务器收到不支持的版本时 **必须** 回复 Version Negotiation 包，
+// 所以只要能收到任何回包，就证明服务器可达且端口开放。
+//
+// 💡 为什么不用合法的 QUIC v1 版本？
+// 因为 v1 Initial 包的 payload 必须包含有效的 CRYPTO frame (TLS ClientHello)，
+// 否则服务器会静默丢弃 → 永远 timeout。用无效版本号能 100% 触发 Version Negotiation 回包。
+func fastQUICPing(dialer *net.Dialer, network, addr string) (int64, error) {
+	conn, err := dialer.Dial(network, addr)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	// 构造一个最简 QUIC Long Header 包，故意用无效版本号触发 Version Negotiation:
+	// RFC 9000 §17.2 Long Header 格式:
+	//   [Header Form (1) | Fixed Bit (1) | Type (2) | Reserved (4)] = 1 byte
+	//   [Version (4 bytes)]
+	//   [DCID Len (1)] [DCID (N)] [SCID Len (1)] [SCID (M)]
+	//   [Payload ...]
+	// 整个包必须 >= 1200 字节 (RFC 9000 §14.1) 才会被服务器当作合法的初始包处理
+	packet := make([]byte, 1200)
+	packet[0] = 0xC0 // Long Header Form bit set, Fixed bit set
+	// 🚀 关键：使用一个绝对不存在的 QUIC 版本号，强制触发 Version Negotiation
+	packet[1] = 0xBA
+	packet[2] = 0xBA
+	packet[3] = 0xBA
+	packet[4] = 0xBA
+	// DCID Length = 8
+	packet[5] = 0x08
+	// DCID (bytes 6-13): 固定探测值
+	packet[6] = 0xDE
+	packet[7] = 0xAD
+	packet[8] = 0xBE
+	packet[9] = 0xEF
+	packet[10] = 0xCA
+	packet[11] = 0xFE
+	packet[12] = 0xBA
+	packet[13] = 0xBE
+	// SCID Length = 0
+	packet[14] = 0x00
+	// 剩余部分全是 0 (填充)
+
+	start := time.Now()
+
+	// 写出探测包
+	conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	if _, err := conn.Write(packet); err != nil {
+		return 0, fmt.Errorf("UDP 发送失败: %w", err)
+	}
+
+	// 等待服务器回复 Version Negotiation 包
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 1500)
+	_, err = conn.Read(buf)
+	if err != nil {
+		return 0, fmt.Errorf("UDP 服务器无响应 (超时或不可达): %w", err)
+	}
+
 	return time.Since(start).Milliseconds(), nil
 }
 
