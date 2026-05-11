@@ -1,0 +1,21 @@
+.gocache/
+.gomodcache/
+gomodcache2/
+.tmp_mieru_src
+tmp_dump_mieru.go
+tmp_probe_mieru_ua.go
+.idea
+test_reg.go
+
+# Project binaries
+HighMae.exe
+tun2socks.exe
+wintun.dll
+*.exe
+*.dll
+
+# Sensitive configurations
+subscription.json
+*.yml
+*.yaml
+*.bak
