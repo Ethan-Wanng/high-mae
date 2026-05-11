@@ -5,3 +5,4 @@ gomodcache2/
 tmp_dump_mieru.go
 tmp_probe_mieru_ua.go
 .idea
+test_reg.go

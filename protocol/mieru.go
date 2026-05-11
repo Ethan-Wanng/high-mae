@@ -113,7 +113,7 @@ func parseLinkNodes(content string) []Node {
 			if n, err := ParseHysteria2(line); err == nil {
 				nodes = append(nodes, n)
 			}
-		case strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://"):
+		case strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") || strings.HasPrefix(line, "socks://") || strings.HasPrefix(line, "socks5://") || strings.HasPrefix(line, "tls://"):
 			if n, err := ParseHTTPLike(line); err == nil {
 				nodes = append(nodes, n)
 			}

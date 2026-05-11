@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 	"sync/atomic"
+	"time"
 )
 
 var (
@@ -60,6 +60,13 @@ func StartWebUI() {
 	mux.HandleFunc("/api/aggregate_group_nodes", aggGroupNodesHandler)
 	mux.HandleFunc("/api/aggregate_group_add_nodes", aggGroupAddNodesHandler)
 	mux.HandleFunc("/api/aggregate_group_remove_node", aggGroupRemoveNodeHandler)
+
+	// 默认开启 WebRTC 防泄漏
+	IsWebRTCPolicyOn = CheckWebRTCLeakStatus()
+	if !IsWebRTCPolicyOn {
+		ToggleWebRTCLeak(true)
+		IsWebRTCPolicyOn = true
+	}
 
 	uiServer = &http.Server{
 		Addr:    "127.0.0.1:10809",
@@ -353,7 +360,7 @@ func speedtestHandler(w http.ResponseWriter, r *http.Request) {
 	case <-done:
 		timer.Stop()
 	case <-timer.C:
-		resp.Body.Close()           // 必须先关 Body，让阻塞的 Read goroutine 返回
+		resp.Body.Close() // 必须先关 Body，让阻塞的 Read goroutine 返回
 		client.CloseIdleConnections()
 	}
 
@@ -448,6 +455,7 @@ func getStatusHandler(w http.ResponseWriter, r *http.Request) {
 		"proxy":    IsSystemProxyOn,
 		"mode":     ProxyMode,
 		"tun":      tunState,
+		"webrtc":   IsWebRTCPolicyOn,
 		"speedIn":  CurrentSpeedIn,
 		"speedOut": CurrentSpeedOut,
 	}
@@ -498,6 +506,14 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+		return
+	case "webrtc":
+		IsWebRTCPolicyOn = !IsWebRTCPolicyOn
+		ToggleWebRTCLeak(IsWebRTCPolicyOn)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":  true,
+			"msg": "防 WebRTC 泄露策略已触发！\n\n注意：此功能通过修改 Windows 系统策略(Registry)实现，已向您请求管理员权限。\n如果策略未生效，请前往「chrome://policy」重新加载策略，或重启浏览器。",
+		})
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})

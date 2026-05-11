@@ -54,7 +54,7 @@ func resolveDirect(host string) string {
 	return ips[0]
 }
 
-	// CreateTempHTTPClient 直接返回一个装载了特定节点的原生 http.Client，专供并发测速
+// CreateTempHTTPClient 直接返回一个装载了特定节点的原生 http.Client，专供并发测速
 func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 	newIP := resolveDirect(node.Server)
 	var dialCtx func(ctx context.Context, network, addr string) (net.Conn, error)
@@ -141,8 +141,28 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 			adapter.Close()
 		}
 
+	} else if (node.Type == "socks5" || node.Type == "socks") && (node.TLS || node.Tls) {
+		// C. SOCKS5-over-TLS (sing-box 的 SOCKS outbound 不支持 TLS，手动处理)
+		adapter := &Socks5TLSAdapter{
+			Server:         node.Server,
+			ResolvedIP:     newIP,
+			Port:           node.Port,
+			Username:       node.Username,
+			Password:       node.Password,
+			SNI:            node.SNI,
+			SkipCertVerify: node.SkipCertVerify,
+		}
+		dialCtx = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := adapter.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
+			if err == nil {
+				conn = &TrackingConn{conn}
+			}
+			return conn, err
+		}
+		cleanup = nil // Socks5TLSAdapter 无状态，无需清理
+
 	} else {
-		// B. Sing-box 其他多协议节点
+		// D. Sing-box 其他多协议节点
 		opts, err := buildSingBoxOptions(node, newIP)
 		if err != nil {
 			return nil, nil, err
@@ -168,9 +188,9 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 			}
 			return conn, err
 		}
-		cleanup = func() { 
+		cleanup = func() {
 			b.Close()
-			cancelBox() 
+			cancelBox()
 		}
 	}
 
@@ -388,7 +408,6 @@ func fastQUICPing(dialer *net.Dialer, network, addr string) (int64, error) {
 
 	return time.Since(start).Milliseconds(), nil
 }
-
 
 // =======================================================
 // 2. GUI 菜单绑定的触发函数 (处理弹窗交互)

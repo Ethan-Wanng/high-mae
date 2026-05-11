@@ -356,7 +356,7 @@ func TestSaveNodesToYAML_Socks5(t *testing.T) {
 
 	data, _ := os.ReadFile("socks5.yml")
 	content := string(data)
-	for _, expect := range []string{"socks5", "username: user-id", "tls: true", "sni: proxy.example.com", "skip-cert-verify: false"} {
+	for _, expect := range []string{"socks5", "username: 'user-id'", "tls: true", "sni: proxy.example.com", "skip-cert-verify: false"} {
 		if !strings.Contains(content, expect) {
 			t.Errorf("YAML中缺少: %q", expect)
 		}

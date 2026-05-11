@@ -759,6 +759,11 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                     <span>🔌 TUN</span>
                     <label class="toggle"><input type="checkbox" id="chkTun" onchange="doAction('tun')"><span class="slider"></span></label>
                 </div>
+
+                <div class="control-card" title="修改浏览器配置以防止真实 IP 泄露，无需管理员权限">
+                    <span>🛡️ WebRTC 保护</span>
+                    <label class="toggle"><input type="checkbox" id="chkWebRTC" onchange="doAction('webrtc')"><span class="slider"></span></label>
+                </div>
             </div>
 
             <div class="control-row">
@@ -863,6 +868,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                 document.getElementById('chkProxy').checked = st.proxy;
                 document.getElementById('chkMode').checked = (st.mode === 'Global');
                 document.getElementById('chkTun').checked = st.tun;
+                document.getElementById('chkWebRTC').checked = st.webrtc;
                 document.getElementById('speedMonitor').innerHTML = '↑ ' + st.speedOut + ' &nbsp; ↓ ' + st.speedIn;
             } catch(e) {}
         }

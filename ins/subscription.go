@@ -266,10 +266,10 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 			// 🎯 HTTP (NaiveProxy) 专属格式排版
 		} else if n.Type == "http" || n.Type == "https" || n.Type == "socks" || n.Type == "socks5" {
 			if n.Username != "" {
-				inner.WriteString(fmt.Sprintf("    username: %s,\n", n.Username))
+				inner.WriteString(fmt.Sprintf("    username: '%s',\n", n.Username))
 			}
 			if n.Password != "" {
-				inner.WriteString(fmt.Sprintf("    password: %s,\n", n.Password))
+				inner.WriteString(fmt.Sprintf("    password: '%s',\n", n.Password))
 			}
 			if n.Tls || n.TLS {
 				inner.WriteString("    tls: true,\n")

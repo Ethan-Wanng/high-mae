@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// 解析 http(s) 代理节点链接 (包含被整体 Base64 加密的特殊情况)
+// 解析 http(s)/socks(5) 代理节点链接 (包含被整体 Base64 加密的特殊情况)
 func ParseHTTPLike(link string) (Node, error) {
 	// 判断原始链接是否是 https（用于决定是否开启 Tls）
-	isTls := strings.HasPrefix(link, "https://")
+	isTls := strings.HasPrefix(link, "https://") || strings.HasPrefix(link, "tls://")
 
 	u, err := url.Parse(link)
 	if err != nil {
@@ -21,10 +21,7 @@ func ParseHTTPLike(link string) (Node, error) {
 		decStr := string(decoded)
 		if strings.Contains(decStr, "@") {
 			// 将解密后的明文还原为标准链接重新解析
-			reconstructed := "http://"
-			if isTls {
-				reconstructed = "https://"
-			}
+			reconstructed := u.Scheme + "://"
 			reconstructed += decStr
 			if u.RawQuery != "" {
 				reconstructed += "?" + u.RawQuery
@@ -42,7 +39,7 @@ func ParseHTTPLike(link string) (Node, error) {
 		if isTls {
 			port = 443
 		} else {
-			port = 80
+			port = 80 // or 1080?
 		}
 	}
 
@@ -66,9 +63,13 @@ func ParseHTTPLike(link string) (Node, error) {
 		}
 	}
 
-	// 强制设定为 http 协议（根据你的需求去掉 https）
+	nodeType := "http"
+	if u.Scheme == "socks" || u.Scheme == "socks5" {
+		nodeType = "socks5"
+	}
+
 	return Node{
-		Type:     "http",
+		Type:     nodeType,
 		Name:     name,
 		Server:   u.Hostname(),
 		Port:     port,

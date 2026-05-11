@@ -164,6 +164,9 @@ func EvaluateRouting(hostPort string) int {
 		}
 	}
 	host = strings.ToLower(host)
+	if IsStunDomain(host) {
+		return 2 // reject STUN
+	}
 
 	for _, group := range RuleGroups {
 		groupAction := normalizeRuleAction(group.Action)
@@ -330,6 +333,25 @@ func SwitchNode(node protocol.Node) {
 
 		currentMieru = newClient
 		activeClient = newClient
+		return
+	}
+
+	// ==========================================
+	// 专门处理 SOCKS5 + TLS 节点
+	// sing-box 的 SOCKS outbound 不支持 TLS，必须手动包裹
+	// ==========================================
+	if (node.Type == "socks5" || node.Type == "socks") && (node.TLS || node.Tls) {
+		log.Printf("初始化 SOCKS5-over-TLS 引擎: %s", node.Name)
+		adapter := &Socks5TLSAdapter{
+			Server:         node.Server,
+			ResolvedIP:     newIP,
+			Port:           node.Port,
+			Username:       node.Username,
+			Password:       node.Password,
+			SNI:            node.SNI,
+			SkipCertVerify: node.SkipCertVerify,
+		}
+		activeClient = adapter
 		return
 	}
 
@@ -614,6 +636,9 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		outbound.Options = &opts
 
 	case "socks", "socks5":
+		// 注意: TLS 模式的 SOCKS5 在 SwitchNode / CreateTempHTTPClient 中已被拦截，
+		// 走 Socks5TLSAdapter 专用路径，不会到达此处。
+		// 这里只处理纯 SOCKS5 (无 TLS) 的情况。
 		outbound.Type = "socks"
 		opts := option.SOCKSOutboundOptions{
 			ServerOptions: serverOpts,
