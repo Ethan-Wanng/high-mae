@@ -67,6 +67,7 @@ func onReady() {
 	}
 
 	ins.LoadUserRules()
+	ins.LoadDNSConfig()
 
 	if len(ins.AllNodes) > 0 {
 		ins.SwitchNode(ins.AllNodes[0])
@@ -78,6 +79,7 @@ func onReady() {
 	systray.AddSeparator()
 	ins.MToggleTun = systray.AddMenuItem("🔌 虚拟网卡 (TUN): [已关闭]", "接管所有流量")
 	systray.AddSeparator()
+	mAbout := systray.AddMenuItem("ℹ️ 关于海魅", "查看项目信息与技术栈")
 	ins.MQuit = systray.AddMenuItem("❌ 安全退出", "退出程序")
 
 	// 🚀 预释放嵌入二进制到磁盘，随后清除内存引用节省 ~11MB
@@ -142,6 +144,16 @@ func onReady() {
 				if msg := ins.ToggleTunMode(ins.MToggleTun); msg != "" {
 					ins.ShowWindowsMsgBox("TUN 模式", msg)
 				}
+			case <-mAbout.ClickedCh:
+				aboutMsg := "海魅 (High-Mae) - 现代化 Windows 代理客户端\n\n" +
+					"本项目已在 GitHub 遵循 MIT 协议开源。\n\n" +
+					"核心技术栈：\n" +
+					"• 引擎：sing-box (及定制版 mbox)\n" +
+					"• 托盘：getlantern/systray\n" +
+					"• 控制面板：Go 标准库 (net/http)\n" +
+					"• 网络驱动：Wintun & tun2socks\n\n" +
+					"Created with ❤️ by Ethan-Wanng"
+				ins.ShowWindowsMsgBox("关于海魅", aboutMsg)
 			case <-ins.MQuit.ClickedCh:
 				systray.Quit()
 			}

@@ -11,7 +11,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>High-Mae 控制面板</title>
+    <title>High-Mae (海魅) 控制面板</title>
     <style>
         :root {
             --bg-0: #070b14;
@@ -699,6 +699,46 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             from { opacity: 0; transform: translateX(50px); }
             to   { opacity: 1; transform: translateX(0); }
         }
+
+        /* ── 关于区域 ── */
+        .footer {
+            margin-top: 40px;
+            padding: 30px;
+            text-align: center;
+            border-top: 1px solid var(--card-border);
+            color: var(--text-dim);
+            font-size: 13px;
+        }
+        .footer-brand {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .tech-tags {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .tech-tag {
+            padding: 4px 10px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(148,163,184,0.1);
+            border-radius: 6px;
+            color: var(--text-sub);
+        }
+        .footer a {
+            color: var(--accent);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .footer a:hover {
+            color: var(--accent-2);
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 </head>
@@ -709,8 +749,8 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             <div class="brand">
                 <div class="brand-badge">HM</div>
                 <div>
-                    <h1>High-Mae 控制面板</h1>
-                    <div class="subtitle"></div>
+                    <h1>High-Mae (海魅) 控制面板</h1>
+                    <div class="subtitle">现代化 Windows 网络代理客户端</div>
                 </div>
             </div>
 
@@ -721,6 +761,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
                 <button class="btn-ghost" id="btnImport" onclick="importSubscription()">📋 导入订阅</button>
                 <button class="btn-primary" id="btnTestAll" onclick="testAll()">⚡ 极速测速</button>
                 <button class="btn-ghost" onclick="openRuleModal()">🛠 规则管理</button>
+                <button class="btn-ghost" onclick="openDNSModal()">🌐 DNS 管理</button>
                 <button class="btn-ghost" onclick="openAggGroupModal()">📁 聚合分组管理</button>
             </div>
         </div>
@@ -772,6 +813,18 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
         </div>
 
         <div class="grid" id="nodeGrid"></div>
+
+        <div class="footer">
+            <div class="footer-brand">High-Mae (海魅)</div>
+            <p>基于 MIT 协议开源的现代化网络工具</p>
+            <div class="tech-tags">
+                <span class="tech-tag">sing-box Core</span>
+                <span class="tech-tag">Go Standard Library</span>
+                <span class="tech-tag">Wintun & Tun2socks</span>
+                <span class="tech-tag">Vanilla CSS</span>
+            </div>
+            <p>Created with ❤️ by <a href="https://github.com/Ethan-Wanng" target="_blank">Ethan-Wanng</a></p>
+        </div>
     </div>
 
     <div class="modal-overlay" id="addModal">
@@ -826,6 +879,46 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             <div class="action-bar">
                 <button class="btn-ghost" onclick="closeRuleModal()">关闭</button>
                 <button class="btn-primary" onclick="saveRules()">保存并应用</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="dnsModal">
+        <div class="modal" style="width: min(860px, 100%);">
+            <h2>DNS 规则管理</h2>
+            
+            <div style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
+                <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--accent);">📡 DNS 服务器列表</div>
+                <div id="dnsServerList" style="max-height: 150px; overflow-y: auto; margin-bottom: 10px;"></div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <input type="text" id="dnsServerName" placeholder="服务器名称" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
+                    <input type="text" id="dnsServerAddr" placeholder="地址 (如 8.8.8.8:53)" style="flex:2; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
+                    <button class="btn-success" style="padding: 6px 12px; font-size:12px;" onclick="addDNSServer()">添加服务器</button>
+                </div>
+            </div>
+
+            <div style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
+                <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--accent);">🛣️ DNS 分流规则</div>
+                <div style="display:flex; gap:10px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
+                    <span>默认服务器:</span>
+                    <select id="dnsDefaultServer" style="min-width:150px; padding:6px; font-size:13px;"></select>
+                </div>
+                <div id="dnsRuleList" style="max-height: 200px; overflow-y: auto; margin-bottom: 10px; border-top: 1px solid rgba(148,163,184,0.1); padding-top:10px;"></div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <select id="dnsRuleType" style="min-width:100px; padding:6px; font-size:13px;">
+                        <option value="domain_suffix">域名后缀</option>
+                        <option value="domain_keyword">域名关键字</option>
+                        <option value="domain">完整域名</option>
+                    </select>
+                    <input type="text" id="dnsRuleValue" placeholder="域名/关键字" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
+                    <select id="dnsRuleServer" style="min-width:120px; padding:6px; font-size:13px;"></select>
+                    <button class="btn-success" style="padding: 6px 12px; font-size:12px;" onclick="addDNSRule()">添加规则</button>
+                </div>
+            </div>
+
+            <div class="action-bar">
+                <button class="btn-ghost" onclick="closeDNSModal()">关闭</button>
+                <button class="btn-primary" onclick="saveDNSConfig()">保存并应用</button>
             </div>
         </div>
     </div>
@@ -1472,6 +1565,120 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 
         function closeRuleModal() {
             document.getElementById('ruleModal').style.display = 'none';
+        }
+
+        let dnsConfig = { servers: [], rules: [], default: '' };
+
+        async function loadDNSConfig() {
+            try {
+                const res = await fetch('/api/dns');
+                dnsConfig = await res.json();
+                renderDNSConfig();
+            } catch(e) { showToast('加载 DNS 配置失败', 'error'); }
+        }
+
+        function renderDNSConfig() {
+            const serverList = document.getElementById('dnsServerList');
+            const ruleList = document.getElementById('dnsRuleList');
+            const defaultSelect = document.getElementById('dnsDefaultServer');
+            const ruleServerSelect = document.getElementById('dnsRuleServer');
+
+            // Render Servers
+            serverList.innerHTML = '';
+            defaultSelect.innerHTML = '';
+            ruleServerSelect.innerHTML = '';
+            
+            dnsConfig.servers.forEach((s, idx) => {
+                serverList.innerHTML += ` + "`" + `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid rgba(148,163,184,0.08);">
+                        <span style="font-size:13px;"><strong>${s.name}</strong> (${s.address})</span>
+                        <button class="btn-ghost" style="padding:2px 6px; font-size:11px; color:var(--danger);" onclick="deleteDNSServer(${idx})">删除</button>
+                    </div>
+                ` + "`" + `;
+                
+                const opt1 = document.createElement('option');
+                opt1.value = s.id;
+                opt1.textContent = s.name;
+                if (s.id === dnsConfig.default) opt1.selected = true;
+                defaultSelect.appendChild(opt1);
+
+                const opt2 = document.createElement('option');
+                opt2.value = s.id;
+                opt2.textContent = s.name;
+                ruleServerSelect.appendChild(opt2);
+            });
+
+            // Render Rules
+            ruleList.innerHTML = '';
+            dnsConfig.rules.forEach((r, idx) => {
+                const server = dnsConfig.servers.find(s => s.id === r.serverId);
+                ruleList.innerHTML += ` + "`" + `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid rgba(148,163,184,0.08);">
+                        <span style="font-size:13px;"><span style="background:rgba(255,255,255,0.05); padding:2px 4px; border-radius:4px; font-size:11px; margin-right:6px;">${typeName(r.type)}</span> ${r.value} -> <strong>${server ? server.name : 'Unknown'}</strong></span>
+                        <button class="btn-ghost" style="padding:2px 6px; font-size:11px; color:var(--danger);" onclick="deleteDNSRule(${idx})">删除</button>
+                    </div>
+                ` + "`" + `;
+            });
+        }
+
+        function addDNSServer() {
+            const name = document.getElementById('dnsServerName').value.trim();
+            const addr = document.getElementById('dnsServerAddr').value.trim();
+            if (!name || !addr) return showToast('请输入名称和地址', 'warning');
+            
+            const id = 'dns_' + Date.now();
+            dnsConfig.servers.push({ id, name, address: addr, type: 'udp' });
+            document.getElementById('dnsServerName').value = '';
+            document.getElementById('dnsServerAddr').value = '';
+            renderDNSConfig();
+        }
+
+        function deleteDNSServer(idx) {
+            dnsConfig.servers.splice(idx, 1);
+            renderDNSConfig();
+        }
+
+        function addDNSRule() {
+            const type = document.getElementById('dnsRuleType').value;
+            const value = document.getElementById('dnsRuleValue').value.trim();
+            const serverId = document.getElementById('dnsRuleServer').value;
+            if (!value || !serverId) return showToast('请输入域名和选择服务器', 'warning');
+
+            dnsConfig.rules.push({ type, value, serverId });
+            document.getElementById('dnsRuleValue').value = '';
+            renderDNSConfig();
+        }
+
+        function deleteDNSRule(idx) {
+            dnsConfig.rules.splice(idx, 1);
+            renderDNSConfig();
+        }
+
+        async function saveDNSConfig() {
+            dnsConfig.default = document.getElementById('dnsDefaultServer').value;
+            try {
+                const res = await fetch('/api/dns', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(dnsConfig)
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    showToast('DNS 配置保存并应用成功！', 'success');
+                    closeDNSModal();
+                } else {
+                    showToast('保存失败', 'error');
+                }
+            } catch(e) { showToast('请求失败', 'error'); }
+        }
+
+        function openDNSModal() {
+            document.getElementById('dnsModal').style.display = 'flex';
+            loadDNSConfig();
+        }
+
+        function closeDNSModal() {
+            document.getElementById('dnsModal').style.display = 'none';
         }
 
         let allSubsNodesCache = [];

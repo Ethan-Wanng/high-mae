@@ -60,6 +60,7 @@ func StartWebUI() {
 	mux.HandleFunc("/api/aggregate_group_nodes", aggGroupNodesHandler)
 	mux.HandleFunc("/api/aggregate_group_add_nodes", aggGroupAddNodesHandler)
 	mux.HandleFunc("/api/aggregate_group_remove_node", aggGroupRemoveNodeHandler)
+	mux.HandleFunc("/api/dns", dnsHandler)
 
 	// 默认开启 WebRTC 防泄漏
 	IsWebRTCPolicyOn = CheckWebRTCLeakStatus()
@@ -741,6 +742,30 @@ func aggGroupAddNodesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "count": len(existing)})
+}
+
+func dnsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(GlobalDNSConfig)
+		return
+	}
+	if r.Method == http.MethodPost {
+		var config DNSConfig
+		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		GlobalDNSConfig = config
+		if err := SaveDNSConfig(); err != nil {
+			http.Error(w, "Save failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		return
+	}
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 }
 
 func aggGroupRemoveNodeHandler(w http.ResponseWriter, r *http.Request) {

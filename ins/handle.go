@@ -1,7 +1,6 @@
 package ins
 
 import (
-	"context"
 	"fmt"
 	"github.com/sagernet/sing/common/metadata"
 	"io"
@@ -105,55 +104,4 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	go io.Copy(upstream, bufrw)
 	io.Copy(clientConn, upstream)
-}
-
-func StartLocalDNS() {
-	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.2"), Port: 53}
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		return
-	}
-
-	buf := make([]byte, 2048) // 复用缓冲区，避免每次 DNS 查询都分配
-	for {
-		n, clientAddr, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			continue
-		}
-		req := make([]byte, n)
-		copy(req, buf[:n])
-
-		go func(request []byte, cAddr *net.UDPAddr) {
-			clientMu.RLock()
-			client := activeClient
-			clientMu.RUnlock()
-			if client == nil {
-				return
-			}
-
-			dest := metadata.ParseSocksaddr("8.8.8.8:53")
-			streamRaw, err := client.CreateProxy(context.Background(), dest)
-			if err != nil {
-				return
-			}
-			stream := &TrackingConn{streamRaw}
-			defer stream.Close()
-
-			length := uint16(len(request))
-			stream.Write([]byte{byte(length >> 8), byte(length)})
-			stream.Write(request)
-
-			respLenBuf := make([]byte, 2)
-			if _, err := io.ReadFull(stream, respLenBuf); err != nil {
-				return
-			}
-			respLen := int(respLenBuf[0])<<8 | int(respLenBuf[1])
-			resp := make([]byte, respLen)
-			if _, err := io.ReadFull(stream, resp); err != nil {
-				return
-			}
-
-			conn.WriteToUDP(resp, cAddr)
-		}(req, clientAddr)
-	}
 }
