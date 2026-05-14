@@ -79,15 +79,11 @@ var StunDomains = []string{
 	"stun.softjoys.com",
 	"stun.voiparound.com",
 	"stun.voipgate.com",
-	"stun.xten.com",
-	"stun.turnserver.net",
-	"stun.rixtelecom.se",
-	"stun.iptel.org",
-	"stun.fwdnet.net",
-	"stun.mit.edu",
-	"stun.callwithus.com",
-	"stun.counterpath.com",
-	"stun.internetcalls.com",
+	"stun.services.mozilla.com",
+	"stun.firefox.com",
+	"stun.opera.com",
+	"stun.vivaldi.net",
+	"stun.brave.com",
 }
 
 // IsStunDomain 检查域名是否为 STUN 服务器

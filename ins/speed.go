@@ -30,6 +30,8 @@ func formatSpeed(bytes uint64) string {
 var (
 	CurrentSpeedIn  string = "0 B/s"
 	CurrentSpeedOut string = "0 B/s"
+	RawSpeedIn      uint64
+	RawSpeedOut     uint64
 )
 
 func StartNetSpeedMonitor(menuItem *systray.MenuItem) {
@@ -46,8 +48,17 @@ func StartNetSpeedMonitor(menuItem *systray.MenuItem) {
 		if in < lastIn { speedIn = 0 } // Handle wrap-around
 		if out < lastOut { speedOut = 0 }
 
+		RawSpeedIn = speedIn
+		RawSpeedOut = speedOut
 		CurrentSpeedIn = formatSpeed(speedIn)
 		CurrentSpeedOut = formatSpeed(speedOut)
+
+		// Update total traffic
+		atomic.AddUint64(&GlobalTotalIn, speedIn)
+		atomic.AddUint64(&GlobalTotalOut, speedOut)
+
+		// Update history for dashboard
+		UpdateHistory(speedIn, speedOut, GetMemUsage())
 
 		if menuItem != nil {
 			menuItem.SetTitle(fmt.Sprintf("🚀 实时网速: ↑ %s  ↓ %s", CurrentSpeedOut, CurrentSpeedIn))

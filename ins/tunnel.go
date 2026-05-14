@@ -42,7 +42,7 @@ func ToggleTunMode(mToggleTun *systray.MenuItem) string {
 			return "核心文件 wintun.dll 不存在，请重启程序以释放。"
 		}
 
-		TunCmd = exec.Command("./tun2socks.exe", "-device", "tun://AnyTLS-TUN", "-proxy", "http://127.0.0.1:"+LocalHttpPort, "-loglevel", "error")
+		TunCmd = exec.Command("./tun2socks.exe", "-device", "tun://AnyTLS-TUN", "-proxy", "http://127.0.0.1:"+TunProxyPort, "-loglevel", "error")
 		TunCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 		if err := TunCmd.Start(); err != nil {
 			return "无法启动底层引擎: " + err.Error()

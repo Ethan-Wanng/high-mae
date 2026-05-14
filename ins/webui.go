@@ -60,6 +60,7 @@ func StartWebUI() {
 	mux.HandleFunc("/api/aggregate_group_nodes", aggGroupNodesHandler)
 	mux.HandleFunc("/api/aggregate_group_add_nodes", aggGroupAddNodesHandler)
 	mux.HandleFunc("/api/aggregate_group_remove_node", aggGroupRemoveNodeHandler)
+	mux.HandleFunc("/api/dashboard", dashboardHandler)
 
 	// 默认开启 WebRTC 防泄漏
 	IsWebRTCPolicyOn = CheckWebRTCLeakStatus()
@@ -773,4 +774,25 @@ func aggGroupRemoveNodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+}
+
+func dashboardHandler(w http.ResponseWriter, r *http.Request) {
+	inHistory, outHistory, memHistory := GetHistory()
+	
+	stats := map[string]interface{}{
+		"activeConnections": GetActiveConns(),
+		"totalIn":          atomic.LoadUint64(&GlobalTotalIn),
+		"totalOut":         atomic.LoadUint64(&GlobalTotalOut),
+		"currentIn":        RawSpeedIn,
+		"currentOut":       RawSpeedOut,
+		"memUsage":         GetMemUsage(),
+		"history": map[string]interface{}{
+			"in":  inHistory,
+			"out": outHistory,
+			"mem": memHistory,
+		},
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
 }

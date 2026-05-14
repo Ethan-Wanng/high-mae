@@ -16,9 +16,12 @@ type GenericClient interface {
 }
 
 const LocalHttpPort = "10808"
+const TunProxyPort = "10811"
 const TunIP = "10.0.0.2"
 
 var (
+	GlobalTotalIn   uint64
+	GlobalTotalOut  uint64
 	IsSystemProxyOn  = true
 	ProxyMode        = "Rule"
 	IsTunModeOn      = false

@@ -663,6 +663,15 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 }
 
 func StartAnyTLSHttpServer() {
-	server := &http.Server{Addr: "127.0.0.1:" + LocalHttpPort, Handler: &HTTPProxyHandler{}}
-	server.ListenAndServe()
+	handler := &HTTPProxyHandler{}
+	
+	// Start main proxy server
+	go func() {
+		server := &http.Server{Addr: "127.0.0.1:" + LocalHttpPort, Handler: handler}
+		server.ListenAndServe()
+	}()
+
+	// Start TUN proxy server
+	serverTun := &http.Server{Addr: "127.0.0.1:" + TunProxyPort, Handler: handler}
+	serverTun.ListenAndServe()
 }

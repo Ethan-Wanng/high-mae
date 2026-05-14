@@ -57,6 +57,19 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var err error
 	routeResult := EvaluateRouting(targetAddr)
 	
+	connType := "Proxy"
+	if routeResult == 1 {
+		connType = "Direct"
+	}
+
+	source := "System"
+	if strings.HasSuffix(req.Context().Value(http.LocalAddrContextKey).(net.Addr).String(), ":"+TunProxyPort) {
+		source = "TUN"
+	}
+
+	connID := RegisterConn(targetAddr, connType+" ("+source+")")
+	defer UnregisterConn(connID)
+
 	if routeResult == 2 {
 		http.Error(w, "已根据规则拦截", http.StatusForbidden)
 		return

@@ -664,6 +664,98 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             background: rgba(148, 163, 184, 0.46);
         }
 
+        /* ── Dashboard ── */
+        .dashboard-section {
+            margin-bottom: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 18px;
+        }
+        .stat-card {
+            background: linear-gradient(180deg, rgba(17, 27, 46, 0.8), rgba(15, 23, 42, 0.6));
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 16px;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 140px;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-sub);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-main);
+            margin: 8px 0;
+            font-family: ui-monospace, monospace;
+        }
+        .stat-sub {
+            font-size: 11px;
+            color: var(--text-dim);
+        }
+        .stat-chart {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        .connections-table-wrapper {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .connections-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .connections-table th {
+            text-align: left;
+            padding: 12px 16px;
+            background: rgba(255,255,255,0.05);
+            color: var(--text-sub);
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+        .connections-table td {
+            padding: 10px 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            color: var(--text-main);
+            word-break: break-all;
+        }
+        .connections-table tr:hover {
+            background: rgba(255,255,255,0.02);
+        }
+
+        @media (max-width: 1024px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        @media (max-width: 600px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
         /* ── Toast 通知 ── */
         .toast-container {
             position: fixed;
@@ -768,6 +860,48 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 
             <div class="control-row">
                 <div class="supplier-traffic" id="supplierTraffic"></div>
+            </div>
+        </div>
+
+        <div class="dashboard-section" id="dashboardSection">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">活动连接</div>
+                    <div class="stat-value" id="dashConnCount">0</div>
+                    <div class="stat-sub">直连 / 代理 / TUN</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">上传速度 / 总量</div>
+                    <div class="stat-value" id="dashSpeedOut">0 B/s</div>
+                    <div class="stat-sub" id="dashTotalOut">总量: 0 B</div>
+                    <canvas id="chartOut" class="stat-chart"></canvas>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">下载速度 / 总量</div>
+                    <div class="stat-value" id="dashSpeedIn">0 B/s</div>
+                    <div class="stat-sub" id="dashTotalIn">总量: 0 B</div>
+                    <canvas id="chartIn" class="stat-chart"></canvas>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">内存占用</div>
+                    <div class="stat-value" id="dashMemUsage">0 MB</div>
+                    <div class="stat-sub">系统分配内存</div>
+                    <canvas id="chartMem" class="stat-chart"></canvas>
+                </div>
+            </div>
+            <div class="connections-table-wrapper">
+                <table class="connections-table">
+                    <thead>
+                        <tr>
+                            <th>目标地址</th>
+                            <th>类型 (来源)</th>
+                            <th>开始时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="connTableBody">
+                        <tr><td colspan="3" style="text-align:center;color:var(--text-dim)">暂无活动连接</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -1686,11 +1820,98 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
             }
         }
 
+        let dashHistory = { in: [], out: [], mem: [] };
+
+        async function updateDashboard() {
+            try {
+                const res = await fetch('/api/dashboard');
+                const data = await res.json();
+                
+                document.getElementById('dashConnCount').textContent = data.activeConnections.length;
+                document.getElementById('dashSpeedIn').textContent = formatSpeed(data.currentIn);
+                document.getElementById('dashSpeedOut').textContent = formatSpeed(data.currentOut);
+                document.getElementById('dashTotalIn').textContent = '总量: ' + formatBytes(data.totalIn);
+                document.getElementById('dashTotalOut').textContent = '总量: ' + formatBytes(data.totalOut);
+                document.getElementById('dashMemUsage').textContent = (data.memUsage / 1024 / 1024).toFixed(1) + ' MB';
+                
+                // Update History
+                dashHistory = data.history;
+                
+                // Draw Charts
+                drawWave('chartIn', dashHistory.in, '#60a5fa');
+                drawWave('chartOut', dashHistory.out, '#a78bfa');
+                drawWave('chartMem', dashHistory.mem, '#10b981');
+                
+                // Update Connections Table
+                const tbody = document.getElementById('connTableBody');
+                if (data.activeConnections.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-dim)">暂无活动连接</td></tr>';
+                } else {
+                    tbody.innerHTML = data.activeConnections.map(c => {
+                        const time = new Date(c.startTime).toLocaleTimeString();
+                        return ` + "`" + `<tr><td>${c.addr}</td><td>${c.type}</td><td>${time}</td></tr>` + "`" + `;
+                    }).join('');
+                }
+            } catch(e) {}
+        }
+
+        function drawWave(canvasId, data, color) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            
+            if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+            }
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            ctx.clearRect(0, 0, w, h);
+            if (!data || data.length < 2) return;
+            
+            const max = Math.max(...data, 1);
+            const step = w / (data.length - 1);
+            
+            ctx.beginPath();
+            ctx.moveTo(0, h);
+            for (let i = 0; i < data.length; i++) {
+                const x = i * step;
+                const y = h - (data[i] / max) * h * 0.7 - 2;
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo(w, h);
+            ctx.closePath();
+            
+            const grad = ctx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, color + '66');
+            grad.addColorStop(1, 'transparent');
+            ctx.fillStyle = grad;
+            ctx.fill();
+            
+            ctx.beginPath();
+            for (let i = 0; i < data.length; i++) {
+                const x = i * step;
+                const y = h - (data[i] / max) * h * 0.7 - 2;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2 * dpr;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.stroke();
+        }
+
         loadSuppliers();
         loadAggregateGroups();
         loadNodes();
         loadStatus();
+        updateDashboard();
         setInterval(loadStatus, 3000);
+        setInterval(updateDashboard, 1000);
     </script>
 </body>
 </html>`
