@@ -49,7 +49,10 @@ var (
 	dnsCacheMu      sync.RWMutex
 )
 
-const DNSConfigFile = "dns_config.json"
+const (
+	DNSConfigFile   = "dns_config.json"
+	maxDnsCacheSize = 10000 // DNS 缓存最大条目数，防止无限增长
+)
 
 func LoadDNSConfig() {
 	data, err := utils.SecureReadFile(DNSConfigFile)
@@ -258,6 +261,10 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 		}
 
 		dnsCacheMu.Lock()
+		// 防止缓存无限增长：超过上限时清空（配合 TTL 淘汰策略即可）
+		if len(dnsCache) >= maxDnsCacheSize {
+			dnsCache = make(map[string]dnsCacheEntry)
+		}
 		dnsCache[cacheKey] = dnsCacheEntry{
 			msg:       respMsg,
 			expiresAt: time.Now().Add(time.Duration(minTTL) * time.Second),

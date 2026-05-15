@@ -64,12 +64,26 @@ func ToggleTunMode() string {
 }
 
 // RestartSingBoxTun 重启 TUN（在切换节点后由 proxy.go 调用）
+// 使用 "先建后拆" 策略：先创建新实例，成功后再关闭旧实例，避免网络中断窗口
 func RestartSingBoxTun() error {
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
-	stopTunLocked()
-	return startTunLocked()
+	// 先尝试创建新实例
+	newBox, err := createTunBox()
+	if err != nil {
+		// 创建失败时保持旧实例继续工作
+		log.Printf("TUN 重启失败(旧实例保留): %v", err)
+		return err
+	}
+
+	// 新实例创建成功后，关闭旧实例
+	if tunBox != nil {
+		tunBox.Close()
+		log.Println("旧 TUN 实例已关闭")
+	}
+	tunBox = newBox
+	return nil
 }
 
 // StopSingBoxTun 停止 TUN（程序退出时由 main.go 调用）
@@ -94,12 +108,22 @@ func stopTunLocked() {
 }
 
 // startTunLocked 启动一个全新的 TUN Box 实例（调用者必须持有 tunMu）
+func startTunLocked() error {
+	b, err := createTunBox()
+	if err != nil {
+		return err
+	}
+	tunBox = b
+	return nil
+}
+
+// createTunBox 创建并启动一个 TUN Box 实例，但不存储到全局变量
 //
 // 🏗️ 架构设计说明：
 // sing-box 推荐的配置方式是构造完整 JSON → 通过 include.Context 解析 → box.New
 // 这样所有 Inbound/Outbound/DNS/Route 的 Registry 会自动注入，
 // 避免了手动构造 Inbound{Type:"tun", Options:...} 时缺少 registry 导致的空指针崩溃。
-func startTunLocked() error {
+func createTunBox() (*box.Box, error) {
 	// ── 1. 获取当前活动节点的服务器信息（用于防环路路由规则） ──
 	common.ClientMu.RLock()
 	nodeServer := common.GlobalNodeServer
@@ -107,13 +131,13 @@ func startTunLocked() error {
 	common.ClientMu.RUnlock()
 
 	// ── 2. 构造完整的 sing-box JSON 配置 ──
-	tunConfig := buildTunConfigJSON(nodeServer, nodeIP)
+	tunConfig := BuildTunConfigJSON(nodeServer, nodeIP)
 
 	// ── 3. 通过 JSON 解析创建 Options ──
 	ctx := include.Context(context.Background())
 	var opts option.Options
 	if err := opts.UnmarshalJSONContext(ctx, tunConfig); err != nil {
-		return fmt.Errorf("解析 TUN 配置失败: %w", err)
+		return nil, fmt.Errorf("解析 TUN 配置失败: %w", err)
 	}
 
 	// ── 4. 创建并启动 Box ──
@@ -122,15 +146,14 @@ func startTunLocked() error {
 		Context: ctx,
 	})
 	if err != nil {
-		return fmt.Errorf("创建 TUN 引擎失败: %w", err)
+		return nil, fmt.Errorf("创建 TUN 引擎失败: %w", err)
 	}
 	if err := b.Start(); err != nil {
 		b.Close()
-		return fmt.Errorf("启动 TUN 引擎失败: %w", err)
+		return nil, fmt.Errorf("启动 TUN 引擎失败: %w", err)
 	}
 
-	tunBox = b
-	return nil
+	return b, nil
 }
 
 // buildTunConfigJSON 构造完整的 sing-box TUN 配置 JSON
@@ -159,7 +182,7 @@ func startTunLocked() error {
 //
 // DNS 配置采用 legacy 格式（address 字段），mbox 会自动升级为新格式。
 // Route 规则使用 ip_is_private 匹配所有私有 IP 段，简洁且无遗漏。
-func buildTunConfigJSON(nodeServer, nodeIP string) []byte {
+func BuildTunConfigJSON(nodeServer, nodeIP string) []byte {
 	// ── 构造节点服务器 IP 直连规则（防止 TUN 流量环路） ──
 	serverIPRule := ""
 	if nodeIP != "" {

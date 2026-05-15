@@ -25,7 +25,7 @@ import (
 // 1. 如果已经是 IP，直接返回
 // 2. 如果是域名，进行本地 DNS 解析并优先返回 IPv4 地址
 // 3. 解析失败返回空字符串，交由上层降级使用原域名
-func resolveDirect(host string) string {
+func ResolveDirect(host string) string {
 	// 如果为空，直接跳过
 	if host == "" {
 		return ""
@@ -59,7 +59,7 @@ func resolveDirect(host string) string {
 
 // CreateTempHTTPClient 直接返回一个装载了特定节点的原生 http.Client，专供并发测速
 func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
-	newIP := resolveDirect(node.Server)
+	newIP := ResolveDirect(node.Server)
 	var dialCtx func(ctx context.Context, network, addr string) (net.Conn, error)
 	var cleanup func()
 
@@ -298,7 +298,7 @@ func TestNodeLatency(node protocol.Node) (int64, error) {
 // FastTCPPing 提供极低内存、极快速度的 TCP 握手测速，专门用于"一键测速全部节点"
 // 它不会启动任何代理内核，因此内存消耗几乎为 0，并且可以轻松绕过 TUN 网卡防止死循环
 func FastTCPPing(node protocol.Node) (int64, error) {
-	newIP := resolveDirect(node.Server)
+	newIP := ResolveDirect(node.Server)
 	dialHost := node.Server
 	if newIP != "" {
 		dialHost = newIP

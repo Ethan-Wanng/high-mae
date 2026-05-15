@@ -22,11 +22,17 @@ var bufferPool = sync.Pool{
 	},
 }
 
+// updateThreshold 限制 UpdateConnLog 的调用频率：
+// 只有当累计传输量增加超过此阈值时才更新日志，避免每次 Read/Write 都加锁
+const updateThreshold = 64 * 1024 // 64KB
+
 type TrackingConn struct {
 	net.Conn
-	logID int64
-	in    uint64
-	out   uint64
+	logID      int64
+	in         uint64
+	out        uint64
+	lastLogIn  uint64 // 上次记录日志时的 in 值
+	lastLogOut uint64 // 上次记录日志时的 out 值
 }
 
 func (c *TrackingConn) Read(b []byte) (n int, err error) {
@@ -34,7 +40,11 @@ func (c *TrackingConn) Read(b []byte) (n int, err error) {
 	if n > 0 {
 		atomic.AddUint64(&common.GlobalProxyIn, uint64(n))
 		c.in += uint64(n)
-		stats.UpdateConnLog(c.logID, c.in, c.out, false)
+		// 限制 UpdateConnLog 调用频率，减少锁竞争
+		if c.in-c.lastLogIn >= updateThreshold {
+			stats.UpdateConnLog(c.logID, c.in, c.out, false)
+			c.lastLogIn = c.in
+		}
 	}
 	return
 }
@@ -44,7 +54,10 @@ func (c *TrackingConn) Write(b []byte) (n int, err error) {
 	if n > 0 {
 		atomic.AddUint64(&common.GlobalProxyOut, uint64(n))
 		c.out += uint64(n)
-		stats.UpdateConnLog(c.logID, c.in, c.out, false)
+		if c.out-c.lastLogOut >= updateThreshold {
+			stats.UpdateConnLog(c.logID, c.in, c.out, false)
+			c.lastLogOut = c.out
+		}
 	}
 	return
 }

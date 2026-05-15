@@ -37,7 +37,7 @@ func SwitchNode(node protocol.Node) {
 	defer common.ClientMu.Unlock()
 
 	// 🚀 修复 1：使用智能解析函数，防止给原本就是 IP 的地址做二次 DNS 污染解析
-	newIP := resolveDirect(node.Server)
+	newIP := ResolveDirect(node.Server)
 
 	common.GlobalNodeServer = node.Server
 	common.GlobalNodeIP = newIP
@@ -164,9 +164,15 @@ func restartTunAfterNodeSwitch() {
 	if !common.IsTunModeOn {
 		return
 	}
-	if err := RestartSingBoxTun(); err != nil {
-		log.Printf("重启 sing-box TUN 失败: %v", err)
-	}
+	// 🚀 关键修复：必须异步执行！
+	// SwitchNode 持有 common.ClientMu 写锁，而 RestartSingBoxTun → startTunLocked
+	// 会尝试获取 common.ClientMu 读锁，导致 RWMutex 死锁。
+	// 使用 goroutine 确保写锁释放后再重启 TUN。
+	go func() {
+		if err := RestartSingBoxTun(); err != nil {
+			log.Printf("重启 sing-box TUN 失败: %v", err)
+		}
+	}()
 }
 
 func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options, error) {

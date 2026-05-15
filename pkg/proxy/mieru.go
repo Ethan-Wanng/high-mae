@@ -100,7 +100,7 @@ func buildMieruProfile(node protocol.Node) (*mieruPB.ClientProfile, error) {
 		server.IpAddress = proto.String(ip.String())
 	} else {
 		// 域名：必须预解析为 IP，因为 mieru 内部的 ResolveTCPAddr() 不支持域名解析
-		resolved := resolveDirect(node.Server)
+		resolved := ResolveDirect(node.Server)
 		if resolved != "" {
 			server.IpAddress = proto.String(resolved)
 		} else {
