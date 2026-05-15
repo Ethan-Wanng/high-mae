@@ -1,7 +1,8 @@
 package test
 
 import (
-	"high-mae/ins"
+	"high-mae/pkg/common"
+	"high-mae/pkg/routing"
 	"testing"
 )
 
@@ -10,7 +11,7 @@ import (
 // ============================================================
 
 func TestShouldDirect_LoopbackIP(t *testing.T) {
-	if !ins.ShouldDirect("127.0.0.1:80") {
+	if !routing.ShouldDirect("127.0.0.1:80") {
 		t.Error("回环地址应直连")
 	}
 }
@@ -18,7 +19,7 @@ func TestShouldDirect_LoopbackIP(t *testing.T) {
 func TestShouldDirect_PrivateIP(t *testing.T) {
 	privates := []string{"192.168.1.1:80", "10.0.0.1:443", "172.16.0.1:8080"}
 	for _, addr := range privates {
-		if !ins.ShouldDirect(addr) {
+		if !routing.ShouldDirect(addr) {
 			t.Errorf("私有IP %s 应直连", addr)
 		}
 	}
@@ -33,7 +34,7 @@ func TestShouldDirect_CNDomain(t *testing.T) {
 		"www.zhihu.com:443",
 	}
 	for _, addr := range cnDomains {
-		if !ins.ShouldDirect(addr) {
+		if !routing.ShouldDirect(addr) {
 			t.Errorf("国内域名 %s 应直连", addr)
 		}
 	}
@@ -47,7 +48,7 @@ func TestShouldDirect_ForeignDomain(t *testing.T) {
 		"api.openai.com:443",
 	}
 	for _, addr := range foreign {
-		if ins.ShouldDirect(addr) {
+		if routing.ShouldDirect(addr) {
 			t.Errorf("国外域名 %s 不应直连", addr)
 		}
 	}
@@ -55,57 +56,71 @@ func TestShouldDirect_ForeignDomain(t *testing.T) {
 
 func TestShouldDirect_KeywordMatch(t *testing.T) {
 	keywords := []string{
-		"cdn-cn.example.com:443",  // 包含 -cn
-		"alicdn.example.com:443",  // 包含 alicdn
-		"alipay.test.com:443",     // 包含 alipay
-		"baidu.test.org:443",      // 包含 baidu
+		"cdn-cn.example.com:443", // 包含 -cn
+		"alicdn.example.com:443", // 包含 alicdn
+		"alipay.test.com:443",    // 包含 alipay
+		"baidu.test.org:443",     // 包含 baidu
 	}
 	for _, addr := range keywords {
-		if !ins.ShouldDirect(addr) {
+		if !routing.ShouldDirect(addr) {
 			t.Errorf("关键词域名 %s 应直连", addr)
 		}
 	}
 }
 
 func TestShouldDirect_GlobalMode(t *testing.T) {
-	origMode := ins.ProxyMode
-	defer func() { ins.ProxyMode = origMode }()
+	origMode := common.ProxyMode
+	defer func() { common.ProxyMode = origMode }()
 
-	ins.ProxyMode = "Global"
+	common.ProxyMode = "Global"
 
 	// 全局模式下所有地址都不应直连（全部走代理）
-	if ins.ShouldDirect("www.baidu.com:443") {
+	if routing.ShouldDirect("www.baidu.com:443") {
 		t.Error("全局模式下 baidu.com 不应直连")
 	}
-	if ins.ShouldDirect("127.0.0.1:80") {
+	if routing.ShouldDirect("127.0.0.1:80") {
 		t.Error("全局模式下 ShouldDirect 对所有地址返回 false")
 	}
-	if ins.ShouldDirect("192.168.1.1:80") {
+	if routing.ShouldDirect("192.168.1.1:80") {
 		t.Error("全局模式下 ShouldDirect 对所有地址返回 false")
 	}
 }
 
 func TestShouldDirect_ExactDomainMatch(t *testing.T) {
 	// 精确匹配域名（来自 exactDomains 列表）
-	if !ins.ShouldDirect("cn.bing.com:443") {
+	if !routing.ShouldDirect("cn.bing.com:443") {
 		t.Error("exactDomains 中的 cn.bing.com 应直连")
 	}
 }
 
 func TestShouldDirect_SuffixDomainMatch(t *testing.T) {
 	// .cn 后缀匹配
-	if !ins.ShouldDirect("www.gov.cn:443") {
+	if !routing.ShouldDirect("www.gov.cn:443") {
 		t.Error(".cn 后缀应直连")
 	}
 	// .com.cn 也应匹配
-	if !ins.ShouldDirect("app.example.com.cn:443") {
+	if !routing.ShouldDirect("app.example.com.cn:443") {
 		t.Error(".com.cn 后缀应直连")
 	}
 }
 
 func TestShouldDirect_NoPort(t *testing.T) {
 	// 不带端口的地址
-	if !ins.ShouldDirect("www.baidu.com") {
+	if !routing.ShouldDirect("www.baidu.com") {
 		t.Error("不带端口的国内域名也应直连")
+	}
+}
+
+func TestEvaluateRouting_StunDomainsRejected(t *testing.T) {
+	domains := []string{
+		"stun.l.google.com:19302",
+		"stun1.l.google.com:19302",
+		"global.stun.twilio.com:3478",
+		"turn.cloudflare.com:3478",
+	}
+	for _, addr := range domains {
+		if got := routing.EvaluateRouting(addr); got != 2 {
+			t.Errorf("STUN/TURN 域名 %s 应被拦截, got %d", addr, got)
+		}
 	}
 }

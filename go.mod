@@ -3,12 +3,15 @@ module high-mae
 go 1.25.0
 
 require (
-	github.com/enfein/mieru/v3 v3.29.0
 	github.com/anytls/sing-anytls v0.0.11
+	github.com/enfein/mieru/v3 v3.29.0
 	github.com/getlantern/systray v1.2.2
+	github.com/miekg/dns v1.1.72
 	github.com/refraction-networking/utls v1.8.2
 	github.com/sagernet/sing v0.8.4
 	github.com/sagernet/sing-box v1.13.6
+	golang.org/x/sys v0.43.0
+	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -68,7 +71,6 @@ require (
 	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/metacubex/utls v1.8.4 // indirect
 	github.com/mholt/acmez/v3 v3.1.6 // indirect
-	github.com/miekg/dns v1.1.72 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/openai/openai-go/v3 v3.26.0 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
@@ -152,7 +154,6 @@ require (
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/term v0.42.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
@@ -161,7 +162,6 @@ require (
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/grpc v1.79.1 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 )
 

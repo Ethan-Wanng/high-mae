@@ -3,7 +3,9 @@ package test
 import (
 	"flag"
 	"fmt"
-	"high-mae/ins"
+
+	"high-mae/pkg/proxy"
+	"high-mae/pkg/sub"
 	"high-mae/protocol"
 	"net/http"
 	"net/http/httptest"
@@ -25,16 +27,12 @@ func TestProxyLatencyParallel(t *testing.T) {
 		link := args[0]
 		t.Logf("🔗 接收到命令行输入的链接，正在解析...\n%s", link)
 
-		nodes, err = ins.ParseSubscription(link)
+		nodes, err = sub.ParseSubscription(link)
 		if err != nil {
 			t.Fatalf("❌ 解析命令行链接/订阅失败: %v", err)
 		}
 	} else {
-		t.Log("⚠️ 未检测到命令行链接参数，回退读取本地 output.yml...")
-		nodes, err = protocol.ParseNodes("../config.yml")
-		if err != nil {
-			t.Fatalf("❌ 解析 output.yml 失败: %v", err)
-		}
+		t.Skip("未传入真实订阅/节点链接，跳过需要外部节点数据的测速测试")
 	}
 
 	if len(nodes) == 0 {
@@ -61,7 +59,7 @@ func TestProxyLatencyParallel(t *testing.T) {
 
 			testName := fmt.Sprintf("[%03d] %s", index, node.Name)
 
-			client, cleanup, err := ins.CreateTempHTTPClient(node)
+			client, cleanup, err := proxy.CreateTempHTTPClient(node)
 			if err != nil {
 				t.Errorf("❌ %s | 初始化失败: %v", testName, err)
 				return
@@ -115,8 +113,7 @@ func TestCheckProxyLatency_Direct(t *testing.T) {
 	// 注意：如果你直接传 "" 给 CheckProxyLatency 会报错，我们可以随便传一个有效的假代理格式，或者修改你的 CheckProxyLatency 支持空代理
 	// 简单起见，我们测带有错误代理的情况：
 
-	latency, err := ins.CheckProxyLatency("http://127.0.0.1:10808", ts.URL, 5*time.Second)
-	// 如果你本地没有起 10808 代理，这里一定会报错
+	latency, err := proxy.CheckProxyLatency("", ts.URL, 5*time.Second)
 	if err != nil {
 		t.Logf("预期内的失败 (本地没开代理): %v", err)
 	} else {
@@ -134,7 +131,7 @@ func TestCheckProxyLatency_Timeout(t *testing.T) {
 	defer ts.Close()
 
 	// 故意把超时时间设置为 1 秒
-	_, err := ins.CheckProxyLatency("http://127.0.0.1:10808", ts.URL, 1*time.Second)
+	_, err := proxy.CheckProxyLatency("", ts.URL, 1*time.Second)
 	if err == nil {
 		t.Fatal("❌ 预期应该超时失败，但居然成功了！")
 	}
@@ -154,7 +151,7 @@ func TestCheckProxyLatency_Forbidden(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := ins.CheckProxyLatency("http://127.0.0.1:10808", ts.URL, 5*time.Second)
+	_, err := proxy.CheckProxyLatency("", ts.URL, 5*time.Second)
 	if err == nil {
 		t.Fatal("❌ 预期应该拦截失败，但测速成功了！")
 	}

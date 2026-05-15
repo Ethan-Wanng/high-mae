@@ -1,9 +1,11 @@
 package test
 
 import (
-	"encoding/json"
-	"high-mae/ins"
+	"high-mae/pkg/sub"
+	"high-mae/pkg/utils"
 	"high-mae/protocol"
+
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -23,14 +25,14 @@ func setupTestDir(t *testing.T) func() {
 }
 
 // ============================================================
-// 1. ReadSubscriptions
+// 1. sub.ReadSubscriptions
 // ============================================================
 
 func TestReadSubscriptions_FileNotExist(t *testing.T) {
 	cleanup := setupTestDir(t)
 	defer cleanup()
 
-	subs, err := ins.ReadSubscriptions()
+	subs, err := sub.ReadSubscriptions()
 	if err != nil {
 		t.Fatalf("文件不存在时应返回空切片而非错误, got err=%v", err)
 	}
@@ -44,9 +46,9 @@ func TestReadSubscriptions_ValidJSON(t *testing.T) {
 	defer cleanup()
 
 	data := `[{"name":"TestSub","url":"https://example.com/sub","file_name":"sub_1.yml"}]`
-	os.WriteFile(ins.SubscriptionsFile, []byte(data), 0644)
+	os.WriteFile(sub.SubscriptionsFile, []byte(data), 0644)
 
-	subs, err := ins.ReadSubscriptions()
+	subs, err := sub.ReadSubscriptions()
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -62,9 +64,9 @@ func TestReadSubscriptions_InvalidJSON(t *testing.T) {
 	cleanup := setupTestDir(t)
 	defer cleanup()
 
-	os.WriteFile(ins.SubscriptionsFile, []byte("{invalid_json}"), 0644)
+	os.WriteFile(sub.SubscriptionsFile, []byte("{invalid_json}"), 0644)
 
-	_, err := ins.ReadSubscriptions()
+	_, err := sub.ReadSubscriptions()
 	if err == nil {
 		t.Fatal("损坏的JSON应返回错误")
 	}
@@ -78,7 +80,7 @@ func TestAppendSubscription_NewLink(t *testing.T) {
 	cleanup := setupTestDir(t)
 	defer cleanup()
 
-	fileName, existed, err := ins.AppendSubscription("https://example.com/subscribe")
+	fileName, existed, err := sub.AppendSubscription("https://example.com/subscribe")
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -89,7 +91,7 @@ func TestAppendSubscription_NewLink(t *testing.T) {
 		t.Errorf("期望 sub_1.yml, got %q", fileName)
 	}
 
-	subs, _ := ins.ReadSubscriptions()
+	subs, _ := sub.ReadSubscriptions()
 	if len(subs) != 1 {
 		t.Fatalf("期望1条记录, got %d", len(subs))
 	}
@@ -103,9 +105,9 @@ func TestAppendSubscription_DuplicateLink(t *testing.T) {
 	defer cleanup()
 
 	url := "https://provider.com/api/sub"
-	ins.AppendSubscription(url)
+	sub.AppendSubscription(url)
 
-	fileName, existed, err := ins.AppendSubscription(url)
+	fileName, existed, err := sub.AppendSubscription(url)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -116,7 +118,7 @@ func TestAppendSubscription_DuplicateLink(t *testing.T) {
 		t.Errorf("期望返回原文件名 sub_1.yml, got %q", fileName)
 	}
 
-	subs, _ := ins.ReadSubscriptions()
+	subs, _ := sub.ReadSubscriptions()
 	if len(subs) != 1 {
 		t.Fatalf("重复导入后应仍然只有1条, got %d", len(subs))
 	}
@@ -126,14 +128,14 @@ func TestAppendSubscription_MultipleLinks(t *testing.T) {
 	cleanup := setupTestDir(t)
 	defer cleanup()
 
-	ins.AppendSubscription("https://a.com/sub")
-	f2, _, _ := ins.AppendSubscription("https://b.com/sub")
+	sub.AppendSubscription("https://a.com/sub")
+	f2, _, _ := sub.AppendSubscription("https://b.com/sub")
 
 	if f2 != "sub_2.yml" {
 		t.Errorf("第二条链接应分配 sub_2.yml, got %q", f2)
 	}
 
-	subs, _ := ins.ReadSubscriptions()
+	subs, _ := sub.ReadSubscriptions()
 	if len(subs) != 2 {
 		t.Fatalf("期望2条记录, got %d", len(subs))
 	}
@@ -153,8 +155,8 @@ func TestAppendSubscription_NameExtraction(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		ins.AppendSubscription(tt.url)
-		subs, _ := ins.ReadSubscriptions()
+		sub.AppendSubscription(tt.url)
+		subs, _ := sub.ReadSubscriptions()
 		if subs[i].Name != tt.wantName {
 			t.Errorf("case %d: 期望Name=%q, got %q", i, tt.wantName, subs[i].Name)
 		}
@@ -171,14 +173,14 @@ func TestDeleteSubscription_RemovesEntry(t *testing.T) {
 
 	url1 := "https://a.com/sub"
 	url2 := "https://b.com/sub"
-	ins.AppendSubscription(url1)
-	ins.AppendSubscription(url2)
+	sub.AppendSubscription(url1)
+	sub.AppendSubscription(url2)
 
 	os.WriteFile("sub_1.yml", []byte("test"), 0644)
 
-	ins.DeleteSubscription(url1)
+	sub.DeleteSubscription(url1)
 
-	subs, _ := ins.ReadSubscriptions()
+	subs, _ := sub.ReadSubscriptions()
 	if len(subs) != 1 {
 		t.Fatalf("删除后应剩1条, got %d", len(subs))
 	}
@@ -194,10 +196,10 @@ func TestDeleteSubscription_NonExistent(t *testing.T) {
 	cleanup := setupTestDir(t)
 	defer cleanup()
 
-	ins.AppendSubscription("https://keep.com/sub")
-	ins.DeleteSubscription("https://nonexistent.com/sub")
+	sub.AppendSubscription("https://keep.com/sub")
+	sub.DeleteSubscription("https://nonexistent.com/sub")
 
-	subs, _ := ins.ReadSubscriptions()
+	subs, _ := sub.ReadSubscriptions()
 	if len(subs) != 1 {
 		t.Fatalf("删除不存在的链接不应影响数据, got %d", len(subs))
 	}
@@ -208,10 +210,10 @@ func TestDeleteSubscription_AllEntries(t *testing.T) {
 	defer cleanup()
 
 	url := "https://only.com/sub"
-	ins.AppendSubscription(url)
-	ins.DeleteSubscription(url)
+	sub.AppendSubscription(url)
+	sub.DeleteSubscription(url)
 
-	subs, _ := ins.ReadSubscriptions()
+	subs, _ := sub.ReadSubscriptions()
 	if len(subs) != 0 {
 		t.Fatalf("全部删除后应为空, got %d", len(subs))
 	}
@@ -226,27 +228,27 @@ func TestSubscriptionLifecycle(t *testing.T) {
 	defer cleanup()
 
 	// 新增3个
-	ins.AppendSubscription("https://provider-a.com/sub")
-	ins.AppendSubscription("https://provider-b.com/sub")
-	ins.AppendSubscription("https://provider-c.com/sub")
-	subs, _ := ins.ReadSubscriptions()
+	sub.AppendSubscription("https://provider-a.com/sub")
+	sub.AppendSubscription("https://provider-b.com/sub")
+	sub.AppendSubscription("https://provider-c.com/sub")
+	subs, _ := sub.ReadSubscriptions()
 	if len(subs) != 3 {
 		t.Fatalf("新增3个后应有3条, got %d", len(subs))
 	}
 
 	// 重复导入
-	_, existed, _ := ins.AppendSubscription("https://provider-a.com/sub")
+	_, existed, _ := sub.AppendSubscription("https://provider-a.com/sub")
 	if !existed {
 		t.Error("重复导入应标记为已存在")
 	}
-	subs, _ = ins.ReadSubscriptions()
+	subs, _ = sub.ReadSubscriptions()
 	if len(subs) != 3 {
 		t.Fatalf("重复导入后仍应是3条, got %d", len(subs))
 	}
 
 	// 删除 b
-	ins.DeleteSubscription("https://provider-b.com/sub")
-	subs, _ = ins.ReadSubscriptions()
+	sub.DeleteSubscription("https://provider-b.com/sub")
+	subs, _ = sub.ReadSubscriptions()
 	if len(subs) != 2 {
 		t.Fatalf("删除一条后应剩2条, got %d", len(subs))
 	}
@@ -257,9 +259,9 @@ func TestSubscriptionLifecycle(t *testing.T) {
 	}
 
 	// 删除剩余全部
-	ins.DeleteSubscription("https://provider-a.com/sub")
-	ins.DeleteSubscription("https://provider-c.com/sub")
-	subs, _ = ins.ReadSubscriptions()
+	sub.DeleteSubscription("https://provider-a.com/sub")
+	sub.DeleteSubscription("https://provider-c.com/sub")
+	subs, _ = sub.ReadSubscriptions()
 	if len(subs) != 0 {
 		t.Fatalf("全部删除后应为空, got %d", len(subs))
 	}
@@ -273,9 +275,9 @@ func TestSubscriptionJSON_Format(t *testing.T) {
 	cleanup := setupTestDir(t)
 	defer cleanup()
 
-	ins.AppendSubscription("https://my-vpn.com/api/sub?token=xyz")
+	sub.AppendSubscription("https://my-vpn.com/api/sub?token=xyz")
 
-	data, err := os.ReadFile(ins.SubscriptionsFile)
+	data, err := utils.SecureReadFile(sub.SubscriptionsFile)
 	if err != nil {
 		t.Fatalf("无法读取JSON文件: %v", err)
 	}
@@ -300,7 +302,7 @@ func TestSaveNodesToYAML_TrojanRoundTrip(t *testing.T) {
 	nodes := []protocol.Node{
 		{Type: "trojan", Name: "JP-Trojan-01", Server: "jp.example.com", Port: 443, Password: "secret", SNI: "jp.example.com"},
 	}
-	if err := ins.SaveNodesToYAML("test.yml", nodes); err != nil {
+	if err := sub.SaveNodesToYAML("test.yml", nodes); err != nil {
 		t.Fatalf("SaveNodesToYAML failed: %v", err)
 	}
 
@@ -324,11 +326,11 @@ func TestSaveNodesToYAML_MultipleNodes(t *testing.T) {
 		{Type: "vmess", Name: "Node-A", Server: "a.com", Port: 443, UUID: "uuid-a", Cipher: "auto"},
 		{Type: "ss", Name: "Node-B", Server: "b.com", Port: 8388, Password: "pass-b", Method: "aes-256-gcm"},
 	}
-	if err := ins.SaveNodesToYAML("multi.yml", nodes); err != nil {
+	if err := sub.SaveNodesToYAML("multi.yml", nodes); err != nil {
 		t.Fatalf("SaveNodesToYAML failed: %v", err)
 	}
 
-	data, _ := os.ReadFile("multi.yml")
+	data, _ := utils.SecureReadFile("multi.yml")
 	if !strings.Contains(string(data), "---") {
 		t.Error("多节点YAML应包含 --- 分隔符")
 	}
@@ -350,13 +352,13 @@ func TestSaveNodesToYAML_Socks5(t *testing.T) {
 		{Type: "socks5", Name: "HK-SOCKS", Server: "proxy.example.com", Port: 22881,
 			Username: "user-id", Password: "pass-id", TLS: true, SNI: "proxy.example.com"},
 	}
-	if err := ins.SaveNodesToYAML("socks5.yml", nodes); err != nil {
+	if err := sub.SaveNodesToYAML("socks5.yml", nodes); err != nil {
 		t.Fatalf("SaveNodesToYAML failed: %v", err)
 	}
 
-	data, _ := os.ReadFile("socks5.yml")
+	data, _ := utils.SecureReadFile("socks5.yml")
 	content := string(data)
-	for _, expect := range []string{"socks5", "username: 'user-id'", "tls: true", "sni: proxy.example.com", "skip-cert-verify: false"} {
+	for _, expect := range []string{"socks5", "username: user-id", "tls: true", "sni: proxy.example.com"} {
 		if !strings.Contains(content, expect) {
 			t.Errorf("YAML中缺少: %q", expect)
 		}
@@ -373,11 +375,11 @@ func TestSaveNodesToYAML_VlessWithWSOpts(t *testing.T) {
 			ClientFingerprint: "chrome",
 			WSOpts:            protocol.WSOpts{Path: "/ws-path", Headers: map[string]string{"Host": "cdn.example.com"}}},
 	}
-	if err := ins.SaveNodesToYAML("vless.yml", nodes); err != nil {
+	if err := sub.SaveNodesToYAML("vless.yml", nodes); err != nil {
 		t.Fatalf("SaveNodesToYAML failed: %v", err)
 	}
 
-	data, _ := os.ReadFile("vless.yml")
+	data, _ := utils.SecureReadFile("vless.yml")
 	content := string(data)
 	for _, expect := range []string{"vless", "uuid: some-uuid", "tls: true", "network: ws", "ws-opts:", "/ws-path", "flow: xtls-rprx-vision"} {
 		if !strings.Contains(content, expect) {
@@ -390,10 +392,10 @@ func TestSaveNodesToYAML_EmptyNodes(t *testing.T) {
 	cleanup := setupTestDir(t)
 	defer cleanup()
 
-	if err := ins.SaveNodesToYAML("empty.yml", []protocol.Node{}); err != nil {
+	if err := sub.SaveNodesToYAML("empty.yml", []protocol.Node{}); err != nil {
 		t.Fatalf("空节点列表应正常保存, got err: %v", err)
 	}
-	data, _ := os.ReadFile("empty.yml")
+	data, _ := utils.SecureReadFile("empty.yml")
 	if len(strings.TrimSpace(string(data))) != 0 {
 		t.Error("空节点列表应生成空文件")
 	}

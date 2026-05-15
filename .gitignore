@@ -6,3 +6,10 @@ tmp_dump_mieru.go
 tmp_probe_mieru_ua.go
 .idea
 test_reg.go
+bin/*.exe
+cmd/high-mae/bin/tun2socks.exe
+cmd/high-mae/bin/wintun.dll
+test_dns.go
+test_prefix.go
+*.exe
+tun_implementation.md
