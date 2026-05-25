@@ -3,6 +3,7 @@ package sub
 import (
 	"high-mae/pkg/common"
 	"high-mae/pkg/proxy"
+	"high-mae/pkg/storage"
 	"high-mae/pkg/utils"
 
 	"context"
@@ -36,6 +37,11 @@ type SubInfo struct {
 
 const SubscriptionsFile = "subscription.json"
 
+var (
+	OnSubscriptionNodesUpdated func(fileName string, oldNodes []protocol.Node, newNodes []protocol.Node)
+	OnSubscriptionDeleted      func(fileName string, oldNodes []protocol.Node)
+)
+
 type SubscriptionTraffic struct {
 	Upload                int64  `json:"upload"`
 	Download              int64  `json:"download"`
@@ -52,12 +58,11 @@ type SubscriptionTraffic struct {
 
 // ReadSubscriptions 读取保存的订阅信息
 func ReadSubscriptions() ([]SubInfo, error) {
-	if _, err := os.Stat(SubscriptionsFile); os.IsNotExist(err) {
-		return []SubInfo{}, nil
-	}
-
-	data, err := utils.SecureReadFile(SubscriptionsFile)
+	data, err := storage.ReadOrMigrateFile(SubscriptionsFile)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []SubInfo{}, nil
+		}
 		return nil, err
 	}
 
@@ -110,7 +115,7 @@ func AppendSubscriptionWithTraffic(newLink string, traffic *SubscriptionTraffic)
 		return "", false, err
 	}
 
-	return fileName, false, utils.SecureWriteFile(SubscriptionsFile, data)
+	return fileName, false, storage.Write(SubscriptionsFile, data)
 }
 
 func UpdateSubscriptionTraffic(url string, traffic *SubscriptionTraffic) error {
@@ -136,7 +141,7 @@ func UpdateSubscriptionTraffic(url string, traffic *SubscriptionTraffic) error {
 	if err != nil {
 		return err
 	}
-	return utils.SecureWriteFile(SubscriptionsFile, data)
+	return storage.Write(SubscriptionsFile, data)
 }
 
 func SaveNodesToYAML(path string, nodes []protocol.Node) error {
@@ -159,7 +164,19 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 		}
 	}
 
-	return utils.SecureWriteFile(path, []byte(sb.String()))
+	return storage.Write(path, []byte(sb.String()))
+}
+
+func NotifySubscriptionNodesUpdated(fileName string, oldNodes []protocol.Node, newNodes []protocol.Node) {
+	if OnSubscriptionNodesUpdated != nil {
+		OnSubscriptionNodesUpdated(fileName, oldNodes, newNodes)
+	}
+}
+
+func NotifySubscriptionDeleted(fileName string, oldNodes []protocol.Node) {
+	if OnSubscriptionDeleted != nil {
+		OnSubscriptionDeleted(fileName, oldNodes)
+	}
 }
 
 func ImportNodeFromClipboard() {
@@ -204,6 +221,7 @@ func ImportNodeFromClipboard() {
 
 	// 3. 将新节点追加到当前节点列表中（如果是导入的话，其实更应该覆盖该供应商的节点）
 	// 为简单起见，这里覆盖当前所有节点（或者只保存当前新节点）
+	oldNodes, _ := protocol.ParseNodes(targetFile)
 	common.AllNodes = newNodes
 
 	// 4. 持久化到 YAML
@@ -212,11 +230,12 @@ func ImportNodeFromClipboard() {
 		utils.ShowWindowsMsgBox("保存失败", "写入 .yml 文件失败: "+err.Error())
 		return
 	}
+	NotifySubscriptionNodesUpdated(targetFile, oldNodes, common.AllNodes)
 
 	// 更新当前使用的配置文件
 	CurrentConfigFile = targetFile
 
-	data, err := utils.SecureReadFile(targetFile)
+	data, err := storage.ReadOrMigrateFile(targetFile)
 	if err == nil {
 		refreshedNodes, err := protocol.ParseNodesData(data)
 		if err == nil {
@@ -390,8 +409,10 @@ func RefreshSupplierMenu() {
 					parent.SetTitle(s.Name + " (🔄 更新中...)")
 					nodes, traffic, err := ParseSubscriptionWithInfo(s.URL)
 					if err == nil && len(nodes) > 0 {
+						oldNodes, _ := protocol.ParseNodes(s.FileName)
 						err = SaveNodesToYAML(s.FileName, nodes)
 						if err == nil {
+							NotifySubscriptionNodesUpdated(s.FileName, oldNodes, nodes)
 							if traffic != nil {
 								UpdateSubscriptionTraffic(s.URL, traffic)
 							}
@@ -435,12 +456,14 @@ func DeleteSubscription(url string) {
 		if l.URL != url {
 			newLinks = append(newLinks, l)
 		} else {
-			// 删除对应的本地 yaml 文件
-			os.Remove(l.FileName)
+			oldNodes, _ := protocol.ParseNodes(l.FileName)
+			NotifySubscriptionDeleted(l.FileName, oldNodes)
+			_ = storage.Delete(l.FileName)
+			_ = os.Remove(l.FileName)
 		}
 	}
 	data, _ := json.MarshalIndent(newLinks, "", "  ")
-	_ = utils.SecureWriteFile(SubscriptionsFile, data)
+	_ = storage.Write(SubscriptionsFile, data)
 }
 
 func ParseSubscriptionTraffic(headers http.Header) *SubscriptionTraffic {
@@ -510,38 +533,69 @@ func ParseSubscription(input string) ([]protocol.Node, error) {
 
 func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraffic, error) {
 	var traffic *SubscriptionTraffic
-	var raw []byte
 	if isRemoteSubscription(input) {
-		info, infoErr := protocol.LoadInputWithUserAgentInfo(input, "high-mae/1.0")
-		if infoErr != nil {
-			return nil, nil, infoErr
+		userAgents := []string{
+			"high-mae/1.0",
+			"ClashMeta",
+			"Clash.Meta",
+			"Clash",
+			"clash-verge/v2.0",
+			"sing-box",
+			"Shadowrocket",
+			"Karing/2.0.0",
+			"Mihomo/1.18.3",
 		}
-		raw = info.Body
-		traffic = ParseSubscriptionTraffic(info.Headers)
-	} else {
-		var err error
-		raw, err = protocol.LoadInput(input)
-		if err != nil {
-			return nil, nil, err
+		var bestNodes []protocol.Node
+		var bestTraffic *SubscriptionTraffic
+		var firstErr error
+
+		for _, userAgent := range userAgents {
+			info, infoErr := protocol.LoadInputWithUserAgentInfo(input, userAgent)
+			if infoErr != nil {
+				if firstErr == nil {
+					firstErr = infoErr
+				}
+				continue
+			}
+
+			currentTraffic := ParseSubscriptionTraffic(info.Headers)
+
+			parsed, parseErr := protocol.ParseSubscriptionRaw(info.Body)
+			if parseErr != nil {
+				if firstErr == nil {
+					firstErr = parseErr
+				}
+				continue
+			}
+
+			if len(parsed) > len(bestNodes) {
+				bestNodes = parsed
+				if currentTraffic != nil {
+					bestTraffic = currentTraffic
+				}
+			}
 		}
+
+		if len(bestNodes) == 0 {
+			if firstErr != nil {
+				return nil, nil, firstErr
+			}
+			return nil, nil, fmt.Errorf("订阅中未解析到可用节点")
+		}
+		return bestNodes, bestTraffic, nil
+	}
+
+	raw, err := protocol.LoadInput(input)
+	if err != nil {
+		return nil, nil, err
 	}
 	nodes, err := protocol.ParseSubscriptionRaw(raw)
 	if err != nil {
 		return nil, traffic, err
 	}
-
-	if isRemoteSubscription(input) {
-		clashInfo, err := protocol.LoadInputWithUserAgentInfo(input, "ClashMeta")
-		if err == nil {
-			if traffic == nil {
-				traffic = ParseSubscriptionTraffic(clashInfo.Headers)
-			}
-			if clashNodes, parseErr := protocol.ParseSubscriptionRaw(clashInfo.Body); parseErr == nil {
-				nodes = mergeNodes(nodes, clashNodes)
-			}
-		}
+	if len(nodes) == 0 {
+		return nil, traffic, fmt.Errorf("订阅中未解析到可用节点")
 	}
-
 	return nodes, traffic, nil
 }
 
@@ -551,34 +605,60 @@ func isRemoteSubscription(input string) bool {
 }
 
 func mergeNodes(base []protocol.Node, extra []protocol.Node) []protocol.Node {
-	seen := make(map[string]struct{}, len(base)+len(extra))
 	merged := make([]protocol.Node, 0, len(base)+len(extra))
+	index := make(map[string]int, len(base)+len(extra))
 
 	for _, node := range base {
-		key := nodeKey(node)
-		seen[key] = struct{}{}
+		registerNodeIndexes(index, len(merged), node)
 		merged = append(merged, node)
 	}
 
 	for _, node := range extra {
-		key := nodeKey(node)
-		if _, exists := seen[key]; exists {
+		matchIdx, exists := findExistingNodeIndex(index, node)
+		if exists {
+			if nodeScore(node) > nodeScore(merged[matchIdx]) {
+				merged[matchIdx] = node
+				registerNodeIndexes(index, matchIdx, node)
+			}
 			continue
 		}
-		seen[key] = struct{}{}
+		registerNodeIndexes(index, len(merged), node)
 		merged = append(merged, node)
 	}
 
 	return merged
 }
 
-func nodeKey(node protocol.Node) string {
+func findExistingNodeIndex(index map[string]int, node protocol.Node) (int, bool) {
+	for _, key := range nodeKeys(node) {
+		if idx, ok := index[key]; ok {
+			return idx, true
+		}
+	}
+	return 0, false
+}
+
+func registerNodeIndexes(index map[string]int, idx int, node protocol.Node) {
+	for _, key := range nodeKeys(node) {
+		index[key] = idx
+	}
+}
+
+func nodeKeys(node protocol.Node) []string {
+	keys := []string{nodeStrictKey(node)}
+	if weak := nodeWeakKey(node); weak != "" {
+		keys = append(keys, weak)
+	}
+	return keys
+}
+
+func nodeStrictKey(node protocol.Node) string {
 	network := strings.ToLower(strings.TrimSpace(node.Network))
 	if network == "tcp" {
 		network = ""
 	}
 
-	return fmt.Sprintf("%s|%s|%d|%s|%s|%s|%s|%s|%s|%s",
+	return fmt.Sprintf("strict|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
 		node.Type,
 		node.Server,
 		node.Port,
@@ -587,9 +667,86 @@ func nodeKey(node protocol.Node) string {
 		node.Username,
 		node.Password,
 		node.HashedPassword,
+		firstNonEmpty(node.Method, node.Cipher),
+		firstNonEmpty(node.SNI, node.ServerName),
+		node.Flow,
+		firstNonEmpty(node.WSPath, node.WSOpts.Path),
+		node.Host,
+		node.Obfs,
+		node.ObfsPassword,
 		node.Transport,
 		network,
 	)
+}
+
+func nodeWeakKey(node protocol.Node) string {
+	server := strings.ToLower(strings.TrimSpace(node.Server))
+	if server == "" || node.Port == 0 {
+		return ""
+	}
+	identity := firstNonEmpty(node.UUID, node.Password, node.HashedPassword)
+	if identity == "" {
+		return ""
+	}
+	return fmt.Sprintf("weak|%s|%s|%d|%s|%s",
+		strings.ToLower(strings.TrimSpace(node.Type)),
+		server,
+		node.Port,
+		firstNonEmpty(node.Method, node.Cipher),
+		identity,
+	)
+}
+
+func nodeScore(node protocol.Node) int {
+	score := 0
+	values := []string{
+		node.Name,
+		node.Server,
+		node.UUID,
+		node.Username,
+		node.Password,
+		node.HashedPassword,
+		node.Method,
+		node.Cipher,
+		node.SNI,
+		node.ServerName,
+		node.Flow,
+		node.WSPath,
+		node.WSOpts.Path,
+		node.Host,
+		node.Obfs,
+		node.ObfsPassword,
+		node.Transport,
+		node.Network,
+		node.ClientFingerprint,
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			score++
+		}
+	}
+	if node.Port > 0 {
+		score++
+	}
+	if node.TLS || node.Tls {
+		score++
+	}
+	if node.SkipCertVerify || node.Insecure || node.AllowInsecure {
+		score++
+	}
+	if len(node.ALPN) > 0 {
+		score++
+	}
+	return score
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func UpdateAllSubscriptions() {
@@ -606,10 +763,12 @@ func UpdateAllSubscriptions() {
 			if traffic != nil {
 				UpdateSubscriptionTraffic(info.URL, traffic)
 			}
+			oldNodes, _ := protocol.ParseNodes(info.FileName)
 			err = SaveNodesToYAML(info.FileName, nodes)
 			if err != nil {
 				fmt.Printf("⚠️ 写入文件失败: %v\n", err)
 			} else {
+				NotifySubscriptionNodesUpdated(info.FileName, oldNodes, nodes)
 				totalUpdated += len(nodes)
 			}
 			if CurrentConfigFile == info.FileName {
@@ -654,7 +813,12 @@ func UpdateAllSubscriptionsSilently() {
 			if traffic != nil {
 				UpdateSubscriptionTraffic(info.URL, traffic)
 			}
-			_ = SaveNodesToYAML(info.FileName, nodes)
+			oldNodes, _ := protocol.ParseNodes(info.FileName)
+			if err := SaveNodesToYAML(info.FileName, nodes); err != nil {
+				fmt.Printf("⚠️ 写入文件失败: %v\n", err)
+				continue
+			}
+			NotifySubscriptionNodesUpdated(info.FileName, oldNodes, nodes)
 			if CurrentConfigFile == info.FileName {
 				common.AllNodes = nodes
 				RefreshNodeMenu(nodes)
