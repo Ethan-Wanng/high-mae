@@ -214,7 +214,7 @@ func startTunWatchdogLocked() {
 	tunWatchDone = make(chan struct{})
 	stopCh := tunWatchStop
 	doneCh := tunWatchDone
-	go func() {
+	utils.SafeGo("tun watchdog", func() {
 		defer close(doneCh)
 		ticker := time.NewTicker(2 * time.Minute)
 		defer ticker.Stop()
@@ -226,7 +226,7 @@ func startTunWatchdogLocked() {
 				return
 			}
 		}
-	}()
+	})
 }
 
 func stopTunWatchdogLocked() {

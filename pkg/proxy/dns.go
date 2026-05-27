@@ -148,7 +148,7 @@ func StartLocalDNS() {
 	log.Printf("DNS server listening on %s", addr.String())
 
 	// Start cache cleanup goroutine
-	go func() {
+	utils.SafeGo("dns cache cleanup", func() {
 		ticker := time.NewTicker(1 * time.Minute)
 		for range ticker.C {
 			now := time.Now()
@@ -160,7 +160,7 @@ func StartLocalDNS() {
 			}
 			dnsCacheMu.Unlock()
 		}
-	}()
+	})
 
 	buf := make([]byte, 2048)
 	for {

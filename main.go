@@ -31,11 +31,13 @@ func init() {
 var iconBytes []byte
 
 func onReady() {
+	defer utils.RecoverPanic("systray ready")
+
 	systray.SetIcon(iconBytes)
 	systray.SetTitle("High Mae")
 	systray.SetTooltip("High Mae")
 
-	go stats.StartNetSpeedMonitor(nil)
+	utils.SafeGo("net speed monitor", func() { stats.StartNetSpeedMonitor(nil) })
 
 	common.MCurrentNode = systray.AddMenuItem("📍 当前节点: [未选择]", "")
 	common.MCurrentNode.Disable()
@@ -103,13 +105,13 @@ func onReady() {
 	mAbout := systray.AddMenuItem("ℹ️ 关于", "查看项目信息与技术栈")
 	common.MQuit = systray.AddMenuItem("❌ 安全退出", "退出程序")
 
-	go proxy.StartLocalDNS()
-	go webui.StartWebUI()
-	go proxy.StartAnyTLSHttpServer()
+	utils.SafeGo("local dns server", proxy.StartLocalDNS)
+	utils.SafeGo("web ui server", webui.StartWebUI)
+	utils.SafeGo("local http proxy", proxy.StartAnyTLSHttpServer)
 	sub.StartAutoUpdateSubscriptions()
 	utils.SetSystemProxy(common.IsSystemProxyOn)
 
-	go func() {
+	utils.SafeGo("tray menu loop", func() {
 		for {
 			select {
 			case <-mShowUI.ClickedCh:
@@ -154,13 +156,16 @@ func onReady() {
 					"Created with ❤️ by Ethan-Wanng"
 				utils.ShowWindowsMsgBox("关于 High-Mae", aboutMsg)
 			case <-common.MQuit.ClickedCh:
+				isQuitting.Store(true)
 				systray.Quit()
 			}
 		}
-	}()
+	})
 }
 
 func onExit() {
+	defer utils.RecoverPanic("shutdown cleanup")
+
 	utils.SetSystemProxy(false)
 	if common.IsSystemDNSHijacked {
 		utils.SetSystemDNS(false, "")
@@ -174,18 +179,32 @@ func onExit() {
 	stats.SyncTrafficSession(false, false)
 	_ = storage.Close()
 	QuitWailsApp()
+	utils.ReleaseSingleInstanceLock()
 }
 
 func main() {
+	defer utils.RecoverPanic("main")
+
+	locked, err := utils.AcquireSingleInstanceLock()
+	if err != nil {
+		utils.ShowWindowsMsgBox("High-Mae", "无法创建单实例锁: "+err.Error())
+		return
+	}
+	if !locked {
+		utils.ShowWindowsMsgBox("High-Mae", "High-Mae 已经在运行，请从系统托盘打开控制面板。")
+		return
+	}
+	defer utils.ReleaseSingleInstanceLock()
+
 	utils.EnsureCronetDll()
 
 	// 1. Run the system tray in a background thread
-	go systray.Run(onReady, onExit)
+	utils.SafeGo("systray", func() { systray.Run(onReady, onExit) })
 
 	// 2. Initialize and run the Wails Desktop window on the main thread
 	app := NewApp()
 
-	err := wails.Run(&options.App{
+	err = wails.Run(&options.App{
 		Title:             "海魅 High-Mae",
 		Width:             1280,
 		Height:            800,

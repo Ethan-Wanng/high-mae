@@ -285,7 +285,9 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 		common.NodeMenuItems = append(common.NodeMenuItems, item)
 		nodeParents = append(nodeParents, item)
 
-		go func(ctx context.Context, n protocol.Node, parent *systray.MenuItem) {
+		n := node
+		parent := item
+		utils.SafeGo("tray node menu", func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -298,11 +300,11 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 					proxy.SwitchNode(n)
 				}
 			}
-		}(ctx, node, item)
+		})
 	}
 
 	if common.MTestAll != nil {
-		go func(ctx context.Context) {
+		utils.SafeGo("tray test all menu", func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -316,7 +318,9 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 					var wg sync.WaitGroup
 					for i, n := range common.AllNodes {
 						wg.Add(1)
-						go func(idx int, nd protocol.Node, parent *systray.MenuItem) {
+						nd := n
+						parent := nodeParents[i]
+						utils.SafeGo("tray node tcp ping", func() {
 							defer wg.Done()
 							sem <- struct{}{}        // 获取令牌
 							defer func() { <-sem }() // 释放令牌
@@ -334,7 +338,7 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 							} else {
 								parent.SetTitle(fmt.Sprintf("[%s] %s - ⚡ %dms", strings.ToUpper(nd.Type), nd.Name, latency))
 							}
-						}(i, n, nodeParents[i])
+						})
 					}
 					wg.Wait()
 					common.MTestAll.SetTitle("⚡ 极速测速所有节点 (TCP)")
@@ -344,7 +348,7 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 					debug.FreeOSMemory()
 				}
 			}
-		}(ctx)
+		})
 	}
 
 	// 自动切换到导入的第一个新节点
@@ -386,7 +390,12 @@ func RefreshSupplierMenu() {
 		mUpdate := item.AddSubMenuItem("🔄 更新此订阅", "")
 		mDelete := item.AddSubMenuItem("🗑 删除此供应商", "")
 
-		go func(ctx context.Context, s SubInfo, parent *systray.MenuItem, mSw *systray.MenuItem, mUp *systray.MenuItem, mDel *systray.MenuItem) {
+		s := sub
+		parent := item
+		mSw := mSwitch
+		mUp := mUpdate
+		mDel := mDelete
+		utils.SafeGo("tray supplier menu", func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -448,7 +457,7 @@ func RefreshSupplierMenu() {
 					}
 				}
 			}
-		}(ctx, sub, item, mSwitch, mUpdate, mDelete)
+		})
 	}
 }
 
@@ -796,12 +805,12 @@ func UpdateAllSubscriptions() {
 func StartAutoUpdateSubscriptions() {
 	// 每 6 小时更新一次
 	ticker := time.NewTicker(6 * time.Hour)
-	go func() {
+	utils.SafeGo("subscription auto update", func() {
 		for range ticker.C {
 			fmt.Println("开始执行后台自动更新订阅...")
 			UpdateAllSubscriptionsSilently()
 		}
-	}()
+	})
 }
 
 // UpdateAllSubscriptionsSilently 静默更新，不弹窗

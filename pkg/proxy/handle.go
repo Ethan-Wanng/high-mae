@@ -198,11 +198,11 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(upstream, "\r\n")
 	}
 
-	go func() {
+	utils.SafeGo("proxy upload copy", func() {
 		buf := bufferPool.Get().([]byte)
 		defer bufferPool.Put(buf)
 		io.CopyBuffer(upstream, bufrw, buf)
-	}()
+	})
 
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)

@@ -203,11 +203,11 @@ func restartTunAfterNodeSwitch() {
 	// 使用 goroutine 确保写锁释放后再重启 TUN。
 	nodeServer := common.GlobalNodeServer
 	nodeIP := common.GlobalNodeIP
-	go func() {
+	utils.SafeGo("tun restart after node switch", func() {
 		if err := RestartSingBoxTun(nodeServer, nodeIP); err != nil {
 			log.Printf("重启 sing-box TUN 失败: %v", err)
 		}
-	}()
+	})
 }
 
 func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options, error) {

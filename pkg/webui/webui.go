@@ -1012,7 +1012,7 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 		tunTarget := !common.IsTunModeOn
 		tunPending.Store(true)
 		tunPendingState.Store(tunTarget)
-		go func() {
+		utils.SafeGo("webui tun toggle", func() {
 			defer tunPending.Store(false)
 			msg := proxy.ToggleTunMode()
 			if msg != "" {
@@ -1020,7 +1020,7 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
-		}()
+		})
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 		return
 	case "webrtc":

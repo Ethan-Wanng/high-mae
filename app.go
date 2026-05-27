@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"sync/atomic"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 var (
 	globalApp  *App
-	isQuitting bool
+	isQuitting atomic.Bool
 )
 
 // App struct
@@ -33,7 +35,7 @@ func (a *App) domReady(ctx context.Context) {
 // beforeClose is called when the application is about to quit.
 // Returning true prevents the window from closing and hides it to the system tray instead.
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {
-	if isQuitting {
+	if isQuitting.Load() {
 		return false
 	}
 	runtime.WindowHide(ctx)
@@ -53,7 +55,7 @@ func ShowWailsWindow() {
 
 // QuitWailsApp exposes a global function to securely quit the Wails process
 func QuitWailsApp() {
-	isQuitting = true
+	isQuitting.Store(true)
 	if globalApp != nil && globalApp.ctx != nil {
 		runtime.Quit(globalApp.ctx)
 	}
