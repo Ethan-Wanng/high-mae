@@ -32,6 +32,7 @@ var (
 	// TUN 切换中标记，防止轮询期间闪烁
 	tunPending      atomic.Bool
 	tunPendingState atomic.Bool
+	nodeSwitching   atomic.Bool
 )
 
 type AggregateGroup struct {
@@ -594,6 +595,7 @@ func deleteAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func switchNodeHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	idxStr := r.URL.Query().Get("idx")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil {
@@ -609,24 +611,32 @@ func switchNodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	node := globalNodesCache[idx]
 	globalNodesMu.Unlock()
+	if !nodeSwitching.CompareAndSwap(false, true) {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "节点正在切换中，请稍候。"})
+		return
+	}
 
-	// Switch config file if needed
-	if sub.CurrentConfigFile != node.FileName {
-		nodes, err := protocol.ParseNodes(node.FileName)
-		if err == nil {
-			sub.SetActiveConfigFile(node.FileName)
-			common.AllNodes = nodes
-			sub.RefreshNodeMenu(nil)
+	utils.SafeGo("webui switch node", func() {
+		defer nodeSwitching.Store(false)
+
+		// Switch config file if needed
+		if sub.CurrentConfigFile != node.FileName {
+			nodes, err := protocol.ParseNodes(node.FileName)
+			if err == nil {
+				sub.SetActiveConfigFile(node.FileName)
+				common.AllNodes = nodes
+				sub.RefreshNodeMenu(nil)
+			}
 		}
-	}
 
-	// Double check to make sure index is valid in common.AllNodes
-	if node.SubIndex >= 0 && node.SubIndex < len(common.AllNodes) {
-		targetNode := common.AllNodes[node.SubIndex]
-		proxy.SwitchNode(targetNode)
-	}
+		// Double check to make sure index is valid in common.AllNodes
+		if node.SubIndex >= 0 && node.SubIndex < len(common.AllNodes) {
+			targetNode := common.AllNodes[node.SubIndex]
+			proxy.SwitchNode(targetNode)
+		}
+	})
 
-	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "msg": "正在切换节点..."})
 }
 
 func nodeLinkHandler(w http.ResponseWriter, r *http.Request) {

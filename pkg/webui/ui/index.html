@@ -66,8 +66,13 @@
                             </div>
                         </div>
                     </div>
+
+                    <div class="node-source-tabs">
+                        <button class="node-source-tab active" data-mode="subscription" onclick="setNodeGroupMode('subscription')">订阅组</button>
+                        <button class="node-source-tab" data-mode="aggregate" onclick="setNodeGroupMode('aggregate')">聚合组</button>
+                    </div>
                     
-                    <div class="grid" id="nodeGrid" style="display:flex; flex-direction:column; gap:0;">
+                    <div class="grid node-browser" id="nodeGrid">
                         <!-- Groups and Details tables will be loaded here dynamically -->
                     </div>
                 </div>

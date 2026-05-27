@@ -8,6 +8,19 @@ let cmdRules = [];
 let currentRuleGroupIndex = 0;
 let activeTab = "nodes";
 let lastDashboardPoll = 0;
+let nodeGroupMode = "subscription";
+let selectedNodeGroupFile = "";
+let switchingNodeIndex = null;
+
+function escapeHTML(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[ch]));
+}
 
 async function loadStatus() {
     try {
@@ -36,13 +49,12 @@ function showTab(tabId) {
 }
 
 
-let expandedGroups = {};
-
-function toggleFolder(groupName) {
-    const groupNodes = allNodesList.filter(n => n.group === groupName);
-    const hasActiveNode = groupNodes.some(n => n.active);
-    const currentlyExpanded = expandedGroups[groupName] !== undefined ? expandedGroups[groupName] : hasActiveNode;
-    expandedGroups[groupName] = !currentlyExpanded;
+function setNodeGroupMode(mode) {
+    nodeGroupMode = mode === "aggregate" ? "aggregate" : "subscription";
+    selectedNodeGroupFile = "";
+    document.querySelectorAll('.node-source-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === nodeGroupMode);
+    });
     renderNodes();
 }
 
@@ -51,146 +63,180 @@ function renderNodes() {
     if (!grid) return;
     grid.innerHTML = '';
 
-    if (!allNodesList || allNodesList.length === 0) {
-        grid.innerHTML = '<div class="empty-state">当前没有节点，点击 <strong>添加节点</strong> 或 <strong>导入订阅</strong> 开始使用。</div>';
+    const groups = nodeGroupMode === "aggregate"
+        ? aggregateGroupsCache.map(g => ({
+            fileName: g.fileName,
+            name: g.name,
+            active: !!g.active,
+            count: g.count || 0,
+            type: "aggregate"
+        }))
+        : suppliersCache.map(s => ({
+            fileName: s.fileName,
+            name: s.name,
+            active: !!s.active,
+            count: s.nodeCount || s.count || 0,
+            traffic: s.traffic,
+            type: "subscription"
+        }));
+
+    const activeGroup = groups.find(g => g.active);
+    if (!selectedNodeGroupFile && activeGroup) {
+        selectedNodeGroupFile = activeGroup.fileName;
+    }
+    const selectedGroup = groups.find(g => g.fileName === selectedNodeGroupFile);
+
+    if (!groups.length) {
+        grid.innerHTML = `<div class="empty-state">${nodeGroupMode === "aggregate" ? "暂无聚合组，可在系统设置中创建。" : "当前没有订阅组，点击 <strong>导入订阅</strong> 开始使用。"}</div>`;
         return;
     }
 
     const keyword = document.getElementById('nodeSearch')?.value.trim().toLowerCase() || "";
-
-    const groups = {};
-    allNodesList.forEach(n => {
-        const grp = n.group || "默认订阅组";
-        if (!groups[grp]) groups[grp] = [];
-        groups[grp].push(n);
+    groups.forEach(g => {
+        g.count = allNodesList.filter(n => n.fileName === g.fileName).length;
     });
+    const selectedNodes = selectedGroup ? filterNodeRows(allNodesList.filter(n => n.fileName === selectedGroup.fileName), keyword) : [];
+    const groupList = groups.filter(g => !keyword || g.name.toLowerCase().includes(keyword) || (selectedGroup && g.fileName === selectedGroup.fileName));
 
-    const groupNames = Object.keys(groups).sort();
-    let hasAnyMatches = false;
+    grid.innerHTML = `
+        <aside class="node-group-sidebar">
+            <div class="node-group-sidebar-title">${nodeGroupMode === "aggregate" ? "聚合组" : "订阅组"}</div>
+            <div class="node-group-list"></div>
+        </aside>
+        <section class="node-detail-pane">
+            <div class="node-detail-header">
+                <div>
+                    <div class="node-detail-title">${selectedGroup ? escapeHTML(selectedGroup.name) : "未展开组"}</div>
+                    <div class="node-detail-subtitle">${selectedGroup ? `${selectedNodes.length} 个节点${keyword ? "匹配当前搜索" : ""}` : "点击左侧组名查看节点，再点一次收起"}</div>
+                </div>
+                <div class="node-detail-actions">${renderSelectedGroupActions(selectedGroup)}</div>
+            </div>
+            <div class="node-detail-body"></div>
+        </section>
+    `;
 
-    groupNames.forEach(groupName => {
-        let groupNodes = groups[groupName];
-
-        if (keyword) {
-            groupNodes = groupNodes.filter(n =>
-                n.name.toLowerCase().includes(keyword) ||
-                n.type.toLowerCase().includes(keyword) ||
-                groupName.toLowerCase().includes(keyword)
-            );
-        }
-
-        if (groupNodes.length === 0) return;
-        hasAnyMatches = true;
-
-        const hasActiveNode = groupNodes.some(n => n.active);
-        const isExpanded = expandedGroups[groupName] !== undefined ? expandedGroups[groupName] : hasActiveNode;
-
-        const folderContainer = document.createElement('div');
-        folderContainer.className = `group-folder ${isExpanded ? 'expanded' : ''} ${hasActiveNode ? 'active' : ''}`;
-
-        const header = document.createElement('div');
-        header.className = 'folder-header';
-        header.onclick = () => toggleFolder(groupName);
-
-        const folderIcon = isExpanded ? '▾' : '▸';
-        const groupFile = groupNodes[0]?.fileName || "";
-        const supplier = suppliersCache.find(s => s.fileName === groupFile);
-        const groupTools = supplier ? `
-            <span class="folder-actions">
-                <button class="btn-mini" title="分享订阅" onclick="shareSupplierFile('${encodeURIComponent(groupFile)}', event)">分享</button>
-                <button class="btn-mini" title="刷新订阅" onclick="updateSupplierFile('${encodeURIComponent(groupFile)}', this, event)">刷新</button>
-                <button class="btn-mini btn-mini-danger" title="删除订阅" onclick="deleteSupplierFile('${encodeURIComponent(groupFile)}', event)">删除</button>
-            </span>
-        ` : '';
-        header.innerHTML = `
-            <span class="folder-icon">${folderIcon}</span>
-            <span class="folder-name">${groupName}</span>
-            <span class="folder-count">(${groupNodes.length} 个节点)</span>
-            ${groupTools}
-            <span class="folder-chevron">▶</span>
+    const list = grid.querySelector('.node-group-list');
+    groupList.forEach(group => {
+        const item = document.createElement('button');
+        const isSelected = selectedGroup && group.fileName === selectedGroup.fileName;
+        item.className = `node-group-item ${isSelected ? 'selected' : ''} ${group.active ? 'active' : ''}`;
+        item.onclick = () => selectNodeGroup(group.fileName);
+        item.innerHTML = `
+            <span class="node-group-name">${escapeHTML(group.name)}</span>
+            <span class="node-group-meta">${group.active ? '当前' : ''}${group.count ? ` · ${group.count}` : ''}</span>
         `;
-        folderContainer.appendChild(header);
-
-        if (isExpanded) {
-            const content = document.createElement('div');
-            content.className = 'folder-content';
-
-            const table = document.createElement('table');
-            table.className = 'win-explorer-table';
-            table.innerHTML = `
-                <thead>
-                    <tr>
-                        <th style="width: 50px; text-align: center;">状态</th>
-                        <th>节点名称</th>
-                        <th style="width: 100px;">协议类型</th>
-                        <th style="width: 100px; text-align: right;">延迟</th>
-                        <th style="width: 120px; text-align: right;">带宽</th>
-                        <th style="width: 280px; text-align: center;">操作</th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            `;
-
-            const tbody = table.querySelector('tbody');
-
-            groupNodes.forEach(n => {
-                let latClass = 'unknown';
-                let latText = '-- ms';
-                if (n.latency > 0 && n.latency < 500) {
-                    latClass = 'good';
-                    latText = n.latency + ' ms';
-                } else if (n.latency >= 500) {
-                    latClass = 'bad';
-                    latText = n.latency + ' ms';
-                } else if (n.latency === -1) {
-                    latClass = 'bad';
-                    latText = 'Timeout';
-                }
-                let speedClass = 'unknown';
-                let speedText = '--';
-                if (n.speed > 0) {
-                    speedClass = 'good';
-                    speedText = formatSpeed(n.speed);
-                } else if (n.speed === -1) {
-                    speedClass = 'bad';
-                    speedText = '失败';
-                }
-
-                const tr = document.createElement('tr');
-                if (n.active) tr.className = 'active';
-                tr.ondblclick = () => switchNode(n.index);
-
-                tr.innerHTML = `
-                    <td class="status-cell"><span class="status-dot ${n.active ? 'active' : ''}"></span></td>
-                    <td class="node-name-cell">${n.name}</td>
-                    <td><span class="node-type">${n.type}</span></td>
-                    <td style="text-align: right;" class="latency ${latClass}" id="lat-${n.index}">${latText}</td>
-                    <td style="text-align: right;" class="latency ${speedClass}" id="speed-${n.index}">↓ ${speedText}</td>
-                    <td style="text-align: center; display: flex; gap: 6px; justify-content: center; align-items: center; padding: 6px 14px;">
-                        <button class="btn-action ${n.active ? 'btn-action-primary' : ''}" onclick="switchNode(${n.index})">${n.active ? '运行中' : '连接'}</button>
-                        <button class="btn-action" onclick="testSingle(${n.index})">延迟</button>
-                        <button class="btn-action" onclick="testSpeed(${n.index})">带宽</button>
-                        <button class="btn-action" onclick="shareNode(${n.index})">分享</button>
-                        <button class="btn-action btn-action-danger" onclick="deleteNode(${n.index})">删除</button>
-                    </td>
-                `;
-                tbody.appendChild(tr);
-            });
-
-            content.appendChild(table);
-            folderContainer.appendChild(content);
-        }
-
-        grid.appendChild(folderContainer);
+        list.appendChild(item);
     });
 
-    if (!hasAnyMatches) {
-        grid.innerHTML = '<div class="empty-state">没有匹配的节点。</div>';
+    const body = grid.querySelector('.node-detail-body');
+    if (!selectedGroup) {
+        body.innerHTML = '<div class="empty-state">点击左侧组名称展开节点列表。</div>';
+        return;
     }
+    if (!selectedNodes.length) {
+        body.innerHTML = '<div class="empty-state">没有匹配的节点。</div>';
+        return;
+    }
+    body.appendChild(renderNodeTable(selectedNodes));
 }
 
 function filterNodes() {
     renderNodes();
+}
+
+function filterNodeRows(nodes, keyword) {
+    if (!keyword) return nodes || [];
+    return (nodes || []).filter(n =>
+        (n.name || "").toLowerCase().includes(keyword) ||
+        (n.type || "").toLowerCase().includes(keyword) ||
+        (n.group || "").toLowerCase().includes(keyword)
+    );
+}
+
+function renderSelectedGroupActions(group) {
+    if (!group || group.type !== "subscription") return "";
+    const file = encodeURIComponent(group.fileName);
+    return `
+        <button class="btn-mini" title="分享订阅" onclick="shareSupplierFile('${file}', event)">分享</button>
+        <button class="btn-mini" title="刷新订阅" onclick="updateSupplierFile('${file}', this, event)">刷新</button>
+        <button class="btn-mini btn-mini-danger" title="删除订阅" onclick="deleteSupplierFile('${file}', event)">删除</button>
+    `;
+}
+
+function renderNodeTable(nodes) {
+    const table = document.createElement('table');
+    table.className = 'win-explorer-table';
+    table.innerHTML = `
+        <thead>
+            <tr>
+                <th style="width: 50px; text-align: center;">状态</th>
+                <th>节点名称</th>
+                <th style="width: 100px;">协议类型</th>
+                <th style="width: 100px; text-align: right;">延迟</th>
+                <th style="width: 120px; text-align: right;">带宽</th>
+                <th style="width: 280px; text-align: center;">操作</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    `;
+    const tbody = table.querySelector('tbody');
+    nodes.forEach(n => {
+        let latClass = 'unknown';
+        let latText = '-- ms';
+        if (n.latency > 0 && n.latency < 500) {
+            latClass = 'good';
+            latText = n.latency + ' ms';
+        } else if (n.latency >= 500) {
+            latClass = 'bad';
+            latText = n.latency + ' ms';
+        } else if (n.latency === -1) {
+            latClass = 'bad';
+            latText = 'Timeout';
+        }
+        let speedClass = 'unknown';
+        let speedText = '--';
+        if (n.speed > 0) {
+            speedClass = 'good';
+            speedText = formatSpeed(n.speed);
+        } else if (n.speed === -1) {
+            speedClass = 'bad';
+            speedText = '失败';
+        }
+
+        const tr = document.createElement('tr');
+        if (n.active) tr.className = 'active';
+        tr.ondblclick = () => switchNode(n.index);
+        tr.innerHTML = `
+            <td class="status-cell"><span class="status-dot ${n.active ? 'active' : ''}"></span></td>
+            <td class="node-name-cell">${escapeHTML(n.name || '')}</td>
+            <td><span class="node-type">${escapeHTML(n.type || '')}</span></td>
+            <td style="text-align: right;" class="latency ${latClass}" id="lat-${n.index}">${latText}</td>
+            <td style="text-align: right;" class="latency ${speedClass}" id="speed-${n.index}">↓ ${speedText}</td>
+            <td class="node-actions-cell">
+                <button class="btn-action ${n.active ? 'btn-action-primary' : ''}" ${switchingNodeIndex !== null ? 'disabled' : ''} onclick="switchNode(${n.index})">${switchingNodeIndex === n.index ? '切换中' : (n.active ? '已选择' : '选择')}</button>
+                <button class="btn-action" onclick="testSingle(${n.index})">延迟</button>
+                <button class="btn-action" onclick="testSpeed(${n.index})">带宽</button>
+                <button class="btn-action" onclick="shareNode(${n.index})">分享</button>
+                <button class="btn-action btn-action-danger" onclick="deleteNode(${n.index})">删除</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+    return table;
+}
+
+async function selectNodeGroup(fileName) {
+    if (selectedNodeGroupFile === fileName) {
+        selectedNodeGroupFile = "";
+        renderNodes();
+        return;
+    }
+    selectedNodeGroupFile = fileName;
+    if (nodeGroupMode === "aggregate") {
+        await switchAggregateGroup(fileName);
+    } else {
+        await switchSupplier(fileName);
+    }
 }
 
 
@@ -211,7 +257,7 @@ async function loadSuppliers() {
             opt.selected = true;
             sel.appendChild(opt);
             renderSupplierTraffic(null);
-            loadAggregateGroups();
+            await loadAggregateGroups();
             return;
         }
 
@@ -228,7 +274,8 @@ async function loadSuppliers() {
             sel.appendChild(opt);
         });
         renderSupplierTraffic(sel.value);
-        loadAggregateGroups();
+        await loadAggregateGroups();
+        renderNodes();
     } catch(e) {}
 }
 
@@ -258,23 +305,30 @@ async function loadAggregateGroups() {
             if (g.active) opt.selected = true;
             sel.appendChild(opt);
         });
+        renderNodes();
     } catch(e) {}
 }
 
 async function switchSupplier(fileName) {
     if (!fileName) return;
     await fetch('/api/switch_supplier?file=' + encodeURIComponent(fileName), { method: 'POST' });
+    suppliersCache.forEach(s => s.active = s.fileName === fileName);
+    aggregateGroupsCache.forEach(g => g.active = false);
+    document.getElementById('supplierSelect').value = fileName;
     document.getElementById('aggregateSelect').value = '';
     renderSupplierTraffic(fileName);
-    loadNodes();
+    await loadNodes();
 }
 
 async function switchAggregateGroup(fileName) {
     if (!fileName) return;
     await fetch('/api/switch_aggregate_group?file=' + encodeURIComponent(fileName), { method: 'POST' });
+    aggregateGroupsCache.forEach(g => g.active = g.fileName === fileName);
+    suppliersCache.forEach(s => s.active = false);
+    document.getElementById('aggregateSelect').value = fileName;
     document.getElementById('supplierSelect').value = '';
     renderSupplierTraffic(null);
-    loadNodes();
+    await loadNodes();
 }
 
 async function deleteAggregateGroup() {
@@ -387,9 +441,39 @@ async function loadNodes() {
 
 
 async function switchNode(idx) {
-    await fetch('/api/switch?idx=' + idx, { method: 'POST' });
-    loadNodes();
-    loadStatus();
+    if (switchingNodeIndex !== null) {
+        showToast('节点正在切换中，请稍候。', 'info');
+        return;
+    }
+    switchingNodeIndex = idx;
+    const previousNodes = allNodesList.map(n => ({ ...n }));
+    allNodesList = allNodesList.map(n => ({ ...n, active: n.index === idx }));
+    renderNodes();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+        const res = await fetch('/api/switch?idx=' + idx, { method: 'POST', signal: controller.signal });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+            allNodesList = previousNodes;
+            showToast(data.msg || '节点切换失败', 'error');
+            return;
+        }
+        if (data.msg) showToast(data.msg, 'info', 1800);
+        setTimeout(loadNodes, 500);
+        setTimeout(loadNodes, 1800);
+        loadStatus();
+    } catch(e) {
+        allNodesList = previousNodes;
+        showToast(e.name === 'AbortError' ? '节点切换请求超时，请稍后查看当前节点状态。' : '节点切换请求失败。', 'error');
+    } finally {
+        clearTimeout(timeout);
+        setTimeout(() => {
+            switchingNodeIndex = null;
+            renderNodes();
+        }, 700);
+    }
 }
 
 async function testSingle(idx) {
