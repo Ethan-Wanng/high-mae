@@ -27,6 +27,7 @@ type Socks5TLSAdapter struct {
 	Password       string
 	SNI            string
 	SkipCertVerify bool
+	LocalIP        string // 新增：绑定的本地 IP
 }
 
 func (s *Socks5TLSAdapter) CreateProxy(ctx context.Context, dest metadata.Socksaddr) (net.Conn, error) {
@@ -40,7 +41,10 @@ func (s *Socks5TLSAdapter) CreateProxy(ctx context.Context, dest metadata.Socksa
 	// 2. 建立 TCP 连接
 	var localAddr net.Addr
 	if common.IsTunModeOn {
-		realIP := utils.GetRealLocalIP()
+		realIP := s.LocalIP
+		if realIP == "" {
+			realIP = utils.GetRealLocalIP()
+		}
 		if realIP != "" && realIP != common.TunIP {
 			localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
 		}

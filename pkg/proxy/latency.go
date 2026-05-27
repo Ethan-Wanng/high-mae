@@ -10,7 +10,6 @@ import (
 	anytls_util "github.com/anytls/sing-anytls/util"
 	utls "github.com/refraction-networking/utls"
 	box "github.com/sagernet/sing-box"
-	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing/common/metadata"
 	"high-mae/protocol"
 	"io"
@@ -26,6 +25,14 @@ import (
 // 2. 如果是域名，进行本地 DNS 解析并优先返回 IPv4 地址
 // 3. 解析失败返回空字符串，交由上层降级使用原域名
 func ResolveDirect(host string) string {
+	return ResolveDirectWithStrategy(host, "prefer_ipv4")
+}
+
+func ResolveNodeServer(node protocol.Node) string {
+	return ResolveDirectWithStrategy(node.Server, node.DomainStrategy)
+}
+
+func ResolveDirectWithStrategy(host string, strategy string) string {
 	// 如果为空，直接跳过
 	if host == "" {
 		return ""
@@ -38,34 +45,116 @@ func ResolveDirect(host string) string {
 
 	// 2. 发起系统 DNS 解析
 	ips, err := net.LookupHost(host)
-	if err != nil || len(ips) == 0 {
-		// 解析失败（可能是没网，或者域名写错了），返回空字符串
-		return ""
+	isFakeIP := false
+	if len(ips) > 0 {
+		if ipObj := net.ParseIP(ips[0]); ipObj != nil {
+			if ip4 := ipObj.To4(); ip4 != nil && ip4[0] == 198 && (ip4[1] == 18 || ip4[1] == 19) {
+				isFakeIP = true
+			}
+		}
 	}
-
-	// 3. 遍历解析结果，优先提取 IPv4 地址
-	// (因为部分网络环境或代理协议对纯 IPv6 的握手兼容性较差)
-	for _, ipStr := range ips {
-		ip := net.ParseIP(ipStr)
-		// ip.To4() 不为 nil 说明这是一个 IPv4 地址
-		if ip != nil && ip.To4() != nil {
-			return ipStr
+	if err != nil || len(ips) == 0 || isFakeIP {
+		// 🚀 容错方案：如果系统默认 DNS 解析失败（例如本地 DNS 代理挂了），尝试使用公共 DNS 进行紧急解析
+		r := &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				realIP := common.RealLocalIPBeforeTun
+				if realIP == "" {
+					realIP = utils.GetRealLocalIP()
+				}
+				var localAddr net.Addr
+				if ip := net.ParseIP(realIP); ip != nil {
+					localAddr = &net.UDPAddr{IP: ip}
+				}
+				d := net.Dialer{
+					Timeout:   2 * time.Second,
+					LocalAddr: localAddr,
+				}
+				return d.DialContext(ctx, "udp", "223.5.5.5:53")
+			},
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ips, err = r.LookupHost(ctx, host)
+		cancel()
+		if err != nil || len(ips) == 0 {
+			// 解析失败，返回空字符串
+			return ""
 		}
 	}
 
-	// 4. 如果没有找到 IPv4 地址，只能退而求其次返回第一个 IPv6 地址
-	return ips[0]
+	return selectResolvedIP(ips, strategy)
+}
+
+func selectResolvedIP(ips []string, strategy string) string {
+	preferIPv6 := false
+	ipv4Only := false
+	ipv6Only := false
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(strategy), "-", "_")) {
+	case "prefer_ipv6":
+		preferIPv6 = true
+	case "ipv4_only":
+		ipv4Only = true
+	case "ipv6_only":
+		ipv6Only = true
+	}
+
+	var first4 string
+	var first6 string
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil {
+			if first4 == "" {
+				first4 = ipStr
+			}
+			continue
+		}
+		if first6 == "" {
+			first6 = ipStr
+		}
+	}
+
+	if ipv4Only {
+		return first4
+	}
+	if ipv6Only {
+		return first6
+	}
+	if preferIPv6 && first6 != "" {
+		return first6
+	}
+	if first4 != "" {
+		return first4
+	}
+	return first6
 }
 
 // CreateTempHTTPClient 直接返回一个装载了特定节点的原生 http.Client，专供并发测速
 func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
-	newIP := ResolveDirect(node.Server)
+	newIP := ResolveNodeServer(node)
 	var dialCtx func(ctx context.Context, network, addr string) (net.Conn, error)
 	var cleanup func()
 
+	var routeAdded bool
+	if common.IsTunModeOn && newIP != "" && newIP != common.GlobalNodeIP {
+		realGateway := utils.GetDefaultGateway()
+		if realGateway != "" {
+			// 先尝试删除可能残留的旧路由，避免冲突
+			utils.RunHiddenCommand("route", "delete", newIP, "mask", "255.255.255.255")
+			utils.RunHiddenCommand("route", "add", newIP, "mask", "255.255.255.255", realGateway, "metric", "1")
+			routeAdded = true
+		}
+	}
+
+	var realIP string
 	var localAddr *net.TCPAddr
 	if common.IsTunModeOn {
-		realIP := utils.GetRealLocalIP()
+		realIP = common.RealLocalIPBeforeTun
+		if realIP == "" {
+			realIP = utils.GetRealLocalIP()
+		}
 		if realIP != "" && realIP != common.TunIP {
 			localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
 		}
@@ -154,6 +243,7 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 			Password:       node.Password,
 			SNI:            node.SNI,
 			SkipCertVerify: node.SkipCertVerify,
+			LocalIP:        realIP,
 		}
 		dialCtx = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			conn, err := adapter.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
@@ -166,13 +256,14 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 
 	} else {
 		// D. Sing-box 其他多协议节点
+		// 通用 sing-box 临时 client 暂不支持按本地 IP 绑定；AnyTLS/SOCKS5-TLS/FastTCPPing 使用 net.Dialer.LocalAddr。
 		opts, err := buildSingBoxOptions(node, newIP)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		boxCtx, cancelBox := context.WithCancel(context.Background())
-		b, err := box.New(box.Options{Options: opts, Context: include.Context(boxCtx)})
+		boxCtx, cancelBox := context.WithCancel(getRegistryContext())
+		b, err := box.New(box.Options{Options: opts, Context: boxCtx})
 		if err != nil {
 			cancelBox()
 			return nil, nil, err
@@ -207,11 +298,14 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 	// 直接组装成原生 HTTP Client 返回
 	httpClient := &http.Client{
 		Transport: tr,
-		Timeout:   5 * time.Second,
+		Timeout:   30 * time.Second,
 	}
 
 	finalCleanup := func() {
 		tr.CloseIdleConnections()
+		if routeAdded {
+			utils.RunHiddenCommand("route", "delete", newIP, "mask", "255.255.255.255")
+		}
 		if cleanup != nil {
 			cleanup()
 		}
@@ -298,7 +392,7 @@ func TestNodeLatency(node protocol.Node) (int64, error) {
 // FastTCPPing 提供极低内存、极快速度的 TCP 握手测速，专门用于"一键测速全部节点"
 // 它不会启动任何代理内核，因此内存消耗几乎为 0，并且可以轻松绕过 TUN 网卡防止死循环
 func FastTCPPing(node protocol.Node) (int64, error) {
-	newIP := ResolveDirect(node.Server)
+	newIP := ResolveNodeServer(node)
 	dialHost := node.Server
 	if newIP != "" {
 		dialHost = newIP
@@ -316,14 +410,17 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 	// 获取真实的本地 IP，绕过 TUN
 	var localAddr net.Addr
 
-	isUDP := node.Type == "hysteria2" || node.Type == "hy2" || node.Type == "wireguard"
+	isUDP := node.Type == "hysteria2" || node.Type == "hy2" || node.Type == "wireguard" || (node.Type == "naive" && node.QUIC)
 	network := "tcp"
 	if isUDP {
 		network = "udp"
 	}
 
 	if common.IsTunModeOn {
-		realIP := utils.GetRealLocalIP()
+		realIP := common.RealLocalIPBeforeTun
+		if realIP == "" {
+			realIP = utils.GetRealLocalIP()
+		}
 		if realIP != "" && realIP != common.TunIP {
 			if isUDP {
 				localAddr = &net.UDPAddr{IP: net.ParseIP(realIP), Port: 0}

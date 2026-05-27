@@ -4,12 +4,14 @@ go 1.25.0
 
 require (
 	github.com/anytls/sing-anytls v0.0.11
-	github.com/enfein/mieru/v3 v3.29.0
+	github.com/enfein/mieru/v3 v3.31.0
 	github.com/getlantern/systray v1.2.2
 	github.com/miekg/dns v1.1.72
 	github.com/refraction-networking/utls v1.8.2
+	github.com/sagernet/bbolt v0.0.0-20231014093535-ea5cb2fe9f0a
 	github.com/sagernet/sing v0.8.4
 	github.com/sagernet/sing-box v1.13.6
+	github.com/wailsapp/wails/v2 v2.10.1
 	golang.org/x/sys v0.43.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
@@ -22,6 +24,7 @@ require (
 	github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa // indirect
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.26.0 // indirect
+	github.com/bep/debounce v1.2.1 // indirect
 	github.com/caddyserver/certmagic v0.25.2 // indirect
 	github.com/caddyserver/zerossl v0.1.5 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
@@ -32,7 +35,7 @@ require (
 	github.com/dblohm7/wingoes v0.0.0-20240119213807-a09d6be7affa // indirect
 	github.com/ebitengine/purego v0.9.1 // indirect
 	github.com/florianl/go-nfqueue/v2 v2.0.2 // indirect
-	github.com/fsnotify/fsnotify v1.7.0 // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/gaissmai/bart v0.18.0 // indirect
 	github.com/getlantern/context v0.0.0-20190109183933-c447772a6520 // indirect
@@ -58,15 +61,24 @@ require (
 	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/hdevalence/ed25519consensus v0.2.0 // indirect
 	github.com/insomniacslk/dhcp v0.0.0-20260220084031-5adc3eb26f91 // indirect
+	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
 	github.com/jsimonetti/rtnetlink v1.4.0 // indirect
 	github.com/keybase/go-keychain v0.0.1 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/labstack/echo/v4 v4.13.3 // indirect
+	github.com/labstack/gommon v0.4.2 // indirect
+	github.com/leaanthony/go-ansi-parser v1.6.1 // indirect
+	github.com/leaanthony/gosod v1.0.4 // indirect
+	github.com/leaanthony/slicer v1.6.0 // indirect
+	github.com/leaanthony/u v1.1.1 // indirect
 	github.com/libdns/acmedns v0.5.0 // indirect
 	github.com/libdns/alidns v1.0.6 // indirect
 	github.com/libdns/cloudflare v0.2.2 // indirect
 	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/logrusorgru/aurora v2.0.3+incompatible // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mdlayher/netlink v1.9.0 // indirect
 	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/metacubex/utls v1.8.4 // indirect
@@ -76,10 +88,12 @@ require (
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/pires/go-proxyproto v0.8.1 // indirect
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus-community/pro-bing v0.4.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/safchain/ethtool v0.3.0 // indirect
-	github.com/sagernet/bbolt v0.0.0-20231014093535-ea5cb2fe9f0a // indirect
 	github.com/sagernet/cors v1.2.1 // indirect
 	github.com/sagernet/cronet-go v0.0.0-20260309102448-2fef65f9dba9 // indirect
 	github.com/sagernet/cronet-go/all v0.0.0-20260309102448-2fef65f9dba9 // indirect
@@ -128,6 +142,7 @@ require (
 	github.com/sagernet/tailscale v1.92.4-sing-box-1.13-mod.7 // indirect
 	github.com/sagernet/wireguard-go v0.0.2-beta.1.0.20260224074747-506b7631853c // indirect
 	github.com/sagernet/ws v0.0.0-20231204124109-acfe8907c854 // indirect
+	github.com/samber/lo v1.49.1 // indirect
 	github.com/tailscale/certstore v0.1.1-0.20231202035212-d3fa0460f47e // indirect
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect
 	github.com/tailscale/goupnp v1.0.1-0.20210804011211-c64d0f06ea05 // indirect
@@ -139,8 +154,13 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
+	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701 // indirect
+	github.com/valyala/bytebufferpool v1.0.0 // indirect
+	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
+	github.com/wailsapp/go-webview2 v1.0.22 // indirect
+	github.com/wailsapp/mimetype v1.4.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
@@ -167,4 +187,6 @@ require (
 
 replace github.com/sagernet/sing-box => github.com/enfein/mbox v1.11.6-0.20260228064239-6da7e538e122
 
-replace github.com/enfein/mieru/v3 => ./mieru_src_v3.29.0/github.com/enfein/mieru/v3@v3.29.0
+replace github.com/enfein/mieru/v3 => ./mieru_src_v3.31.0/github.com/enfein/mieru/v3@v3.31.0
+
+replace github.com/wailsapp/go-webview2 => github.com/wailsapp/go-webview2 v1.0.21

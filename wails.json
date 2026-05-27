@@ -1,0 +1,10 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "High-Mae",
+  "outputfilename": "HighMae",
+  "frontend:dir": "pkg/webui/ui",
+  "wailsjsdir": "./frontend",
+  "author": {
+    "name": "Ethan-Wanng"
+  }
+}

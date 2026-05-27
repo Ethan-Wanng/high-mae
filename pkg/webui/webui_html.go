@@ -3,11 +3,20 @@ package webui
 import (
 	"embed"
 	"io"
+	"io/fs"
 	"net/http"
 )
 
 //go:embed ui/*
 var webuiFS embed.FS
+
+func GetEmbeddedAssets() fs.FS {
+	subFS, err := fs.Sub(webuiFS, "ui")
+	if err != nil {
+		return webuiFS
+	}
+	return subFS
+}
 
 //go:embed ui/index.html
 var indexHTML string

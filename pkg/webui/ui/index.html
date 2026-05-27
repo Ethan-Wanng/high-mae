@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>High-Mae (海魅) 控制面板</title>
+    <title>High-Mae 控制面板</title>
     <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
     <div class="toast-container" id="toastContainer"></div>
     <div class="container">
@@ -15,152 +15,182 @@
             <div class="brand">
                 <div class="brand-badge">HM</div>
                 <div>
-                    <h1>High-Mae (海魅)</h1>
-                    <div class="subtitle">现代化 Windows 网络代理客户端</div>
+                    <h1>High-Mae</h1>
+                    <div class="subtitle">Windows 桌面代理客户端 v1.2.0 · 规则分流 / TUN / Mieru / Naive / AnyTLS</div>
                 </div>
             </div>
 
-            <div class="speed-monitor" id="speedMonitor">↑ 0 B/s &nbsp; ↓ 0 B/s</div>
+            <div class="status-cluster">
+                <div class="speed-monitor" id="speedMonitor">↑ 0 B/s &nbsp; ↓ 0 B/s</div>
+                <div id="selectedNodeDisplay" class="selected-node-display">当前节点: 正在加载...</div>
+            </div>
 
             <div class="header-actions">
-                <button class="btn-success" onclick="openAddModal()">➕ 添加节点</button>
-                <button class="btn-ghost" id="btnImport" onclick="importSubscription()">📋 导入订阅</button>
-                <button class="btn-primary" id="btnTestAll" onclick="testAll()">⚡ 极速测速</button>
+                <button class="btn-success" onclick="openAddModal()">添加节点</button>
+                <button class="btn-ghost" id="btnImport" onclick="importSubscription()">导入订阅</button>
+                <button class="btn-primary" id="btnTestAll" onclick="testAll()">极速测速</button>
                 <div class="dropdown">
-                    <button class="btn-ghost">⚙️ 管理</button>
+                    <button class="btn-ghost">管理</button>
                     <div class="dropdown-content">
-                        <a href="javascript:void(0)" onclick="openRuleModal()">🛠 规则管理</a>
-                        <a href="javascript:void(0)" onclick="openDNSModal()">🌐 DNS 管理</a>
-                        <a href="javascript:void(0)" onclick="openAggGroupModal()">📁 聚合分组</a>
+                        <a href="javascript:void(0)" onclick="openRuleModal()">规则管理</a>
+                        <a href="javascript:void(0)" onclick="openDNSModal()">DNS 管理</a>
+                        <a href="javascript:void(0)" onclick="openAggGroupModal()">聚合分组</a>
                     </div>
                 </div>
             </div>
         </div>
 
         <div class="tabs">
-            <button class="tab-btn active" onclick="showTab('nodes')">📦 节点列表</button>
-            <button class="tab-btn" onclick="showTab('dashboard')">📊 仪表盘</button>
+            <button class="tab-btn active" onclick="showTab('nodes')">节点选择</button>
+            <button class="tab-btn" onclick="showTab('dashboard')">数据看板</button>
+            <button class="tab-btn" onclick="showTab('settings')">系统设置</button>
         </div>
 
+        <!-- Tab 1: Nodes Selection (Default Active) -->
         <div id="tab-nodes" class="tab-content active">
-            <div class="controls">
-                <div class="control-row">
-                    <div class="control-card">
-                        <span>🗂️ 订阅组</span>
-                        <select id="supplierSelect" onchange="switchSupplier(this.value)"></select>
+            <div class="layout-main-panel panel-full">
+                <div class="explorer-card">
+                    <div class="explorer-header">
+                        <div class="explorer-title">
+                            <span>节点管理器</span>
+                        </div>
+                        <div class="explorer-tools">
+                            <div class="search-box node-search-box">
+                                <input type="text" id="nodeSearch" placeholder="搜索节点、协议或地区..." oninput="filterNodes()">
+                            </div>
+                            <div class="supplier-actions node-toolbar">
+                                <select id="supplierSelect" onchange="switchSupplier(this.value)" style="display:none;"></select>
+                                <select id="aggregateSelect" onchange="switchAggregateGroup(this.value)" style="display:none;"></select>
+                                <button class="btn-update icon-button" id="btnUpdate" onclick="updateSupplier()" title="更新全部订阅">↻</button>
+                                <button class="btn-delete icon-button" id="btnDelete" onclick="deleteSupplier()" title="删除当前订阅">×</button>
+                            </div>
+                        </div>
                     </div>
-
-                    <div class="control-card">
-                        <span>📁 聚合组</span>
-                        <select id="aggregateSelect" onchange="switchAggregateGroup(this.value)"></select>
+                    
+                    <div class="grid" id="nodeGrid" style="display:flex; flex-direction:column; gap:0;">
+                        <!-- Groups and Details tables will be loaded here dynamically -->
                     </div>
-
-                    <div class="search-box">
-                        <input type="text" id="nodeSearch" placeholder="搜索节点名称或地区..." oninput="filterNodes()">
-                    </div>
-                </div>
-
-                <div class="control-row">
-                    <div class="control-card">
-                        <span>🟢 代理</span>
-                        <label class="toggle"><input type="checkbox" id="chkProxy" onchange="doAction('proxy')"><span class="slider"></span></label>
-                    </div>
-
-                    <div class="control-card">
-                        <span>🔄 全局</span>
-                        <label class="toggle"><input type="checkbox" id="chkMode" onchange="doAction('mode')"><span class="slider"></span></label>
-                    </div>
-
-                    <div class="control-card">
-                        <span>🔌 TUN</span>
-                        <label class="toggle"><input type="checkbox" id="chkTun" onchange="doAction('tun')"><span class="slider"></span></label>
-                    </div>
-
-                    <div class="control-card" title="修改浏览器配置以防止真实 IP 泄露">
-                        <span>🛡️ WebRTC</span>
-                        <label class="toggle"><input type="checkbox" id="chkWebRTC" onchange="doAction('webrtc')"><span class="slider"></span></label>
-                    </div>
-
-                    <div class="supplier-actions">
-                        <button class="btn-update" id="btnUpdate" onclick="updateSupplier()" title="更新当前订阅">🔄</button>
-                        <button class="btn-delete" id="btnDelete" onclick="deleteSupplier()" title="删除当前订阅">🗑</button>
-                    </div>
-                </div>
-
-                <div class="control-row">
-                    <div class="supplier-traffic" id="supplierTraffic"></div>
                 </div>
             </div>
-
-            <div class="grid" id="nodeGrid"></div>
         </div>
+
 
         <div id="tab-dashboard" class="tab-content">
             <div class="dashboard-grid">
                 <div class="stats-card">
-                    <div class="stats-label">实时上行</div>
-                    <div class="stats-value" id="dashSpeedOut">0 B/s</div>
+                    <div class="stats-label">进程占用内存</div>
+                    <div class="stats-value" id="dashMemory">--</div>
                 </div>
                 <div class="stats-card">
-                    <div class="stats-label">实时下行</div>
-                    <div class="stats-value" id="dashSpeedIn">0 B/s</div>
+                    <div class="stats-label">活动连接数</div>
+                    <div class="stats-value" id="dashConnections">--</div>
                 </div>
                 <div class="stats-card">
-                    <div class="stats-label">总上行</div>
-                    <div class="stats-value" id="dashTotalOut">0 B</div>
+                    <div class="stats-label">代理流量已用</div>
+                    <div class="stats-value" id="dashTraffic">--</div>
                 </div>
                 <div class="stats-card">
-                    <div class="stats-label">总下行</div>
-                    <div class="stats-value" id="dashTotalIn">0 B</div>
-                </div>
-                <div class="stats-card">
-                    <div class="stats-label">内存占用</div>
-                    <div class="stats-value" id="dashMem">0 MB</div>
-                </div>
-                <div class="stats-card">
-                    <div class="stats-label">活动连接</div>
-                    <div class="stats-value" id="dashConnections">0</div>
+                    <div class="stats-label">当前速度</div>
+                    <div class="stats-value" id="dashSpeed">--</div>
                 </div>
             </div>
-            <div class="chart-container">
-                <canvas id="trafficChart"></canvas>
-            </div>
-            <div class="log-container">
+
+            <div class="log-container" style="margin-top:0;">
                 <div class="log-header">
-                    <h3>📝 最近连接日志</h3>
-                    <div class="log-actions">
-                        <button class="btn-ghost" onclick="clearLogs()" style="padding: 4px 10px; font-size: 12px;">清空视图</button>
-                    </div>
+                    <h3>代理流量历史</h3>
+                    <button class="btn-ghost" onclick="loadDashboard()">刷新</button>
                 </div>
+                <div id="dashboardNodeTraffic" class="dashboard-traffic-list"></div>
                 <div class="log-table-wrapper">
                     <table class="log-table">
                         <thead>
                             <tr>
-                                <th>时间</th>
-                                <th>目标</th>
-                                <th>出口节点</th>
-                                <th>上行</th>
-                                <th>下行</th>
-                                <th>时长</th>
+                                <th>开始</th>
+                                <th>结束</th>
+                                <th>持续</th>
+                                <th>模式</th>
+                                <th>代理流量</th>
+                                <th>直连流量</th>
+                                <th>总流量</th>
                                 <th>状态</th>
                             </tr>
                         </thead>
-                        <tbody id="connLogBody">
-                            <!-- Logs will be injected here -->
+                        <tbody id="dashboardHistory">
+                            <tr><td colspan="8" style="text-align:center;color:var(--text-sub);">暂无记录</td></tr>
                         </tbody>
                     </table>
                 </div>
             </div>
         </div>
 
+
+        <!-- Tab 3: System Settings -->
+        <div id="tab-settings" class="tab-content">
+            <div class="settings-layout" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;">
+                <!-- Left Column: Feature Toggles & Subscription Traffic -->
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                    <!-- Status Toggles -->
+                    <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg);">
+                        <h4 style="margin: 0 0 16px 0; font-size: 14px; color: var(--accent); display: flex; align-items: center; gap: 6px;">🟢 功能核心开关</h4>
+                        <div class="controls" style="margin: 0; padding: 0; background: transparent; border: none; box-shadow: none; display: flex; flex-direction: column; gap: 12px;">
+                            <div class="control-row" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 0;">
+                                <div class="control-card" style="padding: 12px 16px;">
+                                    <span>🟢 代理服务</span>
+                                    <label class="toggle"><input type="checkbox" id="chkProxy" onchange="doAction('proxy')"><span class="slider"></span></label>
+                                </div>
+                                <div class="control-card" style="padding: 12px 16px;">
+                                    <span>🔄 全局路由</span>
+                                    <label class="toggle"><input type="checkbox" id="chkMode" onchange="doAction('mode')"><span class="slider"></span></label>
+                                </div>
+                            </div>
+                            <div class="control-row" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 0;">
+                                <div class="control-card" style="padding: 12px 16px;">
+                                    <span>🔌 TUN 网卡</span>
+                                    <label class="toggle"><input type="checkbox" id="chkTun" onchange="doAction('tun')"><span class="slider"></span></label>
+                                </div>
+                                <div class="control-card" style="padding: 12px 16px;" title="修改浏览器配置以防止真实 IP 泄露">
+                                    <span>🛡️ WebRTC</span>
+                                    <label class="toggle"><input type="checkbox" id="chkWebRTC" onchange="doAction('webrtc')"><span class="slider"></span></label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Active Subscription Traffic Info -->
+                    <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg);">
+                        <h4 style="margin: 0 0 12px 0; font-size: 14px; color: var(--accent-2); display: flex; align-items: center; gap: 6px;">📦 订阅流量状态</h4>
+                        <div class="supplier-traffic" id="supplierTraffic" style="font-size: 13px; color: var(--text-sub); line-height: 1.6; min-height: 40px;"></div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Advanced Configuration Management Tools -->
+                <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg); display: flex; flex-direction: column; gap: 16px;">
+                    <h4 style="margin: 0; font-size: 14px; color: var(--accent); display: flex; align-items: center; gap: 6px;">🛠️ 高级网络管理工具</h4>
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 6px;">
+                        <button class="btn-primary" onclick="openRuleModal()" style="height: 48px; border-radius: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; cursor: pointer;">
+                            规则分流管理组
+                        </button>
+                        <button class="btn-ghost" onclick="openDNSModal()" style="height: 48px; border-radius: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; border: 1px solid rgba(148, 163, 184, 0.18); cursor: pointer;">
+                            DNS 规则管理
+                        </button>
+                        <button class="btn-ghost" onclick="openAggGroupModal()" style="height: 48px; border-radius: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; border: 1px solid rgba(148, 163, 184, 0.18); cursor: pointer;">
+                            聚合分组管理
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
+
         <div class="footer">
-            <div class="footer-brand">High-Mae (海魅)</div>
-            <p>基于 MIT 协议开源的现代化网络工具</p>
+            <div class="footer-brand">High-Mae v1.2.0</div>
+            <p>面向 Windows 的桌面代理客户端，集成 sing-box、Mieru Client 与本地控制面板，支持订阅管理、节点测速、规则分流、TUN 接管、DNS 分流与命令行进程规则。</p>
             <div class="tech-tags">
                 <span class="tech-tag">sing-box Core</span>
+                <span class="tech-tag">Mieru Engine</span>
+                <span class="tech-tag">Command Routing</span>
+                <span class="tech-tag">Wails Desktop</span>
                 <span class="tech-tag">Go Standard Library</span>
-                <span class="tech-tag">sing-box TUN</span>
-                <span class="tech-tag">Vanilla CSS</span>
             </div>
             <p>Created with ❤️ by <a href="https://github.com/Ethan-Wanng" target="_blank">Ethan-Wanng</a></p>
         </div>
@@ -191,7 +221,8 @@
             <h2>规则组管理</h2>
             <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
                 <select id="ruleGroupSelect" style="min-width:180px;" onchange="selectRuleGroup(this.value)"></select>
-                <input type="text" id="ruleGroupName" placeholder="规则组名称" style="flex:1;min-width:160px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                <input type="text" id="ruleGroupName" placeholder="规则组名称"
+                    style="flex:1;min-width:160px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
                 <select id="ruleGroupAction" style="min-width:110px;">
                     <option value="direct">直连</option>
                     <option value="proxy">代理</option>
@@ -206,14 +237,35 @@
                     <option value="domain_keyword">域名关键字</option>
                     <option value="domain">完整域名</option>
                 </select>
-                <input type="text" id="ruleValue" placeholder="例如: google.com" style="flex:1;min-width:220px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                <input type="text" id="ruleValue" placeholder="例如: google.com"
+                    style="flex:1;min-width:220px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
                 <button class="btn-success" onclick="addRule()">添加规则</button>
             </div>
             <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
-                <input type="text" id="ruleSearch" placeholder="搜索全部规则，确认是否已存在..." oninput="renderRules()" style="flex:1;min-width:220px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                <input type="text" id="ruleSearch" placeholder="搜索全部规则，确认是否已存在..." oninput="renderRules()"
+                    style="flex:1;min-width:220px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
                 <span id="ruleSearchInfo" style="color:var(--text-sub);font-size:12px;"></span>
             </div>
-            <div id="ruleList" style="max-height: 300px; overflow-y: auto; margin-bottom: 14px; border: 1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 10px; background: rgba(255,255,255,0.02);">
+            <div id="ruleList"
+                style="max-height: 300px; overflow-y: auto; margin-bottom: 14px; border: 1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 10px; background: rgba(255,255,255,0.02);">
+            </div>
+            <div
+                style="margin-bottom:14px;border:1px solid rgba(148,163,184,0.18);border-radius:12px;padding:12px;background:rgba(255,255,255,0.02);">
+                <div style="font-size:14px;font-weight:600;margin-bottom:10px;color:var(--accent);">命令行进程规则</div>
+                <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
+                    <select id="cmdRuleType" style="min-width:120px;">
+                        <option value="prefix">命令前缀</option>
+                        <option value="exact">完整命令</option>
+                    </select>
+                    <input type="text" id="cmdRulePattern" placeholder="例如: go test"
+                        style="flex:1;min-width:260px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                    <select id="cmdRuleAction" style="min-width:110px;">
+                        <option value="direct">直连</option>
+                        <option value="proxy">代理</option>
+                    </select>
+                    <button class="btn-success" onclick="addCmdRule()">添加命令</button>
+                </div>
+                <div id="cmdRuleList" style="max-height:180px;overflow-y:auto;"></div>
             </div>
             <div class="action-bar">
                 <button class="btn-ghost" onclick="closeRuleModal()">关闭</button>
@@ -225,41 +277,55 @@
     <div class="modal-overlay" id="dnsModal">
         <div class="modal" style="width: min(860px, 100%);">
             <h2>DNS 规则管理</h2>
-            
-            <div style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
+
+            <div
+                style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div style="font-size: 14px; font-weight: 600; color: var(--accent);">🔄 自动覆写系统 DNS</div>
-                    <label class="toggle"><input type="checkbox" id="chkAutoOverwrite"><span class="slider"></span></label>
+                    <label class="toggle"><input type="checkbox" id="chkAutoOverwrite"><span
+                            class="slider"></span></label>
                 </div>
-                <div style="font-size: 12px; color: var(--text-sub); margin-top: 8px;">开启后将修改物理网卡的 DNS 指向本程序的本地 DNS 服务 (127.0.0.2)。退出时将自动恢复。</div>
+                <div style="font-size: 12px; color: var(--text-sub); margin-top: 8px;">开启后将修改物理网卡的 DNS 指向本程序的本地 DNS 服务
+                    (127.0.0.2)。退出时将自动恢复。</div>
             </div>
 
-            <div style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
-                <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--accent);">📡 DNS 服务器列表</div>
+            <div
+                style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
+                <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--accent);">📡 DNS 服务器列表
+                </div>
                 <div id="dnsServerList" style="max-height: 150px; overflow-y: auto; margin-bottom: 10px;"></div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <input type="text" id="dnsServerName" placeholder="服务器名称" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
-                    <input type="text" id="dnsServerAddr" placeholder="地址 (如 8.8.8.8:53)" style="flex:2; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
-                    <button class="btn-success" style="padding: 6px 12px; font-size:12px;" onclick="addDNSServer()">添加服务器</button>
+                    <input type="text" id="dnsServerName" placeholder="服务器名称"
+                        style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
+                    <input type="text" id="dnsServerAddr" placeholder="地址 (如 8.8.8.8:53)"
+                        style="flex:2; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
+                    <button class="btn-success" style="padding: 6px 12px; font-size:12px;"
+                        onclick="addDNSServer()">添加服务器</button>
                 </div>
             </div>
 
-            <div style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
-                <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--accent);">🛣️ DNS 分流规则</div>
+            <div
+                style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
+                <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--accent);">🛣️ DNS 分流规则
+                </div>
                 <div style="display:flex; gap:10px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
                     <span>默认服务器:</span>
                     <select id="dnsDefaultServer" style="min-width:150px; padding:6px; font-size:13px;"></select>
                 </div>
-                <div id="dnsRuleList" style="max-height: 200px; overflow-y: auto; margin-bottom: 10px; border-top: 1px solid rgba(148,163,184,0.1); padding-top:10px;"></div>
+                <div id="dnsRuleList"
+                    style="max-height: 200px; overflow-y: auto; margin-bottom: 10px; border-top: 1px solid rgba(148,163,184,0.1); padding-top:10px;">
+                </div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
                     <select id="dnsRuleType" style="min-width:100px; padding:6px; font-size:13px;">
                         <option value="domain_suffix">域名后缀</option>
                         <option value="domain_keyword">域名关键字</option>
                         <option value="domain">完整域名</option>
                     </select>
-                    <input type="text" id="dnsRuleValue" placeholder="域名/关键字" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
+                    <input type="text" id="dnsRuleValue" placeholder="域名/关键字"
+                        style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
                     <select id="dnsRuleServer" style="min-width:120px; padding:6px; font-size:13px;"></select>
-                    <button class="btn-success" style="padding: 6px 12px; font-size:12px;" onclick="addDNSRule()">添加规则</button>
+                    <button class="btn-success" style="padding: 6px 12px; font-size:12px;"
+                        onclick="addDNSRule()">添加规则</button>
                 </div>
             </div>
 
@@ -275,14 +341,18 @@
             <h2>聚合分组管理</h2>
             <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
                 <select id="aggModeSelect" onchange="onAggModeChange(this.value)" style="min-width:200px;"></select>
-                <input type="text" id="aggGroupName" placeholder="分组名称" style="flex:1;min-width:160px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                <input type="text" id="aggGroupName" placeholder="分组名称"
+                    style="flex:1;min-width:160px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
             </div>
             <div id="aggCurrentSection" style="display:none;margin-bottom:14px;">
                 <div style="font-size:13px;color:var(--text-sub);margin-bottom:8px;">📋 当前节点</div>
-                <div id="aggCurrentNodeList" style="max-height:200px;overflow-y:auto;border:1px solid rgba(148,163,184,0.18);border-radius:12px;padding:8px;background:rgba(255,255,255,0.02);"></div>
+                <div id="aggCurrentNodeList"
+                    style="max-height:200px;overflow-y:auto;border:1px solid rgba(148,163,184,0.18);border-radius:12px;padding:8px;background:rgba(255,255,255,0.02);">
+                </div>
             </div>
             <div style="font-size:13px;color:var(--text-sub);margin-bottom:8px;">📦 从订阅中选择节点</div>
-            <div id="aggNodeList" style="max-height: 250px; overflow-y: auto; margin-bottom: 14px; border: 1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 10px; background: rgba(255,255,255,0.02);">
+            <div id="aggNodeList"
+                style="max-height: 250px; overflow-y: auto; margin-bottom: 14px; border: 1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 10px; background: rgba(255,255,255,0.02);">
                 <div style="text-align:center;color:var(--text-dim);padding:20px;">加载中...</div>
             </div>
             <div class="action-bar">
@@ -294,4 +364,5 @@
 
     <script src="script.js"></script>
 </body>
+
 </html>

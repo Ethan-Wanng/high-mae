@@ -4,7 +4,10 @@ let suppliersCache = [];
 let aggregateGroupsCache = [];
 let currentGroupFilter = "";
 let ruleGroups = [];
+let cmdRules = [];
 let currentRuleGroupIndex = 0;
+let activeTab = "nodes";
+let lastDashboardPoll = 0;
 
 async function loadStatus() {
     try {
@@ -19,6 +22,7 @@ async function loadStatus() {
 }
 
 function showTab(tabId) {
+    activeTab = tabId;
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
     
@@ -28,11 +32,18 @@ function showTab(tabId) {
     const activeContent = document.getElementById(`tab-${tabId}`);
     if (activeContent) activeContent.classList.add('active');
 
-    if (tabId === 'dashboard') {
-        startDashboardPolling();
-    } else {
-        stopDashboardPolling();
-    }
+    if (tabId === 'dashboard') loadDashboard();
+}
+
+
+let expandedGroups = {};
+
+function toggleFolder(groupName) {
+    const groupNodes = allNodesList.filter(n => n.group === groupName);
+    const hasActiveNode = groupNodes.some(n => n.active);
+    const currentlyExpanded = expandedGroups[groupName] !== undefined ? expandedGroups[groupName] : hasActiveNode;
+    expandedGroups[groupName] = !currentlyExpanded;
+    renderNodes();
 }
 
 function renderNodes() {
@@ -40,221 +51,149 @@ function renderNodes() {
     if (!grid) return;
     grid.innerHTML = '';
 
-    const keyword = document.getElementById('nodeSearch')?.value.trim().toLowerCase() || "";
-    
-    let displayNodes = allNodesList;
-    if (currentGroupFilter !== "") {
-        displayNodes = allNodesList.filter(n => n.group === currentGroupFilter);
-    }
-
-    if (keyword) {
-        displayNodes = displayNodes.filter(n => 
-            n.name.toLowerCase().includes(keyword) || 
-            n.type.toLowerCase().includes(keyword)
-        );
-    }
-
-    if (!displayNodes || displayNodes.length === 0) {
-        grid.innerHTML = '<div class="empty-state">没有匹配的节点。</div>';
+    if (!allNodesList || allNodesList.length === 0) {
+        grid.innerHTML = '<div class="empty-state">当前没有节点，点击 <strong>添加节点</strong> 或 <strong>导入订阅</strong> 开始使用。</div>';
         return;
     }
 
-    displayNodes.forEach(n => {
-        let latClass = 'unknown';
-        let latText = '-- ms';
-        if (n.latency > 0 && n.latency < 500) {
-            latClass = 'good';
-            latText = n.latency + ' ms';
-        } else if (n.latency >= 500) {
-            latClass = 'bad';
-            latText = n.latency + ' ms';
-        } else if (n.latency === -1) {
-            latClass = 'bad';
-            latText = 'Timeout';
+    const keyword = document.getElementById('nodeSearch')?.value.trim().toLowerCase() || "";
+
+    const groups = {};
+    allNodesList.forEach(n => {
+        const grp = n.group || "默认订阅组";
+        if (!groups[grp]) groups[grp] = [];
+        groups[grp].push(n);
+    });
+
+    const groupNames = Object.keys(groups).sort();
+    let hasAnyMatches = false;
+
+    groupNames.forEach(groupName => {
+        let groupNodes = groups[groupName];
+
+        if (keyword) {
+            groupNodes = groupNodes.filter(n =>
+                n.name.toLowerCase().includes(keyword) ||
+                n.type.toLowerCase().includes(keyword) ||
+                groupName.toLowerCase().includes(keyword)
+            );
         }
 
-        const card = document.createElement('div');
-        card.className = 'card ' + (n.active ? 'active' : '');
-        card.onclick = (e) => {
-            if (e.target.tagName !== 'BUTTON') switchNode(n.index);
-        };
+        if (groupNodes.length === 0) return;
+        hasAnyMatches = true;
 
-        card.innerHTML = `
-            <div class="card-header">
-                <div style="display:flex;align-items:center;">
-                    <span class="node-type">${n.type}</span>
-                </div>
-                ${n.active ? '<span style="color:#34d399;font-size:12px;font-weight:800;">✅ 运行中</span>' : ''}
-            </div>
-            <div class="node-name">${n.name}</div>
-            <div class="card-footer">
-                <span class="latency ${latClass}" id="lat-${n.index}">⚡ ${latText}</span>
-                <span class="latency unknown" id="speed-${n.index}" style="margin-right:auto;margin-left:10px;"></span>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button class="test-btn" onclick="testSingle(${n.index})">测速</button>
-                    <button class="bw-btn" onclick="testSpeed(${n.index})">带宽</button>
-                </div>
-            </div>
+        const hasActiveNode = groupNodes.some(n => n.active);
+        const isExpanded = expandedGroups[groupName] !== undefined ? expandedGroups[groupName] : hasActiveNode;
+
+        const folderContainer = document.createElement('div');
+        folderContainer.className = `group-folder ${isExpanded ? 'expanded' : ''} ${hasActiveNode ? 'active' : ''}`;
+
+        const header = document.createElement('div');
+        header.className = 'folder-header';
+        header.onclick = () => toggleFolder(groupName);
+
+        const folderIcon = isExpanded ? '▾' : '▸';
+        const groupFile = groupNodes[0]?.fileName || "";
+        const supplier = suppliersCache.find(s => s.fileName === groupFile);
+        const groupTools = supplier ? `
+            <span class="folder-actions">
+                <button class="btn-mini" title="分享订阅" onclick="shareSupplierFile('${encodeURIComponent(groupFile)}', event)">分享</button>
+                <button class="btn-mini" title="刷新订阅" onclick="updateSupplierFile('${encodeURIComponent(groupFile)}', this, event)">刷新</button>
+                <button class="btn-mini btn-mini-danger" title="删除订阅" onclick="deleteSupplierFile('${encodeURIComponent(groupFile)}', event)">删除</button>
+            </span>
+        ` : '';
+        header.innerHTML = `
+            <span class="folder-icon">${folderIcon}</span>
+            <span class="folder-name">${groupName}</span>
+            <span class="folder-count">(${groupNodes.length} 个节点)</span>
+            ${groupTools}
+            <span class="folder-chevron">▶</span>
         `;
-        grid.appendChild(card);
+        folderContainer.appendChild(header);
+
+        if (isExpanded) {
+            const content = document.createElement('div');
+            content.className = 'folder-content';
+
+            const table = document.createElement('table');
+            table.className = 'win-explorer-table';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th style="width: 50px; text-align: center;">状态</th>
+                        <th>节点名称</th>
+                        <th style="width: 100px;">协议类型</th>
+                        <th style="width: 100px; text-align: right;">延迟</th>
+                        <th style="width: 120px; text-align: right;">带宽</th>
+                        <th style="width: 280px; text-align: center;">操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            `;
+
+            const tbody = table.querySelector('tbody');
+
+            groupNodes.forEach(n => {
+                let latClass = 'unknown';
+                let latText = '-- ms';
+                if (n.latency > 0 && n.latency < 500) {
+                    latClass = 'good';
+                    latText = n.latency + ' ms';
+                } else if (n.latency >= 500) {
+                    latClass = 'bad';
+                    latText = n.latency + ' ms';
+                } else if (n.latency === -1) {
+                    latClass = 'bad';
+                    latText = 'Timeout';
+                }
+                let speedClass = 'unknown';
+                let speedText = '--';
+                if (n.speed > 0) {
+                    speedClass = 'good';
+                    speedText = formatSpeed(n.speed);
+                } else if (n.speed === -1) {
+                    speedClass = 'bad';
+                    speedText = '失败';
+                }
+
+                const tr = document.createElement('tr');
+                if (n.active) tr.className = 'active';
+                tr.ondblclick = () => switchNode(n.index);
+
+                tr.innerHTML = `
+                    <td class="status-cell"><span class="status-dot ${n.active ? 'active' : ''}"></span></td>
+                    <td class="node-name-cell">${n.name}</td>
+                    <td><span class="node-type">${n.type}</span></td>
+                    <td style="text-align: right;" class="latency ${latClass}" id="lat-${n.index}">${latText}</td>
+                    <td style="text-align: right;" class="latency ${speedClass}" id="speed-${n.index}">↓ ${speedText}</td>
+                    <td style="text-align: center; display: flex; gap: 6px; justify-content: center; align-items: center; padding: 6px 14px;">
+                        <button class="btn-action ${n.active ? 'btn-action-primary' : ''}" onclick="switchNode(${n.index})">${n.active ? '运行中' : '连接'}</button>
+                        <button class="btn-action" onclick="testSingle(${n.index})">延迟</button>
+                        <button class="btn-action" onclick="testSpeed(${n.index})">带宽</button>
+                        <button class="btn-action" onclick="shareNode(${n.index})">分享</button>
+                        <button class="btn-action btn-action-danger" onclick="deleteNode(${n.index})">删除</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            content.appendChild(table);
+            folderContainer.appendChild(content);
+        }
+
+        grid.appendChild(folderContainer);
     });
+
+    if (!hasAnyMatches) {
+        grid.innerHTML = '<div class="empty-state">没有匹配的节点。</div>';
+    }
 }
 
 function filterNodes() {
     renderNodes();
 }
 
-// ── Dashboard Logic ──
-let dashTimer = null;
-let trafficChart = null;
-const maxDataPoints = 60;
-let chartData = {
-    labels: [],
-    in: [],
-    out: []
-};
 
-function initChart() {
-    const ctx = document.getElementById('trafficChart').getContext('2d');
-    const isLight = window.matchMedia('(prefers-color-scheme: light)').matches;
-    const textColor = isLight ? '#475569' : '#94a3b8';
-    const gridColor = isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)';
-
-    trafficChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: chartData.labels,
-            datasets: [
-                {
-                    label: '下载 (Inbound)',
-                    data: chartData.in,
-                    borderColor: '#60a5fa',
-                    backgroundColor: 'rgba(96, 165, 250, 0.1)',
-                    fill: true,
-                    tension: 0.4,
-                    borderWidth: 2,
-                    pointRadius: 0
-                },
-                {
-                    label: '上传 (Outbound)',
-                    data: chartData.out,
-                    borderColor: '#a78bfa',
-                    backgroundColor: 'rgba(167, 139, 250, 0.1)',
-                    fill: true,
-                    tension: 0.4,
-                    borderWidth: 2,
-                    pointRadius: 0
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { intersect: false, mode: 'index' },
-            plugins: {
-                legend: { labels: { color: textColor, font: { size: 12 } } }
-            },
-            scales: {
-                x: {
-                    grid: { display: false },
-                    ticks: { color: textColor, maxRotation: 0, autoSkip: true, maxTicksLimit: 10 }
-                },
-                y: {
-                    grid: { color: gridColor },
-                    ticks: {
-                        color: textColor,
-                        callback: (value) => formatBytes(value) + '/s'
-                    }
-                }
-            }
-        }
-    });
-}
-
-async function updateDashboard() {
-    try {
-        const res = await fetch('/api/stats');
-        const stats = await res.json();
-        
-        document.getElementById('dashSpeedIn').textContent = stats.speedIn;
-        document.getElementById('dashSpeedOut').textContent = stats.speedOut;
-        document.getElementById('dashTotalIn').textContent = formatBytes(stats.totalIn);
-        document.getElementById('dashTotalOut').textContent = formatBytes(stats.totalOut);
-        document.getElementById('dashMem').textContent = (stats.memSys / 1024 / 1024).toFixed(1) + ' MB';
-        document.getElementById('dashConnections').textContent = stats.connections;
-
-        renderConnLogs(stats.logs);
-
-        // Parse speeds back to numbers for chart
-        const parseSpeed = (s) => {
-            if (!s) return 0;
-            const parts = s.split(' ');
-            let val = parseFloat(parts[0]);
-            if (parts[1] === 'KB/s') val *= 1024;
-            else if (parts[1] === 'MB/s') val *= 1024 * 1024;
-            else if (parts[1] === 'GB/s') val *= 1024 * 1024 * 1024;
-            return val;
-        };
-
-        const now = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        chartData.labels.push(now);
-        chartData.in.push(parseSpeed(stats.speedIn));
-        chartData.out.push(parseSpeed(stats.speedOut));
-
-        if (chartData.labels.length > maxDataPoints) {
-            chartData.labels.shift();
-            chartData.in.shift();
-            chartData.out.shift();
-        }
-
-        if (trafficChart) trafficChart.update('none');
-    } catch(e) {}
-}
-
-function renderConnLogs(logs) {
-    const tbody = document.getElementById('connLogBody');
-    if (!tbody || !logs) return;
-    
-    let html = '';
-    logs.forEach(l => {
-        const timeStr = new Date(l.startTime).toLocaleTimeString([], {hour12:false});
-        let nodeClass = 'log-node-proxy';
-        if (l.node === 'Direct') nodeClass = 'log-node-direct';
-        else if (l.node === 'Blocked') nodeClass = 'log-node-blocked';
-
-        html += `
-            <tr>
-                <td style="color:var(--text-dim)">${timeStr}</td>
-                <td title="${l.target}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${l.target}</td>
-                <td><span class="${nodeClass}">${l.node}</span></td>
-                <td>↑ ${formatBytes(l.outbound)}</td>
-                <td>↓ ${formatBytes(l.inbound)}</td>
-                <td>${l.duration || '--'}</td>
-                <td><span class="${l.status === 'Active' ? 'log-status-active' : 'log-status-closed'}">${l.status === 'Active' ? '● 活动' : '○ 已断开'}</span></td>
-            </tr>
-        `;
-    });
-    tbody.innerHTML = html;
-}
-
-async function clearLogs() {
-    await fetch('/api/clear_logs', { method: 'POST' });
-    document.getElementById('connLogBody').innerHTML = '';
-}
-
-function startDashboardPolling() {
-    if (dashTimer) return;
-    if (!trafficChart) initChart();
-    updateDashboard();
-    dashTimer = setInterval(updateDashboard, 1000);
-}
-
-function stopDashboardPolling() {
-    if (dashTimer) {
-        clearInterval(dashTimer);
-        dashTimer = null;
-    }
-}
 
 async function loadSuppliers() {
     try {
@@ -400,7 +339,7 @@ function showToast(msg, type = 'info', duration = 4000) {
 async function importSubscription() {
     const btn = document.getElementById('btnImport');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spin">📋</span> 导入中...';
+    btn.innerHTML = '<span class="spin">↻</span> 导入中...';
     try {
         const res = await fetch('/api/import_subscription', { method: 'POST' });
         const data = await res.json();
@@ -415,7 +354,7 @@ async function importSubscription() {
         showToast('导入请求失败，请检查服务是否正常运行。', 'error');
     }
     btn.disabled = false;
-    btn.innerHTML = '📋 导入订阅';
+    btn.innerHTML = '导入订阅';
 }
 
 async function doAction(type) {
@@ -435,64 +374,17 @@ async function loadNodes() {
         const nodes = await res.json();
         allNodesList = nodes || [];
         
+        const activeNode = allNodesList.find(n => n.active);
+        const nodeDisplayEl = document.getElementById('selectedNodeDisplay');
+        if (nodeDisplayEl) {
+            nodeDisplayEl.textContent = activeNode ? `当前节点: ${activeNode.name}` : '当前节点: 直连 (Direct)';
+        }
+        
         renderNodes();
     } catch(e) {}
 }
 
-function renderNodes() {
-    const grid = document.getElementById('nodeGrid');
-    grid.innerHTML = '';
 
-    let displayNodes = allNodesList;
-    if (currentGroupFilter !== "") {
-        displayNodes = allNodesList.filter(n => n.group === currentGroupFilter);
-    }
-
-    if (!displayNodes || displayNodes.length === 0) {
-        grid.innerHTML = '<div class="empty-state">当前没有节点，点击 <strong>添加节点</strong> 或 <strong>导入订阅</strong> 开始使用。</div>';
-        return;
-    }
-
-    displayNodes.forEach(n => {
-        let latClass = 'unknown';
-        let latText = '-- ms';
-        if (n.latency > 0 && n.latency < 500) {
-            latClass = 'good';
-            latText = n.latency + ' ms';
-        } else if (n.latency >= 500) {
-            latClass = 'bad';
-            latText = n.latency + ' ms';
-        } else if (n.latency === -1) {
-            latClass = 'bad';
-            latText = 'Timeout';
-        }
-
-        const card = document.createElement('div');
-        card.className = 'card ' + (n.active ? 'active' : '');
-        card.onclick = (e) => {
-            if (e.target.tagName !== 'BUTTON') switchNode(n.index);
-        };
-
-        card.innerHTML = `
-            <div class="card-header">
-                <div style="display:flex;align-items:center;">
-                    <span class="node-type">${n.type}</span>
-                </div>
-                ${n.active ? '<span style="color:#34d399;font-size:12px;font-weight:800;">✅ 运行中</span>' : ''}
-            </div>
-            <div class="node-name">${n.name}</div>
-            <div class="card-footer">
-                <span class="latency ${latClass}" id="lat-${n.index}">⚡ ${latText}</span>
-                <span class="latency unknown" id="speed-${n.index}" style="margin-right:auto;margin-left:10px;"></span>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button class="test-btn" onclick="testSingle(${n.index})">测速</button>
-                    <button class="bw-btn" onclick="testSpeed(${n.index})">带宽</button>
-                </div>
-            </div>
-        `;
-        grid.appendChild(card);
-    });
-}
 
 async function switchNode(idx) {
     await fetch('/api/switch?idx=' + idx, { method: 'POST' });
@@ -502,13 +394,14 @@ async function switchNode(idx) {
 
 async function testSingle(idx) {
     const latEl = document.getElementById('lat-' + idx);
-    latEl.textContent = '⚡ ...';
+    latEl.textContent = '检测中';
     latEl.className = 'latency unknown';
     await fetch('/api/test_single?idx=' + idx, { method: 'POST' });
     loadNodes();
 }
 
 function formatSpeed(bytesPerSec) {
+    bytesPerSec = Number(bytesPerSec) || 0;
     if (bytesPerSec < 1024) return bytesPerSec.toFixed(0) + ' B/s';
     if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
     return (bytesPerSec / 1024 / 1024).toFixed(2) + ' MB/s';
@@ -523,19 +416,121 @@ function formatBytes(bytes) {
     return (bytes / 1024 / 1024 / 1024 / 1024).toFixed(2) + ' TB';
 }
 
+function formatTime(value) {
+    if (!value) return '--';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '--';
+    return d.toLocaleTimeString();
+}
+
+async function loadDashboard() {
+    try {
+        const res = await fetch('/api/stats');
+        const st = await res.json();
+        const totalTraffic = (st.totalIn || 0) + (st.totalOut || 0);
+        const mem = st.memAlloc || st.heapInuse || 0;
+        const sessions = st.trafficSessions || {};
+        const current = sessions.current || null;
+
+        document.getElementById('dashMemory').textContent = formatBytes(mem);
+        document.getElementById('dashConnections').textContent = String(st.connections || 0);
+        document.getElementById('dashTraffic').textContent = current
+            ? ('代理 ' + formatBytes(current.proxyTotal || 0) + ' / 直连 ' + formatBytes(current.directTotal || 0))
+            : formatBytes(totalTraffic);
+        document.getElementById('dashSpeed').textContent = '↑ ' + (st.speedOut || '0 B/s') + ' / ↓ ' + (st.speedIn || '0 B/s');
+
+        renderDashboardTraffic(sessions);
+        renderDashboardHistory(sessions);
+    } catch(e) {
+        showToast('数据看板加载失败', 'error');
+    }
+}
+
+function renderDashboardTraffic(sessions) {
+    const el = document.getElementById('dashboardNodeTraffic');
+    if (!el) return;
+    const current = sessions?.current;
+    if (!current) {
+        el.innerHTML = '<div class="empty-state" style="padding:16px;border-radius:12px;">当前没有正在统计的开启记录</div>';
+        return;
+    }
+    const proxyTotal = current.proxyTotal || 0;
+    const directTotal = current.directTotal || 0;
+    const max = Math.max(proxyTotal, directTotal, 1);
+    const rows = [
+        ['代理流量', proxyTotal, current.proxyIn || 0, current.proxyOut || 0],
+        ['直连流量', directTotal, current.directIn || 0, current.directOut || 0],
+    ];
+    el.innerHTML = rows.map(([label, total, inbound, outbound]) => `
+        <div class="traffic-row">
+            <div class="traffic-row-main">
+                <span class="traffic-node">${label}</span>
+                <span>${formatBytes(total)}</span>
+            </div>
+            <div class="traffic-bar"><span style="width:${Math.max(4, total / max * 100)}%"></span></div>
+            <div class="traffic-row-sub">流入 ${formatBytes(inbound)} · 流出 ${formatBytes(outbound)}</div>
+        </div>
+    `).join('');
+}
+
+function renderDashboardHistory(sessions) {
+    const tbody = document.getElementById('dashboardHistory');
+    if (!tbody) return;
+    const rows = [];
+    if (sessions?.current) rows.push(sessions.current);
+    rows.push(...(sessions?.history || []));
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-sub);">暂无记录</td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map(log => `
+        <tr>
+            <td>${formatTime(log.startTime)}</td>
+            <td>${log.endTime ? formatTime(log.endTime) : '进行中'}</td>
+            <td>${log.duration || '--'}</td>
+            <td>${log.mode || '--'}</td>
+            <td class="log-node-proxy">${formatBytes(log.proxyTotal || 0)}</td>
+            <td class="log-node-direct">${formatBytes(log.directTotal || 0)}</td>
+            <td>${formatBytes(log.total || 0)}</td>
+            <td class="${log.status === 'Active' ? 'log-status-active' : 'log-status-closed'}">${log.status || '--'}</td>
+        </tr>
+    `).join('');
+}
+
+let testingNodes = new Set();
+
 async function testSpeed(idx) {
+    if (testingNodes.has(idx)) return;
+    testingNodes.add(idx);
+
     const speedEl = document.getElementById('speed-' + idx);
+    if (!speedEl) {
+        testingNodes.delete(idx);
+        return;
+    }
     speedEl.innerHTML = '<span class="spin">🚀</span> 测速中...';
     speedEl.style.color = 'var(--text-sub)';
     try {
         const res = await fetch('/api/speedtest?idx=' + idx, { method: 'POST' });
-        if (!res.ok) throw new Error('测速请求失败');
         const data = await res.json();
-        speedEl.textContent = '🚀 ' + formatSpeed(data.speed);
+        if (!res.ok || !data.ok) {
+            let msg = data.error || '测速失败';
+            if (data.stage) msg = `[${data.stage}] ${msg}`;
+            speedEl.textContent = '❌ ' + msg;
+            speedEl.style.color = 'var(--danger)';
+            return;
+        }
+        speedEl.textContent = '↓ ' + formatSpeed(data.speed);
         speedEl.style.color = 'var(--success)';
+        const node = allNodesList.find(n => n.index === idx);
+        if (node) node.speed = Number(data.speed) || 0;
     } catch(e) {
         speedEl.textContent = '❌ 测速失败';
         speedEl.style.color = 'var(--danger)';
+        const node = allNodesList.find(n => n.index === idx);
+        if (node) node.speed = -1;
+    } finally {
+        testingNodes.delete(idx);
     }
 }
 
@@ -550,26 +545,38 @@ async function testAll() {
 }
 
 async function updateSupplier() {
-    const sel = document.getElementById('supplierSelect');
-    const file = sel.value;
-    if (!file) return;
     const btn = document.getElementById('btnUpdate');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spin">🔄</span> 更新中...';
+    btn.innerHTML = '<span class="spin">🔄</span>';
+    
     try {
-        const res = await fetch('/api/update_supplier?file=' + encodeURIComponent(file), { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-            loadNodes();
-            loadSuppliers();
-        } else {
-            alert('更新失败: ' + (data.msg || '未知错误'));
-        }
-    } catch(e) {
-        alert('请求失败');
+        const sRes = await fetch('/api/suppliers');
+        const list = await sRes.json();
+        suppliersCache = list || [];
+    } catch(e) {}
+
+    if (!suppliersCache || suppliersCache.length === 0) {
+        showToast('当前没有任何可更新的订阅。', 'warning');
+        btn.disabled = false;
+        btn.innerHTML = '🔄';
+        return;
     }
+
+    let successCount = 0;
+    for (const sub of suppliersCache) {
+        try {
+            const res = await fetch('/api/update_supplier?file=' + encodeURIComponent(sub.fileName), { method: 'POST' });
+            const data = await res.json();
+            if (data.ok) successCount++;
+        } catch(e) {}
+    }
+
+    showToast(`成功更新 ${successCount} / ${suppliersCache.length} 个订阅！`, 'success');
+    loadNodes();
+    loadSuppliers();
+
     btn.disabled = false;
-    btn.innerHTML = '🔄 更新';
+    btn.innerHTML = '🔄';
 }
 
 async function deleteSupplier() {
@@ -595,6 +602,117 @@ async function deleteSupplier() {
     btn.textContent = '🗑 删除订阅';
 }
 
+async function updateSupplierFile(encodedFile, btn, event) {
+    if (event) event.stopPropagation();
+    const file = decodeURIComponent(encodedFile);
+    if (!file || !btn) return;
+    const oldText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳';
+    try {
+        const res = await fetch('/api/update_supplier?file=' + encodeURIComponent(file), { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(data.msg || '订阅已刷新', 'success');
+            await loadSuppliers();
+            await loadNodes();
+        } else {
+            showToast(data.msg || '刷新订阅失败', 'error');
+        }
+    } catch(e) {
+        showToast('刷新订阅请求失败', 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = oldText;
+}
+
+async function deleteSupplierFile(encodedFile, event) {
+    if (event) event.stopPropagation();
+    const file = decodeURIComponent(encodedFile);
+    const supplier = suppliersCache.find(s => s.fileName === file);
+    const name = supplier?.name || file;
+    if (!file) return;
+    if (!confirm('确定要删除订阅「' + name + '」吗？\n此操作将同时删除对应的本地节点文件，不可恢复。')) return;
+    try {
+        const res = await fetch('/api/delete_supplier?file=' + encodeURIComponent(file), { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast('订阅已删除', 'success');
+            await loadSuppliers();
+            await loadNodes();
+        } else {
+            showToast(data.msg || '删除订阅失败', 'error');
+        }
+    } catch(e) {
+        showToast('删除订阅请求失败', 'error');
+    }
+}
+
+async function shareSupplierFile(encodedFile, event) {
+    if (event) event.stopPropagation();
+    const file = decodeURIComponent(encodedFile);
+    const supplier = suppliersCache.find(s => s.fileName === file);
+    if (!supplier || !supplier.url) {
+        showToast('该订阅没有可分享的原始链接', 'warning');
+        return;
+    }
+    try {
+        await copyText(supplier.url);
+        showToast('订阅链接已复制到剪贴板', 'success');
+    } catch(e) {
+        showToast('复制订阅链接失败', 'error');
+    }
+}
+
+async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+}
+
+async function shareNode(idx) {
+    try {
+        const res = await fetch('/api/node_link?idx=' + idx);
+        const data = await res.json();
+        if (!data.ok) {
+            showToast(data.msg || '该节点暂不支持分享链接', 'warning');
+            return;
+        }
+        await copyText(data.link);
+        showToast('节点链接已复制到剪贴板', 'success');
+    } catch(e) {
+        showToast('获取节点链接失败', 'error');
+    }
+}
+
+async function deleteNode(idx) {
+    const node = allNodesList.find(n => n.index === idx);
+    const name = node?.name || ('节点 ' + idx);
+    if (!confirm('确定要删除节点「' + name + '」吗？')) return;
+    try {
+        const res = await fetch('/api/delete_node?idx=' + idx, { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast('节点已删除', 'success');
+            await loadNodes();
+            await loadSuppliers();
+        } else {
+            showToast(data.msg || '删除节点失败', 'error');
+        }
+    } catch(e) {
+        showToast('删除节点请求失败', 'error');
+    }
+}
+
 function openAddModal() {
     document.getElementById('addModal').style.display = 'flex';
     document.getElementById('nodeInput').value = '';
@@ -615,9 +733,32 @@ function handleFileSelect(event) {
     event.target.value = '';
 }
 
-function handleQRSelect(event) {
+let jsQRLoader = null;
+
+function ensureJsQR() {
+    if (window.jsQR) return Promise.resolve();
+    if (jsQRLoader) return jsQRLoader;
+    jsQRLoader = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+        script.async = true;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('jsQR load failed'));
+        document.head.appendChild(script);
+    });
+    return jsQRLoader;
+}
+
+async function handleQRSelect(event) {
     const file = event.target.files[0];
     if (!file) return;
+    try {
+        await ensureJsQR();
+    } catch(e) {
+        showToast('二维码识别库加载失败，请改用文本导入。', 'error');
+        event.target.value = '';
+        return;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
         const img = new Image();
@@ -631,9 +772,9 @@ function handleQRSelect(event) {
             const code = jsQR(imageData.data, imageData.width, imageData.height);
             if (code) {
                 document.getElementById('nodeInput').value = code.data;
-                alert('识别成功！');
+                showToast('二维码识别成功', 'success');
             } else {
-                alert('无法在图片中识别出二维码，请重试');
+                showToast('无法在图片中识别出二维码，请重试', 'warning');
             }
         };
         img.src = e.target.result;
@@ -681,6 +822,19 @@ async function loadRules() {
         currentRuleGroupIndex = 0;
         renderRuleGroups();
     } catch(e) {}
+    loadCmdRules();
+}
+
+async function loadCmdRules() {
+    try {
+        const res = await fetch('/api/cmd_rules');
+        const data = await res.json();
+        cmdRules = data || [];
+        renderCmdRules();
+    } catch(e) {
+        cmdRules = [];
+        renderCmdRules();
+    }
 }
 
 function selectedRuleGroup() {
@@ -690,7 +844,8 @@ function selectedRuleGroup() {
 function actionName(action) {
     if (action === 'direct') return '直连';
     if (action === 'reject') return '拦截';
-    return '代理';
+    if (action === 'proxy') return '代理模式';
+    return action || '直连';
 }
 
 function typeName(type) {
@@ -698,6 +853,583 @@ function typeName(type) {
     if (type === 'domain_keyword') return '关键字';
     if (type === 'domain') return '完整域名';
     return type;
+}
+
+function escapeAttr(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function ruleTypeOptions(selected) {
+    const types = [
+        ['domain_suffix', '域名后缀'],
+        ['domain_keyword', '域名关键字'],
+        ['domain', '完整域名'],
+    ];
+    return types.map(([value, label]) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`).join('');
+}
+
+function updateRuleType(gIdx, rIdx, type) {
+    const group = ruleGroups[gIdx];
+    if (!group || !group.rules || !group.rules[rIdx]) return;
+    group.rules[rIdx].type = type;
+    renderRuleGroups();
+}
+
+function updateRuleValue(gIdx, rIdx, value) {
+    const group = ruleGroups[gIdx];
+    if (!group || !group.rules || !group.rules[rIdx]) return;
+    group.rules[rIdx].value = value.trim();
+    renderRuleGroups();
+}
+
+function ruleEditControls(gIdx, rIdx, r) {
+    return `
+        <select onchange="updateRuleType(${gIdx}, ${rIdx}, this.value)" style="min-width:112px;padding:5px 8px;border-radius:8px;font-size:12px;margin-right:8px;">
+            ${ruleTypeOptions(r.type)}
+        </select>
+        <input type="text" value="${escapeAttr(r.value)}" onblur="updateRuleValue(${gIdx}, ${rIdx}, this.value)" onkeydown="if(event.key==='Enter') this.blur()" style="min-width:220px;max-width:420px;width:38vw;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:6px 9px;border-radius:8px;outline:none;font-size:13px;">
+    `;
+}
+
+function populateRuleGroupActionSelect(currentAction) {
+    const sel = document.getElementById('ruleGroupAction');
+    if (!sel) return;
+    
+    sel.innerHTML = `
+        <option value="direct">直连 (Direct)</option>
+        <option value="proxy">代理模式 (Proxy)</option>
+        <option value="reject">拦截 (Reject)</option>
+    `;
+    
+    const nodeNames = [];
+    if (typeof allNodesList !== 'undefined' && allNodesList) {
+        allNodesList.forEach(n => {
+            if (n.Name && !nodeNames.includes(n.Name)) {
+                nodeNames.push(n.Name);
+            }
+        });
+    }
+    
+    const groupNames = [];
+    if (typeof allNodesList !== 'undefined' && allNodesList) {
+        allNodesList.forEach(n => {
+            if (n.Group && !groupNames.includes(n.Group)) {
+                groupNames.push(n.Group);
+            }
+        });
+    }
+    
+    if (typeof aggregateGroupsCache !== 'undefined' && aggregateGroupsCache) {
+        aggregateGroupsCache.forEach(g => {
+            if (g.name && !groupNames.includes(g.name)) {
+                groupNames.push(g.name);
+            }
+        });
+    }
+    
+    if (nodeNames.length > 0) {
+        const nodeOptGroup = document.createElement('optgroup');
+        nodeOptGroup.label = "选择特定节点 (Nodes)";
+        nodeNames.forEach(name => {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            nodeOptGroup.appendChild(opt);
+        });
+        sel.appendChild(nodeOptGroup);
+    }
+    
+    if (groupNames.length > 0) {
+        const groupOptGroup = document.createElement('optgroup');
+        groupOptGroup.label = "选择特定分组 (Groups)";
+        groupNames.forEach(name => {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            groupOptGroup.appendChild(opt);
+        });
+        sel.appendChild(groupOptGroup);
+    }
+    
+    if (currentAction && !Array.from(sel.options).some(opt => opt.value === currentAction)) {
+        const opt = document.createElement('option');
+        opt.value = currentAction;
+        opt.textContent = currentAction;
+        sel.appendChild(opt);
+    }
+    sel.value = currentAction || 'direct';
+}
+
+let ruleSelectorNodesCache = {
+    subscriptions: [],
+    aggregateGroups: []
+};
+let ruleSelectorExpandedStates = {};
+
+async function loadRuleSelectorNodes() {
+    try {
+        const resSub = await fetch('/api/all_nodes_all_subs');
+        const subs = await resSub.json();
+        ruleSelectorNodesCache.subscriptions = subs || [];
+        
+        const resAgg = await fetch('/api/aggregate_groups');
+        const aggs = await resAgg.json();
+        ruleSelectorNodesCache.aggregateGroups = [];
+        if (aggs && aggs.length > 0) {
+            for (const g of aggs) {
+                try {
+                    const resNodes = await fetch('/api/aggregate_group_nodes?file=' + encodeURIComponent(g.fileName));
+                    const nodes = await resNodes.json();
+                    ruleSelectorNodesCache.aggregateGroups.push({
+                        name: g.name,
+                        fileName: g.fileName,
+                        nodes: nodes || []
+                    });
+                } catch(e) {}
+            }
+        }
+    } catch (e) {
+        console.error("Failed to load rule selector nodes:", e);
+    }
+}
+
+function renderIndividualRuleActionSelector(idx) {
+    const group = selectedRuleGroup();
+    if (!group) return '';
+    const r = group.rules[idx];
+    if (!r) return '';
+    
+    const effectiveAction = r.action || '';
+    
+    let html = `
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+            <button class="tree-quick-btn" onclick="setIndividualRuleAction(${idx}, '')" style="background:${effectiveAction === '' ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)'};border:1px solid ${effectiveAction === '' ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};color:${effectiveAction === '' ? 'var(--accent)' : 'white'};padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:bold;">
+                🔄 跟随规则组默认
+            </button>
+            <button class="tree-quick-btn" onclick="setIndividualRuleAction(${idx}, 'direct')" style="background:${effectiveAction === 'direct' ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.05)'};border:1px solid ${effectiveAction === 'direct' ? 'var(--success)' : 'rgba(148,163,184,0.15)'};color:${effectiveAction === 'direct' ? 'var(--success)' : 'white'};padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:bold;">
+                🟢 直连 (Direct)
+            </button>
+            <button class="tree-quick-btn" onclick="setIndividualRuleAction(${idx}, 'proxy')" style="background:${effectiveAction === 'proxy' ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)'};border:1px solid ${effectiveAction === 'proxy' ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};color:${effectiveAction === 'proxy' ? 'var(--accent)' : 'white'};padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:bold;">
+                ⚡ 代理模式 (Proxy)
+            </button>
+            <button class="tree-quick-btn" onclick="setIndividualRuleAction(${idx}, 'reject')" style="background:${effectiveAction === 'reject' ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.05)'};border:1px solid ${effectiveAction === 'reject' ? 'var(--danger)' : 'rgba(148,163,184,0.15)'};color:${effectiveAction === 'reject' ? 'var(--danger)' : 'white'};padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:bold;">
+                ❌ 拦截 (Reject)
+            </button>
+        </div>
+        
+        <div style="font-size:12px;color:var(--text-sub);margin-bottom:8px;font-weight:bold;">🗂️ 选择特定订阅组或聚合组：</div>
+    `;
+    
+    if (!ruleSelectorExpandedStates[idx]) {
+        ruleSelectorExpandedStates[idx] = {};
+    }
+    const states = ruleSelectorExpandedStates[idx];
+    
+    if (ruleSelectorNodesCache.subscriptions && ruleSelectorNodesCache.subscriptions.length > 0) {
+        ruleSelectorNodesCache.subscriptions.forEach((subGroup, sIdx) => {
+            const groupKey = 'sub_' + subGroup.subName;
+            const isExpanded = !!states[groupKey];
+            const isGroupSelected = effectiveAction === subGroup.subName;
+            
+            html += `
+                <div style="margin-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.05);padding-bottom:6px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;border-radius:6px;background:${isGroupSelected ? 'rgba(99,102,241,0.1)' : 'transparent'};transition:all 0.2s;">
+                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setIndividualRuleAction(${idx}, '${subGroup.subName}')">
+                            <span style="color:var(--accent);font-size:14px;">🗂️</span>
+                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--accent)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${subGroup.subName}</span>
+                            <span style="font-size:11px;color:var(--text-dim);">[订阅组]</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            ${isGroupSelected ? '<span style="color:var(--accent);font-size:11px;font-weight:bold;">已选此组</span>' : ''}
+                            <button onclick="toggleRuleSelectorGroupExpand(${idx}, '${groupKey}', event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
+                                ${isExpanded ? '收起 ▴' : `展开(${subGroup.nodes.length}) ▾`}
+                            </button>
+                        </div>
+                    </div>
+            `;
+            
+            if (isExpanded) {
+                html += `
+                    <div style="margin:6px 0 0 16px;padding:8px;border-left:2px solid rgba(99,102,241,0.2);background:rgba(255,255,255,0.01);border-radius:0 8px 8px 0;">
+                        <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left;">
+                            <thead>
+                                <tr style="color:var(--text-dim);border-bottom:1px solid rgba(148,163,184,0.1);">
+                                    <th style="padding:4px 8px;">节点名称 (Name)</th>
+                                    <th style="padding:4px 8px;width:70px;">协议 (Type)</th>
+                                    <th style="padding:4px 8px;width:80px;text-align:right;">操作 (Select)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                subGroup.nodes.forEach(node => {
+                    const isNodeSelected = effectiveAction === node.Name;
+                    html += `
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.04);background:${isNodeSelected ? 'rgba(99,102,241,0.08)' : 'transparent'};">
+                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${node.Name}">${node.Name}</td>
+                            <td style="padding:6px 8px;color:var(--text-sub);">${node.Type.toUpperCase()}</td>
+                            <td style="padding:6px 8px;text-align:right;">
+                                <button onclick="setIndividualRuleAction(${idx}, '${node.Name}')" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
+                                    ${isNodeSelected ? '已选择' : '选择'}
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    if (ruleSelectorNodesCache.aggregateGroups && ruleSelectorNodesCache.aggregateGroups.length > 0) {
+        ruleSelectorNodesCache.aggregateGroups.forEach((aggGroup, gIdx2) => {
+            const groupKey = 'agg_' + aggGroup.name;
+            const isExpanded = !!states[groupKey];
+            const isGroupSelected = effectiveAction === aggGroup.name;
+            
+            html += `
+                <div style="margin-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.05);padding-bottom:6px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;border-radius:6px;background:${isGroupSelected ? 'rgba(99,102,241,0.1)' : 'transparent'};transition:all 0.2s;">
+                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setIndividualRuleAction(${idx}, '${aggGroup.name}')">
+                            <span style="color:var(--success);font-size:14px;">📁</span>
+                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--success)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${aggGroup.name}</span>
+                            <span style="font-size:11px;color:var(--text-dim);">[聚合组]</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            ${isGroupSelected ? '<span style="color:var(--success);font-size:11px;font-weight:bold;">已选此组</span>' : ''}
+                            <button onclick="toggleRuleSelectorGroupExpand(${idx}, '${groupKey}', event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
+                                ${isExpanded ? '收起 ▴' : `展开(${aggGroup.nodes.length}) ▾`}
+                            </button>
+                        </div>
+                    </div>
+            `;
+            
+            if (isExpanded) {
+                html += `
+                    <div style="margin:6px 0 0 16px;padding:8px;border-left:2px solid rgba(34,197,94,0.2);background:rgba(255,255,255,0.01);border-radius:0 8px 8px 0;">
+                        <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left;">
+                            <thead>
+                                <tr style="color:var(--text-dim);border-bottom:1px solid rgba(148,163,184,0.1);">
+                                    <th style="padding:4px 8px;">节点名称 (Name)</th>
+                                    <th style="padding:4px 8px;width:70px;">协议 (Type)</th>
+                                    <th style="padding:4px 8px;width:80px;text-align:right;">操作 (Select)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                aggGroup.nodes.forEach(node => {
+                    const isNodeSelected = effectiveAction === node.Name;
+                    html += `
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.04);background:${isNodeSelected ? 'rgba(99,102,241,0.08)' : 'transparent'};">
+                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${node.Name}">${node.Name}</td>
+                            <td style="padding:6px 8px;color:var(--text-sub);">${node.Type.toUpperCase()}</td>
+                            <td style="padding:6px 8px;text-align:right;">
+                                <button onclick="setIndividualRuleAction(${idx}, '${node.Name}')" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
+                                    ${isNodeSelected ? '已选择' : '选择'}
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    return html;
+}
+
+function renderSearchRuleActionSelector(gIdx, rIdx) {
+    const group = ruleGroups[gIdx];
+    if (!group) return '';
+    const r = group.rules[rIdx];
+    if (!r) return '';
+    
+    const effectiveAction = r.action || '';
+    
+    let html = `
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+            <button class="tree-quick-btn" onclick="setSearchRuleAction(${gIdx}, ${rIdx}, '')" style="background:${effectiveAction === '' ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)'};border:1px solid ${effectiveAction === '' ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};color:${effectiveAction === '' ? 'var(--accent)' : 'white'};padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:bold;">
+                🔄 跟随规则组默认
+            </button>
+            <button class="tree-quick-btn" onclick="setSearchRuleAction(${gIdx}, ${rIdx}, 'direct')" style="background:${effectiveAction === 'direct' ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.05)'};border:1px solid ${effectiveAction === 'direct' ? 'var(--success)' : 'rgba(148,163,184,0.15)'};color:${effectiveAction === 'direct' ? 'var(--success)' : 'white'};padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:bold;">
+                🟢 直连 (Direct)
+            </button>
+            <button class="tree-quick-btn" onclick="setSearchRuleAction(${gIdx}, ${rIdx}, 'proxy')" style="background:${effectiveAction === 'proxy' ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)'};border:1px solid ${effectiveAction === 'proxy' ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};color:${effectiveAction === 'proxy' ? 'var(--accent)' : 'white'};padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:bold;">
+                ⚡ 代理模式 (Proxy)
+            </button>
+            <button class="tree-quick-btn" onclick="setSearchRuleAction(${gIdx}, ${rIdx}, 'reject')" style="background:${effectiveAction === 'reject' ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.05)'};border:1px solid ${effectiveAction === 'reject' ? 'var(--danger)' : 'rgba(148,163,184,0.15)'};color:${effectiveAction === 'reject' ? 'var(--danger)' : 'white'};padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:bold;">
+                ❌ 拦截 (Reject)
+            </button>
+        </div>
+        
+        <div style="font-size:12px;color:var(--text-sub);margin-bottom:8px;font-weight:bold;">🗂️ 选择特定订阅组或聚合组：</div>
+    `;
+    
+    const statesKey = `search_${gIdx}_${rIdx}`;
+    if (!ruleSelectorExpandedStates[statesKey]) {
+        ruleSelectorExpandedStates[statesKey] = {};
+    }
+    const states = ruleSelectorExpandedStates[statesKey];
+    
+    if (ruleSelectorNodesCache.subscriptions && ruleSelectorNodesCache.subscriptions.length > 0) {
+        ruleSelectorNodesCache.subscriptions.forEach((subGroup, sIdx) => {
+            const groupKey = 'sub_' + subGroup.subName;
+            const isExpanded = !!states[groupKey];
+            const isGroupSelected = effectiveAction === subGroup.subName;
+            
+            html += `
+                <div style="margin-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.05);padding-bottom:6px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;border-radius:6px;background:${isGroupSelected ? 'rgba(99,102,241,0.1)' : 'transparent'};transition:all 0.2s;">
+                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setSearchRuleAction(${gIdx}, ${rIdx}, '${subGroup.subName}')">
+                            <span style="color:var(--accent);font-size:14px;">🗂️</span>
+                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--accent)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${subGroup.subName}</span>
+                            <span style="font-size:11px;color:var(--text-dim);">[订阅组]</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            ${isGroupSelected ? '<span style="color:var(--accent);font-size:11px;font-weight:bold;">已选此组</span>' : ''}
+                            <button onclick="toggleSearchRuleSelectorGroupExpand(${gIdx}, ${rIdx}, '${groupKey}', event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
+                                ${isExpanded ? '收起 ▴' : `展开(${subGroup.nodes.length}) ▾`}
+                            </button>
+                        </div>
+                    </div>
+            `;
+            
+            if (isExpanded) {
+                html += `
+                    <div style="margin:6px 0 0 16px;padding:8px;border-left:2px solid rgba(99,102,241,0.2);background:rgba(255,255,255,0.01);border-radius:0 8px 8px 0;">
+                        <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left;">
+                            <thead>
+                                <tr style="color:var(--text-dim);border-bottom:1px solid rgba(148,163,184,0.1);">
+                                    <th style="padding:4px 8px;">节点名称 (Name)</th>
+                                    <th style="padding:4px 8px;width:70px;">协议 (Type)</th>
+                                    <th style="padding:4px 8px;width:80px;text-align:right;">操作 (Select)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                subGroup.nodes.forEach(node => {
+                    const isNodeSelected = effectiveAction === node.Name;
+                    html += `
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.04);background:${isNodeSelected ? 'rgba(99,102,241,0.08)' : 'transparent'};">
+                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${node.Name}">${node.Name}</td>
+                            <td style="padding:6px 8px;color:var(--text-sub);">${node.Type.toUpperCase()}</td>
+                            <td style="padding:6px 8px;text-align:right;">
+                                <button onclick="setSearchRuleAction(${gIdx}, ${rIdx}, '${node.Name}')" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
+                                    ${isNodeSelected ? '已选择' : '选择'}
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    if (ruleSelectorNodesCache.aggregateGroups && ruleSelectorNodesCache.aggregateGroups.length > 0) {
+        ruleSelectorNodesCache.aggregateGroups.forEach((aggGroup, gIdx2) => {
+            const groupKey = 'agg_' + aggGroup.name;
+            const isExpanded = !!states[groupKey];
+            const isGroupSelected = effectiveAction === aggGroup.name;
+            
+            html += `
+                <div style="margin-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.05);padding-bottom:6px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;border-radius:6px;background:${isGroupSelected ? 'rgba(99,102,241,0.1)' : 'transparent'};transition:all 0.2s;">
+                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setSearchRuleAction(${gIdx}, ${rIdx}, '${aggGroup.name}')">
+                            <span style="color:var(--success);font-size:14px;">📁</span>
+                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--success)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${aggGroup.name}</span>
+                            <span style="font-size:11px;color:var(--text-dim);">[聚合组]</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            ${isGroupSelected ? '<span style="color:var(--success);font-size:11px;font-weight:bold;">已选此组</span>' : ''}
+                            <button onclick="toggleSearchRuleSelectorGroupExpand(${gIdx}, ${rIdx}, '${groupKey}', event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
+                                ${isExpanded ? '收起 ▴' : `展开(${aggGroup.nodes.length}) ▾`}
+                            </button>
+                        </div>
+                    </div>
+            `;
+            
+            if (isExpanded) {
+                html += `
+                    <div style="margin:6px 0 0 16px;padding:8px;border-left:2px solid rgba(34,197,94,0.2);background:rgba(255,255,255,0.01);border-radius:0 8px 8px 0;">
+                        <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left;">
+                            <thead>
+                                <tr style="color:var(--text-dim);border-bottom:1px solid rgba(148,163,184,0.1);">
+                                    <th style="padding:4px 8px;">节点名称 (Name)</th>
+                                    <th style="padding:4px 8px;width:70px;">协议 (Type)</th>
+                                    <th style="padding:4px 8px;width:80px;text-align:right;">操作 (Select)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                aggGroup.nodes.forEach(node => {
+                    const isNodeSelected = effectiveAction === node.Name;
+                    html += `
+                        <tr style="border-bottom:1px solid rgba(148,163,184,0.04);background:${isNodeSelected ? 'rgba(99,102,241,0.08)' : 'transparent'};">
+                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${node.Name}">${node.Name}</td>
+                            <td style="padding:6px 8px;color:var(--text-sub);">${node.Type.toUpperCase()}</td>
+                            <td style="padding:6px 8px;text-align:right;">
+                                <button onclick="setSearchRuleAction(${gIdx}, ${rIdx}, '${node.Name}')" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
+                                    ${isNodeSelected ? '已选择' : '选择'}
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    return html;
+}
+
+function toggleIndividualRuleActionSelector(idx, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    const el = document.getElementById(`rule-action-selector-${idx}`);
+    if (!el) return;
+    const isHidden = el.style.display === 'none';
+    
+    document.querySelectorAll('.rule-action-selector-drawer').forEach(drawer => {
+        drawer.style.display = 'none';
+    });
+    
+    if (isHidden) {
+        el.style.display = 'block';
+        el.innerHTML = renderIndividualRuleActionSelector(idx);
+    } else {
+        el.style.display = 'none';
+    }
+}
+
+function toggleRuleSelectorGroupExpand(idx, groupKey, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    if (!ruleSelectorExpandedStates[idx]) {
+        ruleSelectorExpandedStates[idx] = {};
+    }
+    ruleSelectorExpandedStates[idx][groupKey] = !ruleSelectorExpandedStates[idx][groupKey];
+    const el = document.getElementById(`rule-action-selector-${idx}`);
+    if (el) {
+        el.innerHTML = renderIndividualRuleActionSelector(idx);
+    }
+}
+
+function setIndividualRuleAction(idx, action) {
+    const group = selectedRuleGroup();
+    if (!group || !group.rules || !group.rules[idx]) return;
+    
+    if (action === '') {
+        delete group.rules[idx].action;
+    } else {
+        group.rules[idx].action = action;
+    }
+    
+    renderRuleGroups();
+    
+    const el = document.getElementById(`rule-action-selector-${idx}`);
+    if (el) {
+        el.style.display = 'block';
+        el.innerHTML = renderIndividualRuleActionSelector(idx);
+    }
+}
+
+function toggleSearchRuleActionSelector(gIdx, rIdx, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    const el = document.getElementById(`rule-action-selector-search-${gIdx}-${rIdx}`);
+    if (!el) return;
+    const isHidden = el.style.display === 'none';
+    
+    document.querySelectorAll('.rule-action-selector-drawer').forEach(drawer => {
+        drawer.style.display = 'none';
+    });
+    
+    if (isHidden) {
+        el.style.display = 'block';
+        el.innerHTML = renderSearchRuleActionSelector(gIdx, rIdx);
+    } else {
+        el.style.display = 'none';
+    }
+}
+
+function toggleSearchRuleSelectorGroupExpand(gIdx, rIdx, groupKey, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    const statesKey = `search_${gIdx}_${rIdx}`;
+    if (!ruleSelectorExpandedStates[statesKey]) {
+        ruleSelectorExpandedStates[statesKey] = {};
+    }
+    ruleSelectorExpandedStates[statesKey][groupKey] = !ruleSelectorExpandedStates[statesKey][groupKey];
+    const el = document.getElementById(`rule-action-selector-search-${gIdx}-${rIdx}`);
+    if (el) {
+        el.innerHTML = renderSearchRuleActionSelector(gIdx, rIdx);
+    }
+}
+
+function setSearchRuleAction(gIdx, rIdx, action) {
+    const group = ruleGroups[gIdx];
+    if (!group || !group.rules || !group.rules[rIdx]) return;
+    
+    if (action === '') {
+        delete group.rules[rIdx].action;
+    } else {
+        group.rules[rIdx].action = action;
+    }
+    
+    renderRules();
+    
+    const el = document.getElementById(`rule-action-selector-search-${gIdx}-${rIdx}`);
+    if (el) {
+        el.style.display = 'block';
+        el.innerHTML = renderSearchRuleActionSelector(gIdx, rIdx);
+    }
 }
 
 function renderRuleGroups() {
@@ -712,7 +1444,7 @@ function renderRuleGroups() {
     });
     const group = selectedRuleGroup();
     document.getElementById('ruleGroupName').value = group ? group.name : '';
-    document.getElementById('ruleGroupAction').value = group ? group.action : 'direct';
+    populateRuleGroupActionSelect(group ? group.action : 'direct');
     renderRules();
 }
 
@@ -725,6 +1457,7 @@ function syncRuleGroupForm() {
 
 function selectRuleGroup(idx) {
     syncRuleGroupForm();
+    ruleSelectorExpandedStates = {};
     currentRuleGroupIndex = Number(idx) || 0;
     renderRuleGroups();
 }
@@ -743,14 +1476,20 @@ function renderRules() {
                 const haystack = (typeName(r.type) + ' ' + r.value).toLowerCase();
                 if (!haystack.includes(keyword)) return;
                 matchCount++;
-                const actionColor = g.action === 'proxy' ? 'var(--accent)' : (g.action === 'reject' ? 'var(--danger)' : 'var(--success)');
+                const effectiveAction = r.action || g.action || 'direct';
+                const actionColor = (effectiveAction === 'direct') ? 'var(--success)' : ((effectiveAction === 'reject') ? 'var(--danger)' : 'var(--accent)');
                 html += `
-                    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid rgba(148,163,184,0.1);font-size:14px;">
-                        <div>
-                            <span style="background:rgba(99,102,241,0.15);padding:2px 6px;border-radius:4px;font-size:11px;margin-right:6px;color:var(--accent);">${g.name}</span>
-                            <span style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;font-size:12px;margin-right:8px;">${typeName(r.type)}</span>
-                            <span>${r.value}</span>
-                            <span style="color:${actionColor};font-weight:bold;margin-left:8px;font-size:12px;">[${actionName(g.action)}]</span>
+                    <div class="rule-item-container" style="border-bottom:1px solid rgba(148,163,184,0.1);padding:10px 0;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;font-size:14px;padding:0 10px;">
+                            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;">
+                                <span style="background:rgba(99,102,241,0.15);padding:2px 6px;border-radius:4px;font-size:11px;margin-right:6px;color:var(--accent);">${g.name}</span>
+                                ${ruleEditControls(gIdx, rIdx, r)}
+                                <span class="rule-action-badge" style="color:${actionColor};font-weight:bold;margin-left:8px;font-size:12px;cursor:pointer;border:1px solid ${actionColor}33;padding:2px 8px;border-radius:10px;background:${actionColor}11;display:inline-flex;align-items:center;gap:4px;user-select:none;transition:all 0.2s;" onclick="toggleSearchRuleActionSelector(${gIdx}, ${rIdx}, event)">
+                                    ${actionName(effectiveAction)} ▾
+                                </span>
+                            </div>
+                        </div>
+                        <div id="rule-action-selector-search-${gIdx}-${rIdx}" class="rule-action-selector-drawer" style="display:none;margin:10px 10px 5px 10px;padding:12px;border:1px solid rgba(148,163,184,0.15);border-radius:14px;background:rgba(255,255,255,0.015);box-shadow:inset 0 2px 8px rgba(0,0,0,0.2);">
                         </div>
                     </div>
                 `;
@@ -779,19 +1518,70 @@ function renderRules() {
     }
     let html = '';
     rules.forEach((r, idx) => {
-        const actionColor = group.action === 'proxy' ? 'var(--accent)' : (group.action === 'reject' ? 'var(--danger)' : 'var(--success)');
+        const effectiveAction = r.action || group.action || 'direct';
+        const actionColor = (effectiveAction === 'direct') ? 'var(--success)' : ((effectiveAction === 'reject') ? 'var(--danger)' : 'var(--accent)');
         html += `
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid rgba(148,163,184,0.1);font-size:14px;">
-                <div>
-                    <span style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;font-size:12px;margin-right:8px;">${typeName(r.type)}</span>
-                    <span>${r.value}</span>
-                    <span style="color:${actionColor};font-weight:bold;margin-left:8px;font-size:12px;">[${actionName(group.action)}]</span>
+            <div class="rule-item-container" style="border-bottom:1px solid rgba(148,163,184,0.1);padding:10px 0;">
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:14px;padding:0 10px;">
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;">
+                        ${ruleEditControls(currentRuleGroupIndex, idx, r)}
+                        <span class="rule-action-badge" style="color:${actionColor};font-weight:bold;margin-left:8px;font-size:12px;cursor:pointer;border:1px solid ${actionColor}33;padding:2px 8px;border-radius:10px;background:${actionColor}11;display:inline-flex;align-items:center;gap:4px;user-select:none;transition:all 0.2s;" onclick="toggleIndividualRuleActionSelector(${idx}, event)">
+                            ${actionName(effectiveAction)} ▾
+                        </span>
+                    </div>
+                    <button class="btn-ghost" style="padding:4px 8px;font-size:12px;border-color:rgba(239,68,68,0.3);color:var(--danger);" onclick="deleteRule(${idx})">删除</button>
                 </div>
-                <button class="btn-ghost" style="padding:4px 8px;font-size:12px;border-color:rgba(239,68,68,0.3);color:var(--danger);" onclick="deleteRule(${idx})">删除</button>
+                
+                <div id="rule-action-selector-${idx}" class="rule-action-selector-drawer" style="display:none;margin:10px 10px 5px 10px;padding:12px;border:1px solid rgba(148,163,184,0.15);border-radius:14px;background:rgba(255,255,255,0.015);box-shadow:inset 0 2px 8px rgba(0,0,0,0.2);">
+                </div>
             </div>
         `;
     });
     list.innerHTML = html;
+}
+
+function cmdRuleTypeName(type) {
+    return type === 'exact' ? '完整命令' : '命令前缀';
+}
+
+function renderCmdRules() {
+    const list = document.getElementById('cmdRuleList');
+    if (!list) return;
+    if (!cmdRules || cmdRules.length === 0) {
+        list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:14px;">暂无命令行规则</div>';
+        return;
+    }
+    list.innerHTML = cmdRules.map((rule, idx) => {
+        const action = rule.action || 'direct';
+        const actionColor = action === 'direct' ? 'var(--success)' : 'var(--accent)';
+        return `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px solid rgba(148,163,184,0.1);font-size:13px;">
+                <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;flex-wrap:wrap;">
+                    <span style="background:rgba(255,255,255,0.06);border:1px solid rgba(148,163,184,0.15);padding:2px 6px;border-radius:6px;font-size:11px;color:var(--text-sub);">${cmdRuleTypeName(rule.type)}</span>
+                    <code style="color:var(--text-main);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:430px;">${escapeHtml(rule.pattern)}</code>
+                    <span style="color:${actionColor};font-weight:700;">${actionName(action)}</span>
+                </div>
+                <button class="btn-ghost" style="padding:4px 8px;font-size:12px;border-color:rgba(239,68,68,0.3);color:var(--danger);" onclick="deleteCmdRule(${idx})">删除</button>
+            </div>
+        `;
+    }).join('');
+}
+
+function addCmdRule() {
+    const patternEl = document.getElementById('cmdRulePattern');
+    const pattern = (patternEl.value || '').trim();
+    if (!pattern) return showToast('请输入命令行匹配内容', 'warning');
+    const type = document.getElementById('cmdRuleType').value || 'prefix';
+    const action = document.getElementById('cmdRuleAction').value || 'direct';
+    cmdRules.push({ pattern, type, action });
+    patternEl.value = '';
+    renderCmdRules();
+}
+
+function deleteCmdRule(idx) {
+    if (!cmdRules || idx < 0 || idx >= cmdRules.length) return;
+    cmdRules.splice(idx, 1);
+    renderCmdRules();
 }
 
 function addRuleGroup() {
@@ -836,11 +1626,17 @@ function deleteRule(idx) {
 async function saveRules() {
     syncRuleGroupForm();
     try {
-        await fetch('/api/rules', {
+        const ruleRes = await fetch('/api/rules', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(ruleGroups)
         });
+        const cmdRes = await fetch('/api/cmd_rules', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(cmdRules)
+        });
+        if (!ruleRes.ok || !cmdRes.ok) throw new Error('save failed');
         alert('规则保存成功！');
         closeRuleModal();
     } catch(e) {
@@ -850,7 +1646,9 @@ async function saveRules() {
 
 function openRuleModal() {
     document.getElementById('ruleModal').style.display = 'flex';
+    ruleSelectorExpandedStates = {};
     loadRules();
+    loadRuleSelectorNodes();
 }
 
 function closeRuleModal() {
@@ -1189,12 +1987,20 @@ window.onload = () => {
     loadStatus();
     loadSuppliers();
     loadNodes();
-    // Default to Nodes tab
+    
     showTab('nodes');
     
     pollTimer = setInterval(() => {
         loadStatus();
-        const sel = document.getElementById('supplierSelect');
-        if (sel && sel.value) renderSupplierTraffic(sel.value);
+        if (activeTab === 'dashboard' && Date.now() - lastDashboardPoll > 4000) {
+            lastDashboardPoll = Date.now();
+            loadDashboard();
+        }
+        if (allNodesList && allNodesList.length > 0) {
+            const activeNode = allNodesList.find(n => n.active);
+            if (activeNode) {
+                renderSupplierTraffic(activeNode.fileName);
+            }
+        }
     }, 2000);
 };

@@ -35,14 +35,28 @@ func ParseHysteria2(link string) (Node, error) {
 	// 判断是否允许不安全的证书
 	insecure := q.Get("insecure") == "1" || q.Get("skip-cert-verify") == "true"
 
+	portRange := q.Get("mport")
+	if portRange == "" {
+		portRange = q.Get("ports")
+	}
+
+	obfs := q.Get("obfs")
+	obfsPassword := q.Get("obfs-password")
+	if obfsPassword == "" {
+		obfsPassword = q.Get("obfs.password")
+	}
+
 	return Node{
 		Type:           "hysteria2",
 		Name:           name,
 		Server:         u.Hostname(),
 		Port:           port,
+		PortRange:      portRange,
 		Password:       u.User.Username(),
 		SNI:            sni,
 		SkipCertVerify: insecure,
+		Obfs:           obfs,
+		ObfsPassword:   obfsPassword,
 		UDP:            true, // Hysteria2 基于 QUIC，天然支持并且默认走 UDP
 	}, nil
 }

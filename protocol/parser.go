@@ -3,12 +3,14 @@ package protocol
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"high-mae/pkg/secure"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -27,48 +29,59 @@ type RealityOpts struct {
 }
 
 type Node struct {
-	Type              string            `yaml:"type"`
-	Name              string            `yaml:"name"`
-	Server            string            `yaml:"server"`
-	Port              int               `yaml:"port"`
-	PortRange         string            `yaml:"port-range,omitempty"`
-	Ports             string            `yaml:"ports,omitempty"`
-	MPort             string            `yaml:"mport,omitempty"`
-	UUID              string            `yaml:"uuid"`
-	Username          string            `yaml:"username,omitempty"`
-	Password          string            `yaml:"password"`
-	HashedPassword    string            `yaml:"hashed-password,omitempty"`
-	Method            string            `yaml:"method,omitempty"`
-	SNI               string            `yaml:"sni,omitempty"`
-	ALPN              []string          `yaml:"alpn"`
-	SkipCertVerify    bool              `yaml:"skip-cert-verify,omitempty"`
-	Insecure          bool              `yaml:"insecure,omitempty"`       // Clash 常用
-	AllowInsecure     bool              `yaml:"allow-insecure,omitempty"` // Clash 常用
-	DisableSNI        bool              `yaml:"disable-sni,omitempty"`
-	ReduceRTT         bool              `yaml:"reduce-rtt,omitempty"`
-	CongestionControl string            `yaml:"congestion-control,omitempty"`
-	UDPRelayMode      string            `yaml:"udp-relay-mode,omitempty"`
-	ClientFingerprint string            `yaml:"client-fingerprint,omitempty"`
-	UDP               bool              `yaml:"udp,omitempty"`
-	TFO               bool              `yaml:"tfo,omitempty"`
-	TLS               bool              `yaml:"tls,omitempty"` // 统一使用 TLS 字段
-	Tls               bool              `yaml:"-"`             // 兼容旧版，解析时忽略
-	AlterId           int               `yaml:"alterId,omitempty"`
-	Cipher            string            `yaml:"cipher,omitempty"`
-	Network           string            `yaml:"network,omitempty"`
-	Host              string            `yaml:"host,omitempty"`
-	WSPath            string            `yaml:"ws-path,omitempty"`
-	WSHeaders         map[string]string `yaml:"ws-headers,omitempty"`
-	WSOpts            WSOpts            `yaml:"ws-opts,omitempty"`
-	Flow              string            `yaml:"flow,omitempty"`
-	ServerName        string            `yaml:"servername,omitempty"` // VLESS 专用 SNI 别名
-	RealityOpts       *RealityOpts      `yaml:"reality-opts,omitempty"`
-	GrpcOpts          map[string]string `yaml:"grpc-opts,omitempty"`
-	Transport         string            `yaml:"transport,omitempty"`
-	Multiplexing      string            `yaml:"multiplexing,omitempty"`
-	HandshakeMode     string            `yaml:"handshake-mode,omitempty"`
-	TrafficPattern    string            `yaml:"traffic-pattern,omitempty"`
-	Group             string            `yaml:"group,omitempty"`
+	Type                string            `yaml:"type"`
+	Name                string            `yaml:"name"`
+	Server              string            `yaml:"server"`
+	Port                int               `yaml:"port"`
+	PortRange           string            `yaml:"port-range,omitempty"`
+	Ports               string            `yaml:"ports,omitempty"`
+	MPort               string            `yaml:"mport,omitempty"`
+	UUID                string            `yaml:"uuid"`
+	Username            string            `yaml:"username,omitempty"`
+	Password            string            `yaml:"password"`
+	HashedPassword      string            `yaml:"hashed-password,omitempty"`
+	Method              string            `yaml:"method,omitempty"`
+	SNI                 string            `yaml:"sni,omitempty"`
+	ALPN                []string          `yaml:"alpn"`
+	SkipCertVerify      bool              `yaml:"skip-cert-verify,omitempty"`
+	Insecure            bool              `yaml:"insecure,omitempty"`       // Clash 常用
+	AllowInsecure       bool              `yaml:"allow-insecure,omitempty"` // Clash 常用
+	DisableSNI          bool              `yaml:"disable-sni,omitempty"`
+	ReduceRTT           bool              `yaml:"reduce-rtt,omitempty"`
+	CongestionControl   string            `yaml:"congestion-control,omitempty"`
+	UDPRelayMode        string            `yaml:"udp-relay-mode,omitempty"`
+	ClientFingerprint   string            `yaml:"client-fingerprint,omitempty"`
+	UDP                 bool              `yaml:"udp,omitempty"`
+	TFO                 bool              `yaml:"tfo,omitempty"`
+	TLS                 bool              `yaml:"tls,omitempty"` // 统一使用 TLS 字段
+	Tls                 bool              `yaml:"-"`             // 兼容旧版，解析时忽略
+	AlterId             int               `yaml:"alterId,omitempty"`
+	Cipher              string            `yaml:"cipher,omitempty"`
+	Network             string            `yaml:"network,omitempty"`
+	Host                string            `yaml:"host,omitempty"`
+	WSPath              string            `yaml:"ws-path,omitempty"`
+	WSHeaders           map[string]string `yaml:"ws-headers,omitempty"`
+	WSOpts              WSOpts            `yaml:"ws-opts,omitempty"`
+	Flow                string            `yaml:"flow,omitempty"`
+	ServerName          string            `yaml:"servername,omitempty"` // VLESS 专用 SNI 别名
+	RealityOpts         *RealityOpts      `yaml:"reality-opts,omitempty"`
+	GrpcOpts            map[string]string `yaml:"grpc-opts,omitempty"`
+	Transport           string            `yaml:"transport,omitempty"`
+	Mtu                 int               `yaml:"mtu,omitempty"`
+	Multiplexing        string            `yaml:"multiplexing,omitempty"`
+	HandshakeMode       string            `yaml:"handshake-mode,omitempty"`
+	TrafficPattern      string            `yaml:"traffic-pattern,omitempty"`
+	DomainStrategy      string            `yaml:"domain-strategy,omitempty"`
+	QUIC                bool              `yaml:"quic,omitempty"`
+	QUICCongestion      string            `yaml:"quic-congestion-control,omitempty"`
+	InsecureConcurrency int               `yaml:"insecure-concurrency,omitempty"`
+	ExtraHeaders        map[string]string `yaml:"extra-headers,omitempty"`
+	Group               string            `yaml:"group,omitempty"`
+	Obfs                string            `yaml:"obfs,omitempty"`
+	ObfsPassword        string            `yaml:"obfs-password,omitempty"`
+	SourceFile          string            `yaml:"source-file,omitempty"`
+	SourceKey           string            `yaml:"source-key,omitempty"`
+	SourceName          string            `yaml:"source-name,omitempty"`
 }
 
 func PreprocessYAML(data string) string {
@@ -105,7 +118,7 @@ func ParseNodesData(data []byte) ([]Node, error) {
 
 		// 🚀 核心修改：使用 switch 白名单支持多协议扩展
 		switch node.Type {
-		case "anytls", "trojan", "tuic", "vmess", "ss", "hysteria2", "http", "https", "vless", "socks5", "ssocks", "mieru":
+		case "anytls", "trojan", "tuic", "vmess", "ss", "hysteria2", "hy2", "http", "https", "vless", "socks5", "ssocks", "mieru", "naive":
 			// 如果未来增加了新协议，直接在这个 case 里加名字即可
 			nodes = append(nodes, node)
 		default:
@@ -179,42 +192,75 @@ func LoadInputWithUserAgentInfo(input string, userAgent string) (LoadInputResult
 		req.Header.Set("Accept", "*/*")
 		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 
-		client := &http.Client{
-			Timeout: 15 * time.Second,
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				ForceAttemptHTTP2:     true,
-				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 10 * time.Second,
-				ExpectContinueTimeout: 1 * time.Second,
-				MaxIdleConns:          100,
-				IdleConnTimeout:       90 * time.Second,
-			},
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return LoadInputResult{}, fmt.Errorf("HTTP 请求失败: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-			return LoadInputResult{}, fmt.Errorf("订阅下载失败，HTTP 状态码: %d, 响应: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		}
-
-		b, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return LoadInputResult{}, err
-		}
-		return LoadInputResult{Body: b, Headers: resp.Header.Clone()}, nil
+		return doSubscriptionRequest(req)
 	}
 
 	return LoadInputResult{Body: []byte(s), Headers: http.Header{}}, nil
+}
+
+func doSubscriptionRequest(req *http.Request) (LoadInputResult, error) {
+	var lastErr error
+	attempts := []struct {
+		name     string
+		proxy    func(*http.Request) (*url.URL, error)
+		http2    bool
+		insecure bool
+	}{
+		{name: "env_proxy", proxy: http.ProxyFromEnvironment, http2: true},
+		{name: "direct", http2: true},
+		{name: "direct_http1", http2: false},
+		{name: "direct_insecure", http2: false, insecure: true},
+	}
+
+	for _, attempt := range attempts {
+		clone := req.Clone(req.Context())
+		client := &http.Client{
+			Timeout:   20 * time.Second,
+			Transport: subscriptionTransport(attempt.proxy, attempt.http2, attempt.insecure),
+		}
+		resp, err := client.Do(clone)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", attempt.name, err)
+			continue
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("%s: %w", attempt.name, readErr)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("订阅下载失败，HTTP 状态码: %d, 响应: %s", resp.StatusCode, strings.TrimSpace(string(body[:min(len(body), 1024)])))
+			continue
+		}
+		return LoadInputResult{Body: body, Headers: resp.Header.Clone()}, nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("unknown subscription request error")
+	}
+	return LoadInputResult{}, fmt.Errorf("HTTP 请求失败: %w", lastErr)
+}
+
+func subscriptionTransport(proxy func(*http.Request) (*url.URL, error), http2 bool, insecure bool) *http.Transport {
+	transport := &http.Transport{
+		Proxy: proxy,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     http2,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	if insecure {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	return transport
 }
 
 func NormalizeSubscription(raw []byte) (string, error) {

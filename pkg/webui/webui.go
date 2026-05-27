@@ -5,15 +5,16 @@ import (
 	"high-mae/pkg/proxy"
 	"high-mae/pkg/routing"
 	"high-mae/pkg/stats"
+	"high-mae/pkg/storage"
 	"high-mae/pkg/sub"
 	"high-mae/pkg/utils"
 
+	"context"
 	"encoding/json"
 	"fmt"
 	"high-mae/protocol"
 	"net/http"
 	"os"
-	"os/exec"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -27,6 +28,7 @@ var (
 	uiServer *http.Server
 	// Cache latency to avoid re-testing constantly
 	latencyCache sync.Map
+	speedCache   sync.Map
 	// TUN 切换中标记，防止轮询期间闪烁
 	tunPending      atomic.Bool
 	tunPendingState atomic.Bool
@@ -40,7 +42,21 @@ type AggregateGroup struct {
 
 const AggregateGroupsFile = "aggregate_groups.json"
 
-func StartWebUI() {
+func init() {
+	sub.OnSubscriptionNodesUpdated = syncAggregateGroupsForSubscriptionUpdate
+	sub.OnSubscriptionDeleted = removeSubscriptionNodesFromAggregateGroups
+}
+
+var globalMux *http.ServeMux
+
+func GetWebUIMux() *http.ServeMux {
+	if globalMux == nil {
+		globalMux = buildWebUIMux()
+	}
+	return globalMux
+}
+
+func buildWebUIMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", serveHTML)
@@ -48,6 +64,8 @@ func StartWebUI() {
 	mux.HandleFunc("/script.js", serveJS)
 	mux.HandleFunc("/api/nodes", getNodes)
 	mux.HandleFunc("/api/switch", switchNodeHandler)
+	mux.HandleFunc("/api/node_link", nodeLinkHandler)
+	mux.HandleFunc("/api/delete_node", deleteNodeHandler)
 	mux.HandleFunc("/api/test_single", testSingleHandler)
 	mux.HandleFunc("/api/test_all", testAllHandler)
 	mux.HandleFunc("/api/speedtest", speedtestHandler)
@@ -59,6 +77,7 @@ func StartWebUI() {
 	mux.HandleFunc("/api/update_supplier", updateSupplierHandler)
 	mux.HandleFunc("/api/delete_supplier", deleteSupplierHandler)
 	mux.HandleFunc("/api/rules", rulesHandler)
+	mux.HandleFunc("/api/cmd_rules", cmdRulesHandler)
 	mux.HandleFunc("/api/set_node_group", setNodeGroupHandler)
 	mux.HandleFunc("/api/all_nodes_all_subs", getAllNodesAllSubsHandler)
 	mux.HandleFunc("/api/create_aggregated_group", createAggregatedGroupHandler)
@@ -71,8 +90,15 @@ func StartWebUI() {
 	mux.HandleFunc("/api/aggregate_group_remove_node", aggGroupRemoveNodeHandler)
 	mux.HandleFunc("/api/dns", dnsHandler)
 	mux.HandleFunc("/api/stats", getStatsHandler)
+	mux.HandleFunc("/api/history", historyHandler)
 	mux.HandleFunc("/api/clear_logs", clearLogsHandler)
 	mux.HandleFunc("/api/privacy", privacyToggleHandler)
+
+	return mux
+}
+
+func StartWebUI() {
+	mux := GetWebUIMux()
 
 	// 默认开启 WebRTC 防泄漏
 	common.IsWebRTCPolicyOn = routing.CheckWebRTCLeakStatus()
@@ -89,33 +115,93 @@ func StartWebUI() {
 	uiServer.ListenAndServe()
 }
 
+type GlobalNodeInfo struct {
+	Index    int    `json:"index"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Latency  int64  `json:"latency"`
+	Speed    int64  `json:"speed"`
+	Active   bool   `json:"active"`
+	Group    string `json:"group"`
+	FileName string `json:"fileName"`
+	SubIndex int    `json:"subIndex"`
+}
+
+var (
+	globalNodesCache []GlobalNodeInfo
+	globalNodesMu    sync.Mutex
+)
+
 func getNodes(w http.ResponseWriter, r *http.Request) {
-	type NodeInfo struct {
-		Index   int    `json:"index"`
-		Name    string `json:"name"`
-		Type    string `json:"type"`
-		Latency int64  `json:"latency"`
-		Active  bool   `json:"active"`
-		Group   string `json:"group"`
+	globalNodesMu.Lock()
+	defer globalNodesMu.Unlock()
+
+	var newCache []GlobalNodeInfo
+	globalIdx := 0
+
+	// 1. Load subscriptions
+	subscriptions, _ := sub.ReadSubscriptions()
+	for _, s := range subscriptions {
+		nodes, err := protocol.ParseNodes(s.FileName)
+		if err == nil {
+			for subIdx, n := range nodes {
+				lat, _ := latencyCache.Load(globalIdx)
+				latency, _ := lat.(int64)
+				spd, _ := speedCache.Load(globalIdx)
+				speed, _ := spd.(int64)
+
+				newCache = append(newCache, GlobalNodeInfo{
+					Index:    globalIdx,
+					Name:     n.Name,
+					Type:     n.Type,
+					Latency:  latency,
+					Speed:    speed,
+					Active:   n.Name == common.ActiveNodeName,
+					Group:    s.Name,
+					FileName: s.FileName,
+					SubIndex: subIdx,
+				})
+				globalIdx++
+			}
+		}
 	}
 
-	var res []NodeInfo
-	for i, n := range common.AllNodes {
-		lat, _ := latencyCache.Load(i)
-		latency, _ := lat.(int64)
+	// 2. Load aggregate groups
+	aggregateGroups, _ := ReadAggregateGroups()
+	for _, g := range aggregateGroups {
+		nodes, err := protocol.ParseNodes(g.FileName)
+		if err == nil {
+			for subIdx, n := range nodes {
+				lat, _ := latencyCache.Load(globalIdx)
+				latency, _ := lat.(int64)
+				spd, _ := speedCache.Load(globalIdx)
+				speed, _ := spd.(int64)
 
-		res = append(res, NodeInfo{
-			Index:   i,
-			Name:    n.Name,
-			Type:    n.Type,
-			Latency: latency,
-			Active:  n.Name == common.ActiveNodeName,
-			Group:   n.Group,
-		})
+				newCache = append(newCache, GlobalNodeInfo{
+					Index:    globalIdx,
+					Name:     n.Name,
+					Type:     n.Type,
+					Latency:  latency,
+					Speed:    speed,
+					Active:   n.Name == common.ActiveNodeName,
+					Group:    g.Name,
+					FileName: g.FileName,
+					SubIndex: subIdx,
+				})
+				globalIdx++
+			}
+		}
 	}
+
+	globalNodesCache = newCache
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(res)
+	json.NewEncoder(w).Encode(globalNodesCache)
+}
+
+func resetNodeMetricCaches() {
+	latencyCache = sync.Map{}
+	speedCache = sync.Map{}
 }
 
 func rulesHandler(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +217,29 @@ func rulesHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := routing.SaveRuleGroups(groups); err != nil {
+			http.Error(w, "Save failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		return
+	}
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+func cmdRulesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(routing.CmdRules)
+		return
+	}
+	if r.Method == http.MethodPost {
+		var rules []routing.CmdRule
+		if err := json.NewDecoder(r.Body).Decode(&rules); err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		if err := routing.SaveCmdRules(rules); err != nil {
 			http.Error(w, "Save failed", http.StatusInternalServerError)
 			return
 		}
@@ -179,7 +288,7 @@ func getAllNodesAllSubsHandler(w http.ResponseWriter, r *http.Request) {
 			res = append(res, SubGroup{
 				FileName: l.FileName,
 				SubName:  l.Name,
-				Nodes:    nodes,
+				Nodes:    withAggregateSource(l.FileName, nodes),
 			})
 		}
 	}
@@ -202,7 +311,7 @@ func createAggregatedGroupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fileName := "group_" + strconv.FormatInt(time.Now().Unix(), 10) + ".yml"
-	sub.SaveNodesToYAML(fileName, req.Nodes)
+	sub.SaveNodesToYAML(fileName, normalizeAggregateSources(req.Nodes))
 
 	groups, _ := ReadAggregateGroups()
 	groups = append(groups, AggregateGroup{Name: req.Name, FileName: fileName})
@@ -213,11 +322,11 @@ func createAggregatedGroupHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ReadAggregateGroups() ([]AggregateGroup, error) {
-	if _, err := os.Stat(AggregateGroupsFile); os.IsNotExist(err) {
-		return []AggregateGroup{}, nil
-	}
-	data, err := utils.SecureReadFile(AggregateGroupsFile)
+	data, err := storage.ReadOrMigrateFile(AggregateGroupsFile)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []AggregateGroup{}, nil
+		}
 		return nil, err
 	}
 	var groups []AggregateGroup
@@ -238,7 +347,200 @@ func SaveAggregateGroups(groups []AggregateGroup) error {
 	if err != nil {
 		return err
 	}
-	return utils.SecureWriteFile(AggregateGroupsFile, data)
+	return storage.Write(AggregateGroupsFile, data)
+}
+
+func withAggregateSource(sourceFile string, nodes []protocol.Node) []protocol.Node {
+	out := make([]protocol.Node, len(nodes))
+	for i, node := range nodes {
+		node.SourceFile = sourceFile
+		node.SourceKey = aggregateNodeKey(node)
+		node.SourceName = node.Name
+		out[i] = node
+	}
+	return out
+}
+
+func normalizeAggregateSources(nodes []protocol.Node) []protocol.Node {
+	out := make([]protocol.Node, len(nodes))
+	for i, node := range nodes {
+		if node.SourceName == "" {
+			node.SourceName = node.Name
+		}
+		if node.SourceKey == "" {
+			node.SourceKey = aggregateNodeKey(node)
+		}
+		out[i] = node
+	}
+	return out
+}
+
+func aggregateNodeKey(node protocol.Node) string {
+	network := strings.ToLower(strings.TrimSpace(node.Network))
+	if network == "tcp" {
+		network = ""
+	}
+	return fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
+		node.Type,
+		node.Name,
+		node.Server,
+		node.Port,
+		node.PortRange,
+		node.UUID,
+		node.Username,
+		node.Password,
+		node.HashedPassword,
+		firstNonEmpty(node.Method, node.Cipher),
+		firstNonEmpty(node.SNI, node.ServerName),
+		node.Flow,
+		firstNonEmpty(node.WSPath, node.WSOpts.Path),
+		node.Host,
+		node.Obfs,
+		node.ObfsPassword,
+		node.Transport,
+		network,
+	)
+}
+
+func aggregateNameTypeKey(node protocol.Node) string {
+	return strings.ToLower(strings.TrimSpace(node.Type)) + "|" + strings.ToLower(strings.TrimSpace(node.Name))
+}
+
+func buildAggregateLookup(nodes []protocol.Node) (map[string]protocol.Node, map[string]protocol.Node) {
+	byKey := make(map[string]protocol.Node, len(nodes))
+	byNameType := make(map[string]protocol.Node, len(nodes))
+	for _, node := range nodes {
+		byKey[aggregateNodeKey(node)] = node
+		if node.SourceKey != "" {
+			byKey[node.SourceKey] = node
+		}
+		nameType := aggregateNameTypeKey(node)
+		if _, exists := byNameType[nameType]; !exists {
+			byNameType[nameType] = node
+		}
+	}
+	return byKey, byNameType
+}
+
+func buildAggregateKeySet(nodes []protocol.Node) map[string]struct{} {
+	keys := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		keys[aggregateNodeKey(node)] = struct{}{}
+		if node.SourceKey != "" {
+			keys[node.SourceKey] = struct{}{}
+		}
+	}
+	return keys
+}
+
+func aggregateNodeBelongsToSource(node protocol.Node, sourceFile string, oldKeys map[string]struct{}) bool {
+	if node.SourceFile == sourceFile {
+		return true
+	}
+	if node.SourceFile != "" {
+		return false
+	}
+	_, ok := oldKeys[aggregateNodeKey(node)]
+	return ok
+}
+
+func replacementAggregateNode(node protocol.Node, sourceFile string, newByKey map[string]protocol.Node, newByNameType map[string]protocol.Node) (protocol.Node, bool) {
+	keys := []string{node.SourceKey, aggregateNodeKey(node)}
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if replacement, ok := newByKey[key]; ok {
+			return withAggregateSource(sourceFile, []protocol.Node{replacement})[0], true
+		}
+	}
+	if node.SourceName != "" {
+		nameType := strings.ToLower(strings.TrimSpace(node.Type)) + "|" + strings.ToLower(strings.TrimSpace(node.SourceName))
+		if replacement, ok := newByNameType[nameType]; ok {
+			return withAggregateSource(sourceFile, []protocol.Node{replacement})[0], true
+		}
+	}
+	if replacement, ok := newByNameType[aggregateNameTypeKey(node)]; ok {
+		return withAggregateSource(sourceFile, []protocol.Node{replacement})[0], true
+	}
+	return protocol.Node{}, false
+}
+
+func syncAggregateGroupsForSubscriptionUpdate(sourceFile string, oldNodes []protocol.Node, newNodes []protocol.Node) {
+	groups, err := ReadAggregateGroups()
+	if err != nil || len(groups) == 0 {
+		return
+	}
+	oldKeys := buildAggregateKeySet(oldNodes)
+	newByKey, newByNameType := buildAggregateLookup(newNodes)
+
+	for _, group := range groups {
+		nodes, err := protocol.ParseNodes(group.FileName)
+		if err != nil || len(nodes) == 0 {
+			continue
+		}
+		next := make([]protocol.Node, 0, len(nodes))
+		changed := false
+		for _, node := range nodes {
+			if !aggregateNodeBelongsToSource(node, sourceFile, oldKeys) {
+				next = append(next, node)
+				continue
+			}
+			replacement, ok := replacementAggregateNode(node, sourceFile, newByKey, newByNameType)
+			if ok {
+				next = append(next, replacement)
+			}
+			changed = true
+		}
+		if changed {
+			_ = sub.SaveNodesToYAML(group.FileName, next)
+			if sub.CurrentConfigFile == group.FileName {
+				common.AllNodes = next
+				resetNodeMetricCaches()
+				sub.RefreshNodeMenu(nil)
+			}
+		}
+	}
+}
+
+func removeSubscriptionNodesFromAggregateGroups(sourceFile string, oldNodes []protocol.Node) {
+	groups, err := ReadAggregateGroups()
+	if err != nil || len(groups) == 0 {
+		return
+	}
+	oldKeys := buildAggregateKeySet(oldNodes)
+	for _, group := range groups {
+		nodes, err := protocol.ParseNodes(group.FileName)
+		if err != nil || len(nodes) == 0 {
+			continue
+		}
+		next := make([]protocol.Node, 0, len(nodes))
+		changed := false
+		for _, node := range nodes {
+			if aggregateNodeBelongsToSource(node, sourceFile, oldKeys) {
+				changed = true
+				continue
+			}
+			next = append(next, node)
+		}
+		if changed {
+			_ = sub.SaveNodesToYAML(group.FileName, next)
+			if sub.CurrentConfigFile == group.FileName {
+				common.AllNodes = next
+				resetNodeMetricCaches()
+				sub.RefreshNodeMenu(nil)
+			}
+		}
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func aggregateGroupsHandler(w http.ResponseWriter, r *http.Request) {
@@ -251,9 +553,9 @@ func switchAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 	fileName := r.URL.Query().Get("file")
 	nodes, err := protocol.ParseNodes(fileName)
 	if err == nil && len(nodes) > 0 {
-		sub.CurrentConfigFile = fileName
+		sub.SetActiveConfigFile(fileName)
 		common.AllNodes = nodes
-		latencyCache = sync.Map{}
+		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 		if len(common.AllNodes) > 0 {
 			proxy.SwitchNode(common.AllNodes[0])
@@ -270,7 +572,8 @@ func deleteAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 	for _, group := range groups {
 		if group.FileName == fileName {
 			found = true
-			os.Remove(group.FileName)
+			_ = storage.Delete(group.FileName)
+			_ = os.Remove(group.FileName)
 			continue
 		}
 		next = append(next, group)
@@ -282,8 +585,8 @@ func deleteAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 	SaveAggregateGroups(next)
 	if sub.CurrentConfigFile == fileName {
 		common.AllNodes = nil
-		sub.CurrentConfigFile = ""
-		latencyCache = sync.Map{}
+		sub.SetActiveConfigFile("")
+		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -293,88 +596,265 @@ func deleteAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 func switchNodeHandler(w http.ResponseWriter, r *http.Request) {
 	idxStr := r.URL.Query().Get("idx")
 	idx, err := strconv.Atoi(idxStr)
-	if err != nil || idx < 0 || idx >= len(common.AllNodes) {
+	if err != nil {
 		http.Error(w, "Invalid index", http.StatusBadRequest)
 		return
 	}
 
-	node := common.AllNodes[idx]
-	proxy.SwitchNode(node)
+	globalNodesMu.Lock()
+	if idx < 0 || idx >= len(globalNodesCache) {
+		globalNodesMu.Unlock()
+		http.Error(w, "Index out of bounds", http.StatusBadRequest)
+		return
+	}
+	node := globalNodesCache[idx]
+	globalNodesMu.Unlock()
+
+	// Switch config file if needed
+	if sub.CurrentConfigFile != node.FileName {
+		nodes, err := protocol.ParseNodes(node.FileName)
+		if err == nil {
+			sub.SetActiveConfigFile(node.FileName)
+			common.AllNodes = nodes
+			sub.RefreshNodeMenu(nil)
+		}
+	}
+
+	// Double check to make sure index is valid in common.AllNodes
+	if node.SubIndex >= 0 && node.SubIndex < len(common.AllNodes) {
+		targetNode := common.AllNodes[node.SubIndex]
+		proxy.SwitchNode(targetNode)
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
-func testSingleHandler(w http.ResponseWriter, r *http.Request) {
-	idxStr := r.URL.Query().Get("idx")
-	idx, err := strconv.Atoi(idxStr)
-	if err != nil || idx < 0 || idx >= len(common.AllNodes) {
-		http.Error(w, "Invalid index", http.StatusBadRequest)
+func nodeLinkHandler(w http.ResponseWriter, r *http.Request) {
+	_, targetNode, ok := getGlobalNodeFromRequest(w, r)
+	if !ok {
 		return
 	}
 
-	node := common.AllNodes[idx]
-	lat, err := proxy.FastTCPPing(node)
+	link, err := protocol.ExportNodeLink(targetNode)
+	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
-		lat = -1 // Error state
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
+		return
 	}
-	latencyCache.Store(idx, lat)
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "link": link})
+}
 
+func deleteNodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	nodeInfo, targetNode, ok := getGlobalNodeFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	nodes, err := protocol.ParseNodes(nodeInfo.FileName)
+	if err != nil {
+		http.Error(w, "Read node file failed", http.StatusInternalServerError)
+		return
+	}
+	if nodeInfo.SubIndex < 0 || nodeInfo.SubIndex >= len(nodes) {
+		http.Error(w, "Node index mismatch", http.StatusBadRequest)
+		return
+	}
+
+	nodes = append(nodes[:nodeInfo.SubIndex], nodes[nodeInfo.SubIndex+1:]...)
+	if err := sub.SaveNodesToYAML(nodeInfo.FileName, nodes); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "保存节点数据失败"})
+		return
+	}
+
+	if sub.CurrentConfigFile == nodeInfo.FileName {
+		common.AllNodes = nodes
+		resetNodeMetricCaches()
+		sub.RefreshNodeMenu(nil)
+		if targetNode.Name == common.ActiveNodeName {
+			if len(nodes) > 0 {
+				proxy.SwitchNode(nodes[0])
+			} else {
+				common.ActiveNodeName = ""
+				if common.MCurrentNode != nil {
+					common.MCurrentNode.SetTitle("📍 当前节点: [未选择]")
+				}
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+}
+
+func getGlobalNodeFromRequest(w http.ResponseWriter, r *http.Request) (GlobalNodeInfo, protocol.Node, bool) {
+	idxStr := r.URL.Query().Get("idx")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "Invalid index", http.StatusBadRequest)
+		return GlobalNodeInfo{}, protocol.Node{}, false
+	}
+
+	globalNodesMu.Lock()
+	if idx < 0 || idx >= len(globalNodesCache) {
+		globalNodesMu.Unlock()
+		http.Error(w, "Index out of bounds", http.StatusBadRequest)
+		return GlobalNodeInfo{}, protocol.Node{}, false
+	}
+	nodeInfo := globalNodesCache[idx]
+	globalNodesMu.Unlock()
+
+	nodes, err := protocol.ParseNodes(nodeInfo.FileName)
+	if err != nil || nodeInfo.SubIndex < 0 || nodeInfo.SubIndex >= len(nodes) {
+		http.Error(w, "Node index mismatch", http.StatusBadRequest)
+		return GlobalNodeInfo{}, protocol.Node{}, false
+	}
+	return nodeInfo, nodes[nodeInfo.SubIndex], true
+}
+
+func testSingleHandler(w http.ResponseWriter, r *http.Request) {
+	nodeInfo, targetNode, ok := getGlobalNodeFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	lat, err := proxy.FastTCPPing(targetNode)
+	if err != nil {
+		lat = -1
+	}
+	latencyCache.Store(nodeInfo.Index, lat)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int64{"latency": lat})
 }
 
+var speedtestSem = make(chan struct{}, 2)
+
+var bandwidthTestTargets = []string{
+	"https://speed.cloudflare.com/__down?bytes=10000000",
+	"http://speed.cloudflare.com/__down?bytes=10000000",
+	"http://cachefly.cachefly.net/10mb.test",
+}
+
+type bandwidthSample struct {
+	bytes    int64
+	duration float64
+}
+
 func speedtestHandler(w http.ResponseWriter, r *http.Request) {
-	idxStr := r.URL.Query().Get("idx")
-	idx, err := strconv.Atoi(idxStr)
-	if err != nil || idx < 0 || idx >= len(common.AllNodes) {
-		http.Error(w, "Invalid index", http.StatusBadRequest)
+	select {
+	case speedtestSem <- struct{}{}:
+		atomic.AddInt32(&common.ActiveSpeedtests, 1)
+		defer func() {
+			<-speedtestSem
+			atomic.AddInt32(&common.ActiveSpeedtests, -1)
+		}()
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":    false,
+			"error": "已有带宽测速正在进行，请稍后再试",
+			"stage": "queued",
+		})
 		return
 	}
-	node := common.AllNodes[idx]
+
+	w.Header().Set("Content-Type", "application/json")
+	nodeInfo, node, ok := getGlobalNodeFromRequest(w, r)
+	if !ok {
+		return
+	}
 
 	client, cleanup, err := proxy.CreateTempHTTPClient(node)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "stage": "create_client", "error": err.Error()})
 		return
 	}
 	if cleanup != nil {
 		defer cleanup()
 	}
+	client.Timeout = 0
 
-	// 10MB test payload from Cloudflare
-	req, _ := http.NewRequest("GET", "https://speed.cloudflare.com/__down?bytes=10000000", nil)
+	var sample bandwidthSample
+	var lastErr error
+	var lastTarget string
+	for _, target := range bandwidthTestTargets {
+		sample, err = runBandwidthSample(client, target, 12*time.Second)
+		if err == nil {
+			lastErr = nil
+			lastTarget = target
+			break
+		}
+		lastErr = err
+		lastTarget = target
+		client.CloseIdleConnections()
+	}
+	if lastErr != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":     false,
+			"stage":  "request",
+			"target": lastTarget,
+			"error":  "所有测速源均不可用，最后错误: " + lastErr.Error(),
+		})
+		return
+	}
+
+	speed := float64(sample.bytes) / sample.duration // Bytes per second
+	speedInt := int64(speed)
+	speedCache.Store(nodeInfo.Index, speedInt)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":       true,
+		"speed":    speedInt,
+		"bytes":    sample.bytes,
+		"duration": sample.duration,
+		"target":   lastTarget,
+	})
+}
+
+func runBandwidthSample(client *http.Client, targetURL string, timeout time.Duration) (bandwidthSample, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	req.Header.Set("User-Agent", "high-mae-speedtest/1.0")
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return bandwidthSample{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return bandwidthSample{}, fmt.Errorf("测速服务器返回 HTTP %d", resp.StatusCode)
+	}
 
-	// 限制测速时间最长 10 秒
-	var written int64
+	var written atomic.Int64
 	buf := make([]byte, 128*1024)
-	timer := time.NewTimer(15 * time.Second)
 	done := make(chan struct{})
-
 	go func() {
+		defer close(done)
 		for {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
-				written += int64(n)
+				written.Add(int64(n))
 			}
 			if err != nil {
-				break
+				return
 			}
 		}
-		close(done)
 	}()
 
 	select {
 	case <-done:
-		timer.Stop()
-	case <-timer.C:
-		resp.Body.Close() // 必须先关 Body，让阻塞的 Read goroutine 返回
-		client.CloseIdleConnections()
+	case <-ctx.Done():
+		resp.Body.Close()
+		<-done
 	}
 
 	duration := time.Since(start).Seconds()
@@ -382,12 +862,14 @@ func speedtestHandler(w http.ResponseWriter, r *http.Request) {
 		duration = 1
 	}
 
-	speed := float64(written) / duration // Bytes per second
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"speed": speed,
-	})
+	totalWritten := written.Load()
+	if totalWritten == 0 {
+		if ctx.Err() != nil {
+			return bandwidthSample{}, ctx.Err()
+		}
+		return bandwidthSample{}, fmt.Errorf("未下载到任何数据")
+	}
+	return bandwidthSample{bytes: totalWritten, duration: duration}, nil
 }
 
 func addNodeHandler(w http.ResponseWriter, r *http.Request) {
@@ -429,7 +911,7 @@ func addNodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sub.CurrentConfigFile = targetFile
+	sub.SetActiveConfigFile(targetFile)
 	sub.RefreshNodeMenu(newNodes)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -437,23 +919,41 @@ func addNodeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func testAllHandler(w http.ResponseWriter, r *http.Request) {
-	// Execute proxy.FastTCPPing for all nodes
+	globalNodesMu.Lock()
+	nodesToTest := make([]GlobalNodeInfo, len(globalNodesCache))
+	copy(nodesToTest, globalNodesCache)
+	globalNodesMu.Unlock()
+
+	// Pre-parse each unique subscription/aggregate group file exactly once
+	parsedFiles := make(map[string][]protocol.Node)
+	for _, gNode := range nodesToTest {
+		if _, exists := parsedFiles[gNode.FileName]; !exists {
+			nodes, err := protocol.ParseNodes(gNode.FileName)
+			if err == nil {
+				parsedFiles[gNode.FileName] = nodes
+			}
+		}
+	}
+
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 50)
 
-	for i, node := range common.AllNodes {
+	for _, gNode := range nodesToTest {
 		wg.Add(1)
-		go func(idx int, n protocol.Node) {
+		go func(gGlobalIdx int, fileName string, subIdx int) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			lat, err := proxy.FastTCPPing(n)
-			if err != nil {
-				lat = -1
+			nodes := parsedFiles[fileName]
+			if subIdx >= 0 && subIdx < len(nodes) {
+				lat, err := proxy.FastTCPPing(nodes[subIdx])
+				if err != nil {
+					lat = -1
+				}
+				latencyCache.Store(gGlobalIdx, lat)
 			}
-			latencyCache.Store(idx, lat)
-		}(i, node)
+		}(gNode.Index, gNode.FileName, gNode.SubIndex)
 	}
 	wg.Wait()
 	w.WriteHeader(http.StatusOK)
@@ -483,6 +983,7 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 	case "proxy":
 		common.IsSystemProxyOn = !common.IsSystemProxyOn
 		utils.SetSystemProxy(common.IsSystemProxyOn)
+		stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
 		if common.MToggleProxy != nil {
 			if common.IsSystemProxyOn {
 				common.MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
@@ -516,7 +1017,9 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 			msg := proxy.ToggleTunMode()
 			if msg != "" {
 				// 失败时不需要额外处理，proxy.ToggleTunMode 内部不会修改 common.IsTunModeOn
+				return
 			}
+			stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
 		}()
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 		return
@@ -537,6 +1040,7 @@ func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
 	type SupplierInfo struct {
 		Name     string                   `json:"name"`
 		FileName string                   `json:"fileName"`
+		URL      string                   `json:"url"`
 		Active   bool                     `json:"active"`
 		Traffic  *sub.SubscriptionTraffic `json:"traffic,omitempty"`
 	}
@@ -545,6 +1049,7 @@ func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
 		list = append(list, SupplierInfo{
 			Name:     l.Name,
 			FileName: l.FileName,
+			URL:      l.URL,
 			Active:   l.FileName == sub.CurrentConfigFile,
 			Traffic:  l.Traffic,
 		})
@@ -557,9 +1062,9 @@ func switchSupplierHandler(w http.ResponseWriter, r *http.Request) {
 	fileName := r.URL.Query().Get("file")
 	nodes, err := protocol.ParseNodes(fileName)
 	if err == nil && len(nodes) > 0 {
-		sub.CurrentConfigFile = fileName
+		sub.SetActiveConfigFile(fileName)
 		common.AllNodes = nodes
-		latencyCache = sync.Map{} // 清空旧延迟缓存
+		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 		if len(common.AllNodes) > 0 {
 			proxy.SwitchNode(common.AllNodes[0])
@@ -591,16 +1096,18 @@ func updateSupplierHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	oldNodes, _ := protocol.ParseNodes(target.FileName)
 	err = sub.SaveNodesToYAML(target.FileName, nodes)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "保存节点数据失败"})
 		return
 	}
+	sub.NotifySubscriptionNodesUpdated(target.FileName, oldNodes, nodes)
 
 	if sub.CurrentConfigFile == target.FileName {
 		common.AllNodes = nodes
-		latencyCache = sync.Map{}
+		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 		runtime.GC()
 		debug.FreeOSMemory()
@@ -634,8 +1141,8 @@ func deleteSupplierHandler(w http.ResponseWriter, r *http.Request) {
 
 	if sub.CurrentConfigFile == fileName {
 		common.AllNodes = nil
-		sub.CurrentConfigFile = ""
-		latencyCache = sync.Map{}
+		sub.SetActiveConfigFile("")
+		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 	}
 
@@ -656,7 +1163,7 @@ func importSubscriptionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. 读取剪贴板
-	out, err := exec.Command("powershell", "-command", "Get-Clipboard").Output()
+	out, err := utils.RunHiddenCommand("powershell", "-NoProfile", "-Command", "Get-Clipboard")
 	if err != nil {
 		respond(false, "无法读取剪贴板内容！")
 		return
@@ -692,19 +1199,21 @@ func importSubscriptionHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	oldNodes, _ := protocol.ParseNodes(targetFile)
 	common.AllNodes = newNodes
 	if err := sub.SaveNodesToYAML(targetFile, common.AllNodes); err != nil {
 		respond(false, "写入 .yml 文件失败: "+err.Error())
 		return
 	}
+	sub.NotifySubscriptionNodesUpdated(targetFile, oldNodes, common.AllNodes)
 
-	sub.CurrentConfigFile = targetFile
+	sub.SetActiveConfigFile(targetFile)
 	refreshedNodes, err := protocol.ParseNodes(targetFile)
 	if err == nil {
 		common.AllNodes = refreshedNodes
 	}
 
-	latencyCache = sync.Map{}
+	resetNodeMetricCaches()
 	sub.RefreshSupplierMenu()
 	if isOldLink {
 		sub.RefreshNodeMenu(nil)
@@ -740,7 +1249,7 @@ func aggGroupAddNodesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	existing, _ := protocol.ParseNodes(req.File)
-	existing = append(existing, req.Nodes...)
+	existing = append(existing, normalizeAggregateSources(req.Nodes)...)
 	if err := sub.SaveNodesToYAML(req.File, existing); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
@@ -748,7 +1257,7 @@ func aggGroupAddNodesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if sub.CurrentConfigFile == req.File {
 		common.AllNodes = existing
-		latencyCache = sync.Map{}
+		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -804,7 +1313,7 @@ func aggGroupRemoveNodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if sub.CurrentConfigFile == fileName {
 		common.AllNodes = nodes
-		latencyCache = sync.Map{}
+		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -818,17 +1327,22 @@ func getStatsHandler(w http.ResponseWriter, r *http.Request) {
 	runtime.ReadMemStats(&m)
 
 	stats := map[string]interface{}{
-		"memAlloc":    m.Alloc,
-		"memSys":      m.Sys,
-		"goroutines":  runtime.NumGoroutine(),
-		"speedIn":     stats.CurrentSpeedIn,
-		"speedOut":    stats.CurrentSpeedOut,
-		"activeNodes": 1,
-		"uptime":      time.Since(startTime).Seconds(),
-		"connections": atomic.LoadInt32(&stats.ActiveConnections),
-		"logs":        stats.GetConnLogs(),
-		"totalIn":     atomic.LoadUint64(&common.GlobalProxyIn),
-		"totalOut":    atomic.LoadUint64(&common.GlobalProxyOut),
+		"memAlloc":         m.Alloc,
+		"memSys":           m.Sys,
+		"heapInuse":        m.HeapInuse,
+		"heapReleased":     m.HeapReleased,
+		"goroutines":       runtime.NumGoroutine(),
+		"speedIn":          stats.CurrentSpeedIn,
+		"speedOut":         stats.CurrentSpeedOut,
+		"activeNodes":      1,
+		"uptime":           time.Since(startTime).Seconds(),
+		"connections":      atomic.LoadInt32(&stats.ActiveConnections),
+		"activeSpeedtests": atomic.LoadInt32(&common.ActiveSpeedtests),
+		"activeDNSQueries": atomic.LoadInt32(&common.ActiveDNSQueries),
+		"logs":             stats.GetRecentConnLogs(200),
+		"totalIn":          atomic.LoadUint64(&common.GlobalProxyIn),
+		"totalOut":         atomic.LoadUint64(&common.GlobalProxyOut),
+		"trafficSessions":  stats.GetTrafficSessions(),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
@@ -845,4 +1359,45 @@ func privacyToggleHandler(w http.ResponseWriter, r *http.Request) {
 		stats.ClearConnLogs()
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"enabled": common.PrivacyMode})
+}
+
+func historyHandler(w http.ResponseWriter, r *http.Request) {
+	startStr := r.URL.Query().Get("start")
+	endStr := r.URL.Query().Get("end")
+
+	var startVal, endVal time.Time
+
+	if startStr != "" {
+		if val, err := strconv.ParseInt(startStr, 10, 64); err == nil {
+			if val > 9999999999 {
+				startVal = time.UnixMilli(val)
+			} else {
+				startVal = time.Unix(val, 0)
+			}
+		} else if parsed, err := time.Parse(time.RFC3339, startStr); err == nil {
+			startVal = parsed
+		}
+	}
+	if startVal.IsZero() {
+		startVal = time.Now().Add(-24 * time.Hour)
+	}
+
+	if endStr != "" {
+		if val, err := strconv.ParseInt(endStr, 10, 64); err == nil {
+			if val > 9999999999 {
+				endVal = time.UnixMilli(val)
+			} else {
+				endVal = time.Unix(val, 0)
+			}
+		} else if parsed, err := time.Parse(time.RFC3339, endStr); err == nil {
+			endVal = parsed
+		}
+	}
+	if endVal.IsZero() {
+		endVal = time.Now()
+	}
+
+	res := stats.GetHistory(startVal, endVal)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }

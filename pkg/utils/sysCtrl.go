@@ -89,7 +89,7 @@ func GetDefaultGatewayAndIP() (gateway string, localIP string) {
 			gw := fields[2]
 			ip := fields[3]
 			// 只排除 High Mae 自己的 TUN 地址；真实局域网也可能使用 10.0.0.x。
-			if ip != common.TunIP && gw != common.TunIP {
+			if ip != common.TunIP && gw != common.TunIP && ip != "10.0.0.2" && gw != "10.0.0.1" && ip != "172.19.0.1" {
 				return gw, ip
 			}
 		}

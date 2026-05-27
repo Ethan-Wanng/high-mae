@@ -1,36 +1,38 @@
 package proxy
 
 import (
-	"high-mae/pkg/common"
-	"high-mae/pkg/utils"
-
-	"context"
+	_ "embed"
 	"fmt"
 	"log"
-	"net"
+	"os"
+	"os/exec"
+	"runtime"
+	"runtime/debug"
 	"sync"
+	"syscall"
+	"time"
 
-	box "github.com/sagernet/sing-box"
-	"github.com/sagernet/sing-box/include"
-	"github.com/sagernet/sing-box/option"
+	"high-mae/pkg/common"
+	"high-mae/pkg/utils"
 )
 
-// =====================================================
-// sing-box TUN 管理器
-// 采用 sing-box 推荐的 JSON 配置 → box.New 方式创建独立 TUN 实例
-//
-// 配置要点（遵循 sing-box 官方文档推荐）：
-//   - mixed 网络栈（TCP 走系统栈高性能，UDP 走 gvisor 保兼容）
-//   - FakeIP DNS 避免 DNS 泄漏
-//   - auto_route + strict_route 全接管
-//   - route 规则：DNS hijack → 节点服务器直连 → 私有 IP 直连 → 其余走 proxy
-//   - proxy outbound 指向本地 HTTP 代理端口，兼容所有底层引擎
-// =====================================================
+//go:embed tun2socks.exe
+var tun2socksBytes []byte
+
+//go:embed wintun.dll
+var wintunBytes []byte
 
 var (
-	tunBox *box.Box
-	tunMu  sync.Mutex
+	tunMu           sync.Mutex
+	tunCmd          *exec.Cmd
+	tunWatchStop    chan struct{}
+	tunWatchDone    chan struct{}
+	tunGateway      string
+	tunRealLocalIP  string
+	tunRoutedNodeIP string
 )
+
+const TunIP = "10.0.0.2"
 
 // ToggleTunMode 切换 TUN 模式的开/关状态，返回需要展示给用户的消息（空串表示成功）
 func ToggleTunMode() string {
@@ -38,52 +40,45 @@ func ToggleTunMode() string {
 	defer tunMu.Unlock()
 
 	if common.IsTunModeOn {
-		// 关闭 TUN
+		stopTunWatchdogLocked()
 		stopTunLocked()
 		common.IsTunModeOn = false
+		common.RealLocalIPBeforeTun = "" // 清除缓存，下次开启时重新获取
 		if common.MToggleTun != nil {
 			common.MToggleTun.SetTitle("🔌 虚拟网卡 (TUN): [已关闭]")
 		}
-		log.Println("TUN 模式已关闭")
+		log.Println("TUN 模式已关闭（销毁虚拟网卡，删除路由）")
 		return ""
 	}
 
-	// 开启 TUN
 	if !utils.IsAdmin() {
-		return "开启虚拟网卡(TUN)需要管理员权限！请以管理员身份运行。"
+		return "使用虚拟网卡(TUN)需要管理员权限！请以管理员身份运行。"
 	}
+
 	if err := startTunLocked(); err != nil {
 		return fmt.Sprintf("启动 TUN 失败: %v", err)
 	}
+
 	common.IsTunModeOn = true
+	startTunWatchdogLocked()
 	if common.MToggleTun != nil {
 		common.MToggleTun.SetTitle("🟢 虚拟网卡 (TUN): [已开启]")
 	}
-	log.Println("TUN 模式已开启")
+	log.Println("TUN 模式已开启（创建虚拟网卡，添加路由）")
 	return ""
 }
 
 // RestartSingBoxTun 重启 TUN（在切换节点后由 proxy.go 调用）
-// 使用 "先建后拆" 策略：先创建新实例，成功后再关闭旧实例，避免网络中断窗口
-func RestartSingBoxTun() error {
+func RestartSingBoxTun(nodeServer, nodeIP string) error {
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
-	// 先尝试创建新实例
-	newBox, err := createTunBox()
-	if err != nil {
-		// 创建失败时保持旧实例继续工作
-		log.Printf("TUN 重启失败(旧实例保留): %v", err)
-		return err
+	if !common.IsTunModeOn {
+		return nil
 	}
 
-	// 新实例创建成功后，关闭旧实例
-	if tunBox != nil {
-		tunBox.Close()
-		log.Println("旧 TUN 实例已关闭")
-	}
-	tunBox = newBox
-	return nil
+	stopTunLocked()
+	return startTunLocked()
 }
 
 // StopSingBoxTun 停止 TUN（程序退出时由 main.go 调用）
@@ -91,7 +86,10 @@ func StopSingBoxTun() {
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
-	stopTunLocked()
+	if common.IsTunModeOn {
+		stopTunWatchdogLocked()
+		stopTunLocked()
+	}
 }
 
 // =====================================================
@@ -100,222 +98,189 @@ func StopSingBoxTun() {
 
 // stopTunLocked 关闭正在运行的 TUN Box 实例（调用者必须持有 tunMu）
 func stopTunLocked() {
-	if tunBox != nil {
-		tunBox.Close()
-		tunBox = nil
-		log.Println("旧 TUN 实例已关闭")
+	if tunCmd != nil && tunCmd.Process != nil {
+		_ = tunCmd.Process.Kill()
+		_ = tunCmd.Wait()
+		tunCmd = nil
 	}
+	utils.RunHiddenCommand("taskkill", "/F", "/IM", "tun2socks.exe")
+	utils.RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", TunIP)
+
+	routedNodeIP := tunRoutedNodeIP
+	common.ClientMu.RLock()
+	currentNodeIP := common.GlobalNodeIP
+	common.ClientMu.RUnlock()
+	if routedNodeIP != "" {
+		utils.RunHiddenCommand("route", "delete", routedNodeIP, "mask", "255.255.255.255")
+	}
+	if currentNodeIP != "" && currentNodeIP != routedNodeIP {
+		utils.RunHiddenCommand("route", "delete", currentNodeIP, "mask", "255.255.255.255")
+	}
+	tunGateway = ""
+	tunRealLocalIP = ""
+	tunRoutedNodeIP = ""
+	releaseRuntimeMemory()
+	log.Println("旧 TUN 实例已关闭")
 }
 
 // startTunLocked 启动一个全新的 TUN Box 实例（调用者必须持有 tunMu）
 func startTunLocked() error {
-	b, err := createTunBox()
-	if err != nil {
+	realGateway := utils.GetDefaultGateway()
+	if realGateway == "" {
+		return fmt.Errorf("无法识别系统的默认网关")
+	}
+
+	// 记录原始网卡IP
+	common.RealLocalIPBeforeTun = utils.GetRealLocalIP()
+	tunGateway = realGateway
+	tunRealLocalIP = common.RealLocalIPBeforeTun
+
+	// 增强健壮性：启动前确保没有僵尸进程和残留路由
+	utils.RunHiddenCommand("taskkill", "/F", "/IM", "tun2socks.exe")
+	utils.RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", TunIP)
+	if tunRoutedNodeIP != "" {
+		utils.RunHiddenCommand("route", "delete", tunRoutedNodeIP, "mask", "255.255.255.255")
+		tunRoutedNodeIP = ""
+	}
+
+	if err := ensureTunAssetsLocked(); err != nil {
 		return err
 	}
-	tunBox = b
-	return nil
-}
 
-// createTunBox 创建并启动一个 TUN Box 实例，但不存储到全局变量
-//
-// 🏗️ 架构设计说明：
-// sing-box 推荐的配置方式是构造完整 JSON → 通过 include.Context 解析 → box.New
-// 这样所有 Inbound/Outbound/DNS/Route 的 Registry 会自动注入，
-// 避免了手动构造 Inbound{Type:"tun", Options:...} 时缺少 registry 导致的空指针崩溃。
-func createTunBox() (*box.Box, error) {
-	// ── 1. 获取当前活动节点的服务器信息（用于防环路路由规则） ──
+	tunCmd = exec.Command(
+		"./tun2socks.exe",
+		"-device", "tun://AnyTLS-TUN",
+		"-proxy", "http://127.0.0.1:"+common.LocalHttpPort,
+		"-loglevel", "silent",
+		"-mtu", "1400",
+		"-tcp-rcvbuf", "256k",
+		"-tcp-sndbuf", "256k",
+		"-udp-timeout", "30s",
+	)
+	tunCmd.Env = append(os.Environ(), "GOGC=20", "GOMEMLIMIT=96MiB")
+	tunCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if err := tunCmd.Start(); err != nil {
+		return fmt.Errorf("无法启动底层引擎: %v", err)
+	}
+	releaseRuntimeMemory()
+	time.Sleep(3 * time.Second) // 增加到 3 秒，防止 wintun 还没初始化完毕导致 netsh 失败
+
+	utils.RunHiddenCommand("netsh", "interface", "ip", "set", "address", "AnyTLS-TUN", "static", TunIP, "255.255.255.0", "10.0.0.1")
+
 	common.ClientMu.RLock()
-	nodeServer := common.GlobalNodeServer
 	nodeIP := common.GlobalNodeIP
 	common.ClientMu.RUnlock()
 
-	// ── 2. 构造完整的 sing-box JSON 配置 ──
-	tunConfig := BuildTunConfigJSON(nodeServer, nodeIP)
-
-	// ── 3. 通过 JSON 解析创建 Options ──
-	ctx := include.Context(context.Background())
-	var opts option.Options
-	if err := opts.UnmarshalJSONContext(ctx, tunConfig); err != nil {
-		return nil, fmt.Errorf("解析 TUN 配置失败: %w", err)
+	if nodeIP != "" {
+		utils.RunHiddenCommand("route", "add", nodeIP, "mask", "255.255.255.255", realGateway, "metric", "1")
+		tunRoutedNodeIP = nodeIP
 	}
 
-	// ── 4. 创建并启动 Box ──
-	b, err := box.New(box.Options{
-		Options: opts,
-		Context: ctx,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("创建 TUN 引擎失败: %w", err)
-	}
-	if err := b.Start(); err != nil {
-		b.Close()
-		return nil, fmt.Errorf("启动 TUN 引擎失败: %w", err)
-	}
+	utils.RunHiddenCommand("route", "add", "0.0.0.0", "mask", "0.0.0.0", TunIP, "metric", "1")
+	utils.RunHiddenCommand("netsh", "interface", "ip", "set", "dns", "AnyTLS-TUN", "static", "127.0.0.2")
 
-	return b, nil
+	return nil
 }
 
-// buildTunConfigJSON 构造完整的 sing-box TUN 配置 JSON
-//
-// 配置遵循 sing-box 官方推荐架构：
-//
-// ┌──────────────────────────────────────────────────────────┐
-// │                    sing-box TUN 实例                       │
-// │                                                          │
-// │  ┌────────────┐    ┌───────────────┐    ┌──────────────┐ │
-// │  │  TUN 入站   │ →  │  路由规则引擎  │ →  │  出站选择    │ │
-// │  │ (mixed 栈)  │    │ DNS→hijack    │    │ proxy/direct │ │
-// │  │ auto_route  │    │ 私有IP→direct │    │              │ │
-// │  └────────────┘    │ 其余→proxy    │    └──────────────┘ │
-// │                    └───────────────┘                      │
-// │                                                          │
-// │  ┌────────────────────────────────────┐                  │
-// │  │           DNS 模块                  │                  │
-// │  │ remote-dns: 谷歌 DoH → proxy      │                  │
-// │  │ local-dns:  阿里 DoH → direct     │                  │
-// │  │ fakeip:     198.18.0.0/15         │                  │
-// │  └────────────────────────────────────┘                  │
-// │                                                          │
-// │  proxy outbound → 127.0.0.1:10808 (本地 HTTP 代理)       │
-// └──────────────────────────────────────────────────────────┘
-//
-// DNS 配置采用 legacy 格式（address 字段），mbox 会自动升级为新格式。
-// Route 规则使用 ip_is_private 匹配所有私有 IP 段，简洁且无遗漏。
-func BuildTunConfigJSON(nodeServer, nodeIP string) []byte {
-	// ── 构造节点服务器 IP 直连规则（防止 TUN 流量环路） ──
-	serverIPRule := ""
-	if nodeIP != "" {
-		ip := net.ParseIP(nodeIP)
-		if ip != nil {
-			bits := 32
-			if ip.To4() == nil {
-				bits = 128
-			}
-			serverIPRule = fmt.Sprintf(`
-				{
-					"ip_cidr": ["%s/%d"],
-					"outbound": "direct"
-				},`, nodeIP, bits)
+func ensureTunAssetsLocked() error {
+	if _, err := os.Stat("tun2socks.exe"); os.IsNotExist(err) {
+		if len(tun2socksBytes) == 0 {
+			return fmt.Errorf("tun2socks.exe 不存在，且内置资源已释放")
+		}
+		if err := os.WriteFile("tun2socks.exe", tun2socksBytes, 0755); err != nil {
+			return fmt.Errorf("写入 tun2socks.exe 失败: %w", err)
+		}
+	}
+	if _, err := os.Stat("wintun.dll"); os.IsNotExist(err) {
+		if len(wintunBytes) == 0 {
+			return fmt.Errorf("wintun.dll 不存在，且内置资源已释放")
+		}
+		if err := os.WriteFile("wintun.dll", wintunBytes, 0644); err != nil {
+			return fmt.Errorf("写入 wintun.dll 失败: %w", err)
 		}
 	}
 
-	// 如果节点地址是域名（与解析出的 IP 不同），也需要直连
-	serverDomainRule := ""
-	if nodeServer != "" && nodeServer != nodeIP {
-		// 确保 nodeServer 确实是域名而非 IP
-		if net.ParseIP(nodeServer) == nil {
-			serverDomainRule = fmt.Sprintf(`
-				{
-					"domain": ["%s"],
-					"outbound": "direct"
-				},`, nodeServer)
+	tun2socksBytes = nil
+	wintunBytes = nil
+	releaseRuntimeMemory()
+	return nil
+}
+
+func startTunWatchdogLocked() {
+	if tunWatchStop != nil {
+		return
+	}
+	tunWatchStop = make(chan struct{})
+	tunWatchDone = make(chan struct{})
+	stopCh := tunWatchStop
+	doneCh := tunWatchDone
+	go func() {
+		defer close(doneCh)
+		ticker := time.NewTicker(2 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				reconcileTunRoute()
+			case <-stopCh:
+				return
+			}
 		}
+	}()
+}
+
+func stopTunWatchdogLocked() {
+	if tunWatchStop == nil {
+		return
+	}
+	stopCh := tunWatchStop
+	doneCh := tunWatchDone
+	tunWatchStop = nil
+	tunWatchDone = nil
+	close(stopCh)
+	tunMu.Unlock()
+	<-doneCh
+	tunMu.Lock()
+}
+
+func reconcileTunRoute() {
+	common.ClientMu.RLock()
+	tunOn := common.IsTunModeOn
+	activeNode := common.ActiveNode
+	currentNodeIP := common.GlobalNodeIP
+	common.ClientMu.RUnlock()
+	if !tunOn || activeNode.Server == "" {
+		return
 	}
 
-	// ── sing-box 推荐的 TUN 配置模板 ──
-	//
-	// DNS 架构:
-	//   - remote-dns: 谷歌 DoH，走 proxy 出站（解决 DNS 污染）
-	//   - local-dns:  阿里 DoH，走 direct 出站（用于解析代理服务器本身的域名）
-	//   - fakeip:     虚拟 IP 池，A/AAAA 查询走 fakeip（实现透明代理）
-	//
-	// DNS 规则:
-	//   - outbound=any 的流量走 local-dns（代理服务器域名解析不能走代理）
-	//   - A/AAAA 查询走 fakeip（普通域名用虚拟 IP 替代，由 TUN 接管）
-	//   - 其余走 remote-dns（如 PTR、MX 等特殊查询）
-	//
-	// Route 规则:
-	//   - DNS 协议流量→hijack-dns（劫持到内置 DNS 模块处理）
-	//   - 节点服务器 IP/域名→direct（防止流量环路）
-	//   - 私有 IP→direct（局域网/本地回环不走代理）
-	//   - 其余→proxy（发往本地 HTTP 代理端口）
-	config := fmt.Sprintf(`{
-	"log": {
-		"level": "warn"
-	},
-	"dns": {
-		"servers": [
-			{
-				"tag": "remote-dns",
-				"address": "https://dns.google/dns-query",
-				"detour": "proxy"
-			},
-			{
-				"tag": "local-dns",
-				"address": "https://223.5.5.5/dns-query",
-				"detour": "direct"
-			},
-			{
-				"tag": "fakeip",
-				"address": "fakeip"
-			}
-		],
-		"rules": [
-			{
-				"outbound": ["any"],
-				"server": "local-dns"
-			},
-			{
-				"query_type": ["A", "AAAA"],
-				"server": "fakeip"
-			}
-		],
-		"final": "remote-dns",
-		"fakeip": {
-			"enabled": true,
-			"inet4_range": "198.18.0.0/15",
-			"inet6_range": "fc00::/18"
-		},
-		"strategy": "prefer_ipv4"
-	},
-	"inbounds": [
-		{
-			"type": "tun",
-			"tag": "tun-in",
-			"address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
-			"stack": "mixed",
-			"auto_route": true,
-			"strict_route": true,
-			"sniff": true,
-			"sniff_override_destination": false
-		}
-	],
-	"outbounds": [
-		{
-			"type": "http",
-			"tag": "proxy",
-			"server": "127.0.0.1",
-			"server_port": %s
-		},
-		{
-			"type": "direct",
-			"tag": "direct"
-		},
-		{
-			"type": "dns",
-			"tag": "dns-out"
-		},
-		{
-			"type": "block",
-			"tag": "block"
-		}
-	],
-	"route": {
-		"rules": [
-			{
-				"protocol": "dns",
-				"action": "hijack-dns"
-			},%s%s
-			{
-				"ip_is_private": true,
-				"outbound": "direct"
-			}
-		],
-		"auto_detect_interface": true,
-		"final": "proxy"
+	resolvedIP := ResolveNodeServer(activeNode)
+	if resolvedIP != "" && resolvedIP != currentNodeIP {
+		log.Printf("TUN 自愈：节点 %s 解析 IP 从 %s 变为 %s，重建代理客户端和路由", activeNode.Name, currentNodeIP, resolvedIP)
+		SwitchNode(activeNode)
+		return
 	}
-}`, common.LocalHttpPort, serverIPRule, serverDomainRule)
 
-	return []byte(config)
+	gateway := utils.GetDefaultGateway()
+	realLocalIP := utils.GetRealLocalIP()
+
+	tunMu.Lock()
+	defer tunMu.Unlock()
+	if !common.IsTunModeOn {
+		return
+	}
+	if gateway == "" {
+		return
+	}
+	if gateway != tunGateway || (realLocalIP != "" && realLocalIP != tunRealLocalIP) {
+		log.Printf("TUN 自愈：网络环境变化，重建路由。gateway %s -> %s, localIP %s -> %s", tunGateway, gateway, tunRealLocalIP, realLocalIP)
+		stopTunLocked()
+		if err := startTunLocked(); err != nil {
+			log.Printf("TUN 自愈重启失败: %v", err)
+		}
+	}
+}
+
+func releaseRuntimeMemory() {
+	runtime.GC()
+	debug.FreeOSMemory()
 }

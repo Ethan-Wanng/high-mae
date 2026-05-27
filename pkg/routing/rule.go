@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"high-mae/pkg/common"
-	"high-mae/pkg/utils"
+	"high-mae/pkg/storage"
 )
 
 var cancelAnyTLS interface{}
@@ -30,6 +30,195 @@ var RuleGroups []RuleGroup
 
 const RuleGroupsFile = "rule_groups.json"
 
+type CmdRule struct {
+	Pattern string `json:"pattern"`
+	Type    string `json:"type"`   // "prefix" or "exact"
+	Action  string `json:"action"` // "direct", "proxy", "reject"
+}
+
+var CmdRules []CmdRule
+
+const CmdRulesFile = "cmd_rules.json"
+
+func LoadCmdRules() {
+	data, err := storage.ReadOrMigrateFile(CmdRulesFile)
+	if err == nil {
+		var rules []CmdRule
+		if err := json.Unmarshal(data, &rules); err == nil {
+			CmdRules = normalizeCmdRules(rules)
+			return
+		}
+	}
+	CmdRules = DefaultCmdRules()
+	_ = SaveCmdRules(CmdRules)
+}
+
+func SaveCmdRules(rules []CmdRule) error {
+	rules = normalizeCmdRules(rules)
+	data, err := json.MarshalIndent(rules, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := storage.Write(CmdRulesFile, data); err != nil {
+		return err
+	}
+	CmdRules = rules
+	return nil
+}
+
+func DefaultCmdRules() []CmdRule {
+	return []CmdRule{
+		{Pattern: "go test", Type: "prefix", Action: "direct"},
+	}
+}
+
+func EvaluateCmdRouting(cmdline string) (string, bool) {
+	if cmdline == "" {
+		return "", false
+	}
+	if len(CmdRules) == 0 {
+		CmdRules = DefaultCmdRules()
+	}
+	variants := commandLineVariants(cmdline)
+	for _, rule := range CmdRules {
+		if commandLineMatches(variants, rule) {
+			return normalizeRuleAction(rule.Action), true
+		}
+	}
+	return "", false
+}
+
+func normalizeCmdRules(rules []CmdRule) []CmdRule {
+	out := make([]CmdRule, 0, len(rules))
+	for _, rule := range rules {
+		pattern := normalizeCommandText(rule.Pattern)
+		if pattern == "" {
+			continue
+		}
+		rule.Pattern = pattern
+		rule.Type = normalizeCmdRuleType(rule.Type)
+		rule.Action = normalizeRuleAction(rule.Action)
+		if rule.Action == "" {
+			rule.Action = "direct"
+		}
+		out = append(out, rule)
+	}
+	return out
+}
+
+func normalizeCmdRuleType(ruleType string) string {
+	switch strings.ToLower(strings.TrimSpace(ruleType)) {
+	case "exact", "full":
+		return "exact"
+	default:
+		return "prefix"
+	}
+}
+
+func commandLineMatches(variants []string, rule CmdRule) bool {
+	pattern := normalizeCommandText(rule.Pattern)
+	if pattern == "" {
+		return false
+	}
+	for _, variant := range variants {
+		if normalizeCmdRuleType(rule.Type) == "exact" {
+			if variant == pattern {
+				return true
+			}
+			continue
+		}
+		if strings.HasPrefix(variant, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func commandLineVariants(cmdline string) []string {
+	raw := normalizeCommandText(cmdline)
+	if raw == "" {
+		return nil
+	}
+	variants := []string{raw}
+
+	exe, args := splitExecutableAndArgs(cmdline)
+	exe = strings.Trim(exe, "\"")
+	if exe != "" {
+		base := commandExecutableBase(exe)
+		base = strings.TrimSuffix(base, ".exe")
+		short := normalizeCommandText(strings.TrimSpace(base + " " + args))
+		if short != "" && short != raw {
+			variants = append(variants, short)
+		}
+		if forwarded := forwardedShellCommand(base, args); forwarded != "" && forwarded != raw && forwarded != short {
+			variants = append(variants, forwarded)
+		}
+	}
+	return variants
+}
+
+func commandExecutableBase(exe string) string {
+	exe = strings.TrimSpace(strings.Trim(exe, "\""))
+	exe = strings.ReplaceAll(exe, "\\", "/")
+	if idx := strings.LastIndex(exe, "/"); idx >= 0 {
+		exe = exe[idx+1:]
+	}
+	return strings.ToLower(exe)
+}
+
+func forwardedShellCommand(base string, args string) string {
+	base = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(base)), ".exe")
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return ""
+	}
+	lowerArgs := strings.ToLower(args)
+	switch base {
+	case "cmd":
+		for _, prefix := range []string{"/c ", "/s /c "} {
+			if strings.HasPrefix(lowerArgs, prefix) {
+				return normalizeCommandText(args[len(prefix):])
+			}
+		}
+	case "powershell", "pwsh":
+		for _, flag := range []string{"-command ", "-c "} {
+			if idx := strings.Index(lowerArgs, flag); idx >= 0 {
+				return normalizeCommandText(args[idx+len(flag):])
+			}
+		}
+	}
+	return ""
+}
+
+func splitExecutableAndArgs(cmdline string) (string, string) {
+	cmdline = strings.TrimSpace(cmdline)
+	if cmdline == "" {
+		return "", ""
+	}
+	if cmdline[0] == '"' {
+		if end := strings.Index(cmdline[1:], "\""); end >= 0 {
+			pos := end + 1
+			return cmdline[1:pos], strings.TrimSpace(cmdline[pos+1:])
+		}
+		return strings.Trim(cmdline, "\""), ""
+	}
+	fields := strings.Fields(cmdline)
+	if len(fields) == 0 {
+		return "", ""
+	}
+	rest := ""
+	if len(fields) > 1 {
+		rest = strings.Join(fields[1:], " ")
+	}
+	return fields[0], rest
+}
+
+func normalizeCommandText(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "\"", "")
+	return strings.Join(strings.Fields(value), " ")
+}
+
 func LoadUserRules() {
 	groups, err := ReadRuleGroups()
 	if err != nil || len(groups) == 0 {
@@ -37,14 +226,16 @@ func LoadUserRules() {
 		_ = SaveRuleGroups(groups)
 	}
 	RuleGroups = normalizeRuleGroups(groups)
+	LoadCmdRules()
 }
 
 func SaveUserRules() error {
+	_ = SaveCmdRules(CmdRules)
 	return SaveRuleGroups(RuleGroups)
 }
 
 func ReadRuleGroups() ([]RuleGroup, error) {
-	data, err := utils.SecureReadFile(RuleGroupsFile)
+	data, err := storage.ReadOrMigrateFile(RuleGroupsFile)
 	if err == nil {
 		var groups []RuleGroup
 		if err := json.Unmarshal(data, &groups); err != nil {
@@ -72,7 +263,7 @@ func SaveRuleGroups(groups []RuleGroup) error {
 	if err != nil {
 		return err
 	}
-	if err := utils.SecureWriteFile(RuleGroupsFile, data); err != nil {
+	if err := storage.Write(RuleGroupsFile, data); err != nil {
 		return err
 	}
 	RuleGroups = groups
@@ -114,13 +305,16 @@ func normalizeRuleGroups(groups []RuleGroup) []RuleGroup {
 }
 
 func normalizeRuleAction(action string) string {
-	switch strings.ToLower(strings.TrimSpace(action)) {
+	act := strings.TrimSpace(action)
+	switch strings.ToLower(act) {
 	case "direct":
 		return "direct"
 	case "reject", "block":
 		return "reject"
-	default:
+	case "proxy":
 		return "proxy"
+	default:
+		return act // Keep the original node name or group name
 	}
 }
 
@@ -135,10 +329,10 @@ func normalizeRuleType(ruleType string) string {
 	}
 }
 
-// return value: 0=proxy, 1=direct, 2=reject
-func EvaluateRouting(hostPort string) int {
+// return value: "proxy", "direct", "reject", or specific node/group name
+func EvaluateRouting(hostPort string) string {
 	if common.ProxyMode == "Global" {
-		return 0 // proxy
+		return "proxy"
 	}
 	if len(RuleGroups) == 0 {
 		RuleGroups = normalizeRuleGroups(DefaultRuleGroups())
@@ -149,12 +343,12 @@ func EvaluateRouting(hostPort string) int {
 	}
 	if ip := net.ParseIP(host); ip != nil {
 		if ip.IsLoopback() || ip.IsPrivate() {
-			return 1 // direct
+			return "direct"
 		}
 	}
 	host = strings.ToLower(host)
 	if IsStunDomain(host) {
-		return 2 // reject STUN
+		return "reject"
 	}
 
 	for _, group := range RuleGroups {
@@ -180,21 +374,14 @@ func EvaluateRouting(hostPort string) int {
 			if r.Action != "" {
 				action = normalizeRuleAction(r.Action)
 			}
-			switch action {
-			case "direct":
-				return 1
-			case "reject", "block":
-				return 2
-			case "proxy":
-				return 0
-			}
+			return action
 		}
 	}
-	return 0
+	return "proxy"
 }
 
 func ShouldDirect(hostPort string) bool {
-	return EvaluateRouting(hostPort) == 1
+	return EvaluateRouting(hostPort) == "direct"
 }
 
 func StartAnyTLSHttpServer() {

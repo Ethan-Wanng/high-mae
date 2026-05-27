@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"high-mae/pkg/common"
+	"high-mae/pkg/storage"
 	"high-mae/pkg/utils"
 
 	"context"
@@ -12,6 +13,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
@@ -55,7 +57,7 @@ const (
 )
 
 func LoadDNSConfig() {
-	data, err := utils.SecureReadFile(DNSConfigFile)
+	data, err := storage.ReadOrMigrateFile(DNSConfigFile)
 	if err == nil {
 		if err := json.Unmarshal(data, &GlobalDNSConfig); err == nil {
 			return
@@ -90,7 +92,7 @@ func SaveDNSConfig() error {
 	if err != nil {
 		return err
 	}
-	return utils.SecureWriteFile(DNSConfigFile, data)
+	return storage.Write(DNSConfigFile, data)
 }
 
 func GetDNSServerByID(id string) *DNSServer {
@@ -127,7 +129,12 @@ func MatchDNSRule(domain string) string {
 
 func StartLocalDNS() {
 	if GlobalDNSConfig.AutoOverwrite {
-		utils.SetSystemDNS(true, "127.0.0.2")
+		if common.IsTunModeOn {
+			log.Println("TUN 模式已开启，跳过系统 DNS 覆写到 127.0.0.2")
+		} else {
+			utils.SetSystemDNS(true, "127.0.0.2")
+			common.IsSystemDNSHijacked = true
+		}
 	}
 
 	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.2"), Port: 53}
@@ -169,6 +176,9 @@ func StartLocalDNS() {
 }
 
 func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte) {
+	atomic.AddInt32(&common.ActiveDNSQueries, 1)
+	defer atomic.AddInt32(&common.ActiveDNSQueries, -1)
+
 	msg := new(dns.Msg)
 	if err := msg.Unpack(reqData); err != nil {
 		return
@@ -224,11 +234,17 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 	}
 
 	dest := metadata.ParseSocksaddr(dnsAddr)
-	streamRaw, err := client.CreateProxy(context.Background(), dest)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	streamRaw, err := client.CreateProxy(ctx, dest)
 	if err != nil {
 		return
 	}
-	stream := &TrackingConn{Conn: streamRaw}
+	// 🚀 DNS 查询不需要 TrackingConn（无 logID），直接使用原始连接
+	// 避免每次 DNS Read/Write 都触发无效的锁竞争
+	stream := streamRaw
+	_ = stream.SetDeadline(time.Now().Add(5 * time.Second))
 	defer stream.Close()
 
 	length := uint16(len(reqData))

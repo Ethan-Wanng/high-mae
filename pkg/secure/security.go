@@ -6,23 +6,41 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+	"high-mae/pkg/storage"
 	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 )
 
 const MagicHeader = "HMSEC\x01"
 
+var (
+	cachedMachineID string
+	cachedKey       []byte
+	cachedKeyOnce   sync.Once
+)
+
 func GetMachineID() string {
+	if cachedMachineID != "" {
+		return cachedMachineID
+	}
+
 	var id string
 	if runtime.GOOS == "windows" {
-		if out, err := exec.Command("cmd", "/c", "reg", "query", `HKLM\SOFTWARE\Microsoft\Cryptography`, "/v", "MachineGuid").Output(); err == nil {
+		// Run with hidden window attributes
+		cmd1 := exec.Command("cmd", "/c", "reg", "query", `HKLM\SOFTWARE\Microsoft\Cryptography`, "/v", "MachineGuid")
+		cmd1.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		if out, err := cmd1.Output(); err == nil {
 			id = parseRegValue(string(out), "MachineGuid")
 		}
 		if id == "" {
-			out, err := exec.Command("wmic", "csproduct", "get", "uuid").Output()
+			cmd2 := exec.Command("wmic", "csproduct", "get", "uuid")
+			cmd2.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+			out, err := cmd2.Output()
 			if err == nil {
 				lines := strings.Split(string(out), "\n")
 				if len(lines) >= 2 {
@@ -36,6 +54,7 @@ func GetMachineID() string {
 		home, _ := os.UserHomeDir()
 		id = hostname + "|" + home + "|high-mae-fallback-key"
 	}
+	cachedMachineID = id
 	return id
 }
 
@@ -50,8 +69,11 @@ func parseRegValue(output string, valueName string) string {
 }
 
 func DeriveKey() []byte {
-	hash := sha256.Sum256([]byte(GetMachineID() + "AnyTLS-Security-Salt"))
-	return hash[:]
+	cachedKeyOnce.Do(func() {
+		hash := sha256.Sum256([]byte(GetMachineID() + "AnyTLS-Security-Salt"))
+		cachedKey = hash[:]
+	})
+	return cachedKey
 }
 
 func EncryptData(data []byte) ([]byte, error) {
@@ -100,14 +122,14 @@ func DecryptData(data []byte) ([]byte, error) {
 
 func SecureWriteFile(filename string, data []byte) error {
 	if len(data) == 0 {
-		return os.WriteFile(filename, nil, 0600)
+		return storage.Write(filename, nil)
 	}
 	encrypted, err := EncryptData(data)
 	if err != nil {
 		return err
 	}
 	finalData := append([]byte(MagicHeader), encrypted...)
-	return writeFileBestEffortAtomic(filename, finalData, 0600)
+	return storage.Write(filename, finalData)
 }
 
 func writeFileBestEffortAtomic(filename string, data []byte, perm os.FileMode) error {
@@ -142,7 +164,7 @@ func writeFileBestEffortAtomic(filename string, data []byte, perm os.FileMode) e
 }
 
 func SecureReadFile(filename string) ([]byte, error) {
-	data, err := os.ReadFile(filename)
+	data, err := storage.ReadOrMigrateFile(filename)
 	if err != nil {
 		return nil, err
 	}

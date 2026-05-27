@@ -20,9 +20,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	// 强烈建议使用跨平台剪贴板库，代替 powershell 命令
-	// "github.com/atotto/clipboard"
-	"os/exec"
 	"runtime"
 	"runtime/debug"
 	"sync"
@@ -181,7 +178,7 @@ func NotifySubscriptionDeleted(fileName string, oldNodes []protocol.Node) {
 
 func ImportNodeFromClipboard() {
 	// 1. 读取剪贴板内容
-	out, err := exec.Command("powershell", "-command", "Get-Clipboard").Output()
+	out, err := utils.RunHiddenCommand("powershell", "-NoProfile", "-Command", "Get-Clipboard")
 	if err != nil {
 		utils.ShowWindowsMsgBox("导入失败", "无法读取剪贴板内容！")
 		return
@@ -233,7 +230,7 @@ func ImportNodeFromClipboard() {
 	NotifySubscriptionNodesUpdated(targetFile, oldNodes, common.AllNodes)
 
 	// 更新当前使用的配置文件
-	CurrentConfigFile = targetFile
+	SetActiveConfigFile(targetFile)
 
 	data, err := storage.ReadOrMigrateFile(targetFile)
 	if err == nil {
@@ -255,6 +252,13 @@ func ImportNodeFromClipboard() {
 }
 
 var CurrentConfigFile string = "config.yml"
+
+func SetActiveConfigFile(fileName string) {
+	CurrentConfigFile = fileName
+	if fileName != "" {
+		_ = storage.Write("last_active_config_file", []byte(fileName))
+	}
+}
 
 func RefreshNodeMenu(newNodes []protocol.Node) {
 	if common.NodeMenuCancel != nil {
@@ -390,7 +394,7 @@ func RefreshSupplierMenu() {
 				case <-mSw.ClickedCh:
 					nodes, err := protocol.ParseNodes(s.FileName)
 					if err == nil && len(nodes) > 0 {
-						CurrentConfigFile = s.FileName
+						SetActiveConfigFile(s.FileName)
 						common.AllNodes = nodes
 
 						for _, mi := range common.SupplierMenuItems {
@@ -436,7 +440,7 @@ func RefreshSupplierMenu() {
 					if CurrentConfigFile == s.FileName {
 						// 如果删除的是当前正在使用的，则清空当前状态
 						common.AllNodes = nil
-						CurrentConfigFile = ""
+						SetActiveConfigFile("")
 						if common.MCurrentNode != nil {
 							common.MCurrentNode.SetTitle("📍 当前节点: [未选择]")
 						}

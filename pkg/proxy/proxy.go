@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"high-mae/pkg/common"
+	"high-mae/pkg/storage"
+	"high-mae/pkg/utils"
 
 	"context"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"high-mae/protocol"
@@ -28,6 +31,18 @@ import (
 var currentBox *box.Box
 var cancelAnyTLS context.CancelFunc
 
+var (
+	globalRegistryContext context.Context
+	globalRegistryOnce    sync.Once
+)
+
+func getRegistryContext() context.Context {
+	globalRegistryOnce.Do(func() {
+		globalRegistryContext = include.Context(context.Background())
+	})
+	return globalRegistryContext
+}
+
 func SwitchNode(node protocol.Node) {
 	if common.MCurrentNode != nil {
 		common.MCurrentNode.SetTitle(fmt.Sprintf("📍 当前节点: [%s] %s", strings.ToUpper(node.Type), node.Name))
@@ -37,13 +52,26 @@ func SwitchNode(node protocol.Node) {
 	defer common.ClientMu.Unlock()
 
 	// 🚀 修复 1：使用智能解析函数，防止给原本就是 IP 的地址做二次 DNS 污染解析
-	newIP := ResolveDirect(node.Server)
+	newIP := ResolveNodeServer(node)
+	var realIP string
+	if common.IsTunModeOn {
+		realIP = common.RealLocalIPBeforeTun
+		if realIP == "" {
+			realIP = utils.GetRealLocalIP()
+		}
+	}
 
 	common.GlobalNodeServer = node.Server
 	common.GlobalNodeIP = newIP
+	common.ActiveNode = node
 	common.ActiveNodeName = node.Name
 
+	if node.Name != "" {
+		_ = storage.Write("last_active_node_name", []byte(node.Name))
+	}
+
 	// 🚀 修复 2：彻底清理上一个节点的残留资源（无论是 Sing-box 还是 AnyTLS）
+	ClearNodeClientsCache()
 	if currentBox != nil {
 		currentBox.Close()
 		currentBox = nil
@@ -65,7 +93,11 @@ func SwitchNode(node protocol.Node) {
 	// 专门处理 AnyTLS 节点
 	// ==========================================
 	if node.Type == "anytls" {
-		dialer := &net.Dialer{Timeout: 10 * time.Second}
+		var localAddr *net.TCPAddr
+		if realIP != "" && realIP != common.TunIP {
+			localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
+		}
+		dialer := &net.Dialer{Timeout: 10 * time.Second, LocalAddr: localAddr}
 		dialOut := func(ctx context.Context) (net.Conn, error) {
 			dialHost := node.Server
 			if newIP != "" {
@@ -109,7 +141,7 @@ func SwitchNode(node protocol.Node) {
 	}
 
 	if node.Type == "mieru" {
-		newClient, err := newMieruClientAdapter(node)
+		newClient, err := newMieruSocks5Adapter(node, false)
 		if err != nil {
 			log.Printf("Mieru Client 创建失败: %v", err)
 			return
@@ -129,6 +161,7 @@ func SwitchNode(node protocol.Node) {
 			Password:       node.Password,
 			SNI:            node.SNI,
 			SkipCertVerify: node.SkipCertVerify,
+			LocalIP:        realIP,
 		}
 		common.ActiveClient = adapter
 		restartTunAfterNodeSwitch()
@@ -144,7 +177,7 @@ func SwitchNode(node protocol.Node) {
 
 	b, err := box.New(box.Options{
 		Options: opts,
-		Context: include.Context(context.Background()),
+		Context: getRegistryContext(),
 	})
 	if err != nil {
 		log.Printf("启动 Sing-Box 引擎失败: %v", err)
@@ -168,8 +201,10 @@ func restartTunAfterNodeSwitch() {
 	// SwitchNode 持有 common.ClientMu 写锁，而 RestartSingBoxTun → startTunLocked
 	// 会尝试获取 common.ClientMu 读锁，导致 RWMutex 死锁。
 	// 使用 goroutine 确保写锁释放后再重启 TUN。
+	nodeServer := common.GlobalNodeServer
+	nodeIP := common.GlobalNodeIP
 	go func() {
-		if err := RestartSingBoxTun(); err != nil {
+		if err := RestartSingBoxTun(nodeServer, nodeIP); err != nil {
 			log.Printf("重启 sing-box TUN 失败: %v", err)
 		}
 	}()
@@ -198,9 +233,11 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		if fingerprint == "" {
 			fingerprint = "chrome"
 		}
-		tls.UTLS = &option.OutboundUTLSOptions{
-			Enabled:     true,
-			Fingerprint: fingerprint,
+		if node.Type != "tuic" && node.Type != "hysteria2" && node.Type != "hy2" && node.Type != "naive" {
+			tls.UTLS = &option.OutboundUTLSOptions{
+				Enabled:     true,
+				Fingerprint: fingerprint,
+			}
 		}
 		if node.RealityOpts != nil && node.RealityOpts.PublicKey != "" {
 			tls.Reality = &option.OutboundRealityOptions{
@@ -228,6 +265,9 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 	}
 	var outbound option.Outbound
 	outbound.Tag = "proxy"
+
+	dialerOpts := option.DialerOptions{}
+
 	switch node.Type {
 	case "tuic":
 		outbound.Type = "tuic"
@@ -246,6 +286,7 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 			CongestionControl: cc,
 			UDPRelayMode:      udpMode,
 			ZeroRTTHandshake:  node.ReduceRTT,
+			DialerOptions:     dialerOpts,
 		}
 		opts.TLS = makeTLS()
 		if len(opts.TLS.ALPN) == 0 {
@@ -258,6 +299,7 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 			ServerOptions: serverOpts,
 			UUID:          node.UUID,
 			Flow:          node.Flow,
+			DialerOptions: dialerOpts,
 		}
 		if node.TLS || node.Tls || node.RealityOpts != nil {
 			opts.TLS = makeTLS()
@@ -292,6 +334,13 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		opts := option.Hysteria2OutboundOptions{
 			ServerOptions: serverOpts,
 			Password:      node.Password,
+			DialerOptions: dialerOpts,
+		}
+		if node.Obfs != "" {
+			opts.Obfs = &option.Hysteria2Obfs{
+				Type:     node.Obfs,
+				Password: node.ObfsPassword,
+			}
 		}
 		opts.TLS = makeTLS()
 		outbound.Options = &opts
@@ -306,6 +355,7 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 			UUID:          node.UUID,
 			AlterId:       node.AlterId,
 			Security:      cipher,
+			DialerOptions: dialerOpts,
 		}
 		if node.TLS || node.Tls {
 			opts.TLS = makeTLS()
@@ -364,8 +414,34 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		opts := option.TrojanOutboundOptions{
 			ServerOptions: serverOpts,
 			Password:      node.Password,
+			DialerOptions: dialerOpts,
 		}
 		opts.TLS = makeTLS()
+		outbound.Options = &opts
+	case "naive":
+		outbound.Type = "naive"
+		opts := option.NaiveOutboundOptions{
+			ServerOptions:         serverOpts,
+			DialerOptions:         dialerOpts,
+			Username:              node.Username,
+			Password:              node.Password,
+			InsecureConcurrency:   node.InsecureConcurrency,
+			QUIC:                  node.QUIC,
+			QUICCongestionControl: normalizeNaiveQUICCongestion(node.QUICCongestion),
+		}
+		if len(node.ExtraHeaders) > 0 {
+			headers := make(badoption.HTTPHeader)
+			for k, v := range node.ExtraHeaders {
+				headers[k] = badoption.Listable[string]{v}
+			}
+			opts.ExtraHeaders = headers
+		}
+		opts.TLS = &option.OutboundTLSOptions{
+			Enabled: true,
+		}
+		if !node.DisableSNI {
+			opts.TLS.ServerName = sni
+		}
 		outbound.Options = &opts
 	case "ss", "shadowsocks":
 		outbound.Type = "shadowsocks"
@@ -377,11 +453,15 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 			ServerOptions: serverOpts,
 			Method:        method,
 			Password:      node.Password,
+			DialerOptions: dialerOpts,
 		}
 		outbound.Options = &opts
 	case "http", "https":
 		outbound.Type = "http"
-		opts := option.HTTPOutboundOptions{ServerOptions: serverOpts}
+		opts := option.HTTPOutboundOptions{
+			ServerOptions: serverOpts,
+			DialerOptions: dialerOpts,
+		}
 		if node.Username != "" || node.Password != "" {
 			opts.Username = node.Username
 			opts.Password = node.Password
@@ -398,6 +478,7 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		outbound.Type = "socks"
 		opts := option.SOCKSOutboundOptions{
 			ServerOptions: serverOpts,
+			DialerOptions: dialerOpts,
 		}
 		if node.Username != "" || node.Password != "" {
 			opts.Username = node.Username
@@ -414,6 +495,23 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 		},
 		Outbounds: []option.Outbound{outbound},
 	}, nil
+}
+
+func normalizeNaiveQUICCongestion(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "default":
+		return ""
+	case "bbr", "tbbr":
+		return "bbr"
+	case "bbrv2", "bbr2", "b2on":
+		return "bbr2"
+	case "cubic", "qbic":
+		return "cubic"
+	case "reno":
+		return "reno"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
 }
 
 func StartAnyTLSHttpServer() {
@@ -441,3 +539,160 @@ func (s *SingBoxAdapter) CreateProxy(ctx context.Context, dest metadata.Socksadd
 }
 
 // Helpers are provided by other files in the proxy package (e.g. latency.go)
+
+var (
+	nodeClientsMu sync.Mutex
+	nodeClients   = make(map[string]common.GenericClient)
+)
+
+type anytlsCloserAdapter struct {
+	common.GenericClient
+	cancel context.CancelFunc
+}
+
+func (a *anytlsCloserAdapter) Close() error {
+	a.cancel()
+	if closer, ok := a.GenericClient.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+func ClearNodeClientsCache() {
+	nodeClientsMu.Lock()
+	defer nodeClientsMu.Unlock()
+	for name, client := range nodeClients {
+		if closer, ok := client.(io.Closer); ok {
+			closer.Close()
+		}
+		delete(nodeClients, name)
+	}
+}
+
+func CreateNodeClient(node protocol.Node) (common.GenericClient, error) {
+	newIP := ResolveNodeServer(node)
+	var realIP string
+	if common.IsTunModeOn {
+		realIP = common.RealLocalIPBeforeTun
+		if realIP == "" {
+			realIP = utils.GetRealLocalIP()
+		}
+	}
+
+	if node.Type == "anytls" {
+		var localAddr *net.TCPAddr
+		if realIP != "" && realIP != common.TunIP {
+			localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
+		}
+		dialer := &net.Dialer{Timeout: 10 * time.Second, LocalAddr: localAddr}
+		dialOut := func(ctx context.Context) (net.Conn, error) {
+			dialHost := node.Server
+			if newIP != "" {
+				dialHost = newIP
+			}
+			nodeAddr := net.JoinHostPort(dialHost, fmt.Sprint(node.Port))
+			conn, err := dialer.DialContext(ctx, "tcp", nodeAddr)
+			if err != nil {
+				return nil, err
+			}
+			sni := node.SNI
+			if sni == "" {
+				sni = node.Server
+			}
+			tlsConfig := &utls.Config{ServerName: sni, InsecureSkipVerify: node.SkipCertVerify}
+			tlsConn := utls.UClient(conn, tlsConfig, utls.HelloFirefox_Auto)
+			if err := tlsConn.HandshakeContext(ctx); err != nil {
+				conn.Close()
+				return nil, err
+			}
+			return tlsConn, nil
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		newClient, err := sing_anytls.NewClient(ctx, sing_anytls.ClientConfig{
+			Password:       node.Password,
+			MinIdleSession: 1,
+			DialOut:        anytls_util.DialOutFunc(dialOut),
+			Logger:         dummyLogger{},
+		})
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		return &anytlsCloserAdapter{GenericClient: newClient, cancel: cancel}, nil
+	}
+
+	if node.Type == "mieru" {
+		newClient, err := newMieruSocks5Adapter(node, false)
+		if err != nil {
+			return nil, err
+		}
+		return newClient, nil
+	}
+
+	if (node.Type == "socks5" || node.Type == "socks") && (node.TLS || node.Tls) {
+		adapter := &Socks5TLSAdapter{
+			Server:         node.Server,
+			ResolvedIP:     newIP,
+			Port:           node.Port,
+			Username:       node.Username,
+			Password:       node.Password,
+			SNI:            node.SNI,
+			SkipCertVerify: node.SkipCertVerify,
+			LocalIP:        realIP,
+		}
+		return adapter, nil
+	}
+
+	opts, err := buildSingBoxOptions(node, newIP)
+	if err != nil {
+		return nil, err
+	}
+
+	b, err := box.New(box.Options{
+		Options: opts,
+		Context: getRegistryContext(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := b.Start(); err != nil {
+		b.Close()
+		return nil, err
+	}
+	return &SingBoxAdapter{Instance: b}, nil
+}
+
+func GetNodeClient(node protocol.Node) (common.GenericClient, error) {
+	nodeClientsMu.Lock()
+	defer nodeClientsMu.Unlock()
+
+	if client, exists := nodeClients[node.Name]; exists {
+		return client, nil
+	}
+
+	client, err := CreateNodeClient(node)
+	if err != nil {
+		return nil, err
+	}
+	nodeClients[node.Name] = client
+	return client, nil
+}
+
+func GetNodeForRoute(action string) (protocol.Node, bool) {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return protocol.Node{}, false
+	}
+	for _, n := range common.AllNodes {
+		if strings.EqualFold(n.Name, action) {
+			return n, true
+		}
+	}
+	for _, n := range common.AllNodes {
+		if strings.EqualFold(n.Group, action) {
+			return n, true
+		}
+	}
+	return protocol.Node{}, false
+}
