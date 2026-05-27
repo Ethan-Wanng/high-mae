@@ -12,7 +12,8 @@ tmp_probe_mieru_ua.go
 *.bak
 *.old
 *.go.*
-high_mae.db
+*.db
+wing.db
 config.yml
 sub_*.yml
 group_*.yml
@@ -25,11 +26,11 @@ traffic_sessions.json
 test_reg.go
 bin/*.exe
 bin/
-build/bin/HighMae.exe
-HighMae.exe
+build/bin/wing.exe
+wing.exe
 libcronet.dll
-cmd/high-mae/bin/tun2socks.exe
-cmd/high-mae/bin/wintun.dll
+cmd/wing/bin/tun2socks.exe
+cmd/wing/bin/wintun.dll
 test_dns.go
 test_prefix.go
 *.exe

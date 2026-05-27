@@ -94,7 +94,7 @@ func main() {
 
 		dir := filepath.Base(filepath.Dir(path))
 		currentPkg := dir
-		if currentPkg == "high-mae" {
+		if currentPkg == "wing" {
 			currentPkg = "main"
 		}
 
@@ -128,7 +128,7 @@ func main() {
 		if len(needs) > 0 {
 			importList := []string{}
 			for pkg := range needs {
-				importList = append(importList, fmt.Sprintf("\t\"high-mae/pkg/%s\"", pkg))
+				importList = append(importList, fmt.Sprintf("\t\"wing/pkg/%s\"", pkg))
 			}
 
 			if strings.Contains(content, "import (") {
@@ -139,7 +139,7 @@ func main() {
 			}
 		}
 
-		content = strings.ReplaceAll(content, "\"high-mae/ins\"", "")
+		content = strings.ReplaceAll(content, "\"wing/ins\"", "")
 
 		return os.WriteFile(path, []byte(content), 0644)
 	})

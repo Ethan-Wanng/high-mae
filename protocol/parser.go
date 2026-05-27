@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
-	"high-mae/pkg/secure"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"wing/pkg/secure"
 
 	"gopkg.in/yaml.v3"
 )
@@ -157,7 +157,7 @@ func tryBase64Variants(s string) ([]byte, bool) {
 }
 
 func LoadInput(input string) ([]byte, error) {
-	return LoadInputWithUserAgent(input, "high-mae/1.0")
+	return LoadInputWithUserAgent(input, "wing/1.0")
 }
 
 func LoadInputWithUserAgent(input string, userAgent string) ([]byte, error) {
@@ -186,7 +186,7 @@ func LoadInputWithUserAgentInfo(input string, userAgent string) (LoadInputResult
 
 		// 这里保留正常请求头，不做“伪装绕过”
 		if userAgent == "" {
-			userAgent = "high-mae/1.0"
+			userAgent = "wing/1.0"
 		}
 		req.Header.Set("User-Agent", userAgent)
 		req.Header.Set("Accept", "*/*")

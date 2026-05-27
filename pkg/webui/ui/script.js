@@ -232,11 +232,7 @@ async function selectNodeGroup(fileName) {
         return;
     }
     selectedNodeGroupFile = fileName;
-    if (nodeGroupMode === "aggregate") {
-        await switchAggregateGroup(fileName);
-    } else {
-        await switchSupplier(fileName);
-    }
+    renderNodes();
 }
 
 

@@ -2,9 +2,9 @@ package common
 
 import (
 	"context"
-	"high-mae/protocol"
 	"net"
 	"sync"
+	"wing/protocol"
 
 	"github.com/getlantern/systray"
 

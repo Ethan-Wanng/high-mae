@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"high-mae/pkg/proxy"
-	"high-mae/pkg/sub"
-	"high-mae/protocol"
+	"wing/pkg/proxy"
+	"wing/pkg/sub"
+	"wing/protocol"
 )
 
 // TestParseSubscriptionLink 测试传入订阅链接并解析节点
@@ -26,7 +26,7 @@ func TestParseSubscriptionLink(t *testing.T) {
 	nodes, traffic, err := sub.ParseSubscriptionWithInfo(link)
 	if err != nil {
 		t.Logf("直接解析失败 (可能是由于 DNS 或网络问题: %v)，尝试使用本地代理中转...", err)
-		
+
 		// 备用方案：如果本地高魅客户端正在运行，通过本地 HTTP 代理 127.0.0.1:10808 获取
 		proxyUrl, parseErr := url.Parse("http://127.0.0.1:10808")
 		if parseErr == nil {

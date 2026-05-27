@@ -1,8 +1,8 @@
 package proxy
 
 import (
-	"high-mae/pkg/common"
-	"high-mae/pkg/utils"
+	"wing/pkg/common"
+	"wing/pkg/utils"
 
 	"context"
 	"fmt"
@@ -11,13 +11,13 @@ import (
 	utls "github.com/refraction-networking/utls"
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing/common/metadata"
-	"high-mae/protocol"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+	"wing/protocol"
 )
 
 // resolveDirect 智能解析服务器地址为真实 IP

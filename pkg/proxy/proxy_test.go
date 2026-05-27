@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"high-mae/protocol"
+	"wing/protocol"
 
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json/badoption"

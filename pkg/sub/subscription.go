@@ -1,10 +1,10 @@
 package sub
 
 import (
-	"high-mae/pkg/common"
-	"high-mae/pkg/proxy"
-	"high-mae/pkg/storage"
-	"high-mae/pkg/utils"
+	"wing/pkg/common"
+	"wing/pkg/proxy"
+	"wing/pkg/storage"
+	"wing/pkg/utils"
 
 	"context"
 	"encoding/json"
@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/getlantern/systray"
-	"high-mae/protocol"
+	"wing/protocol"
 
 	"gopkg.in/yaml.v3"
 
@@ -548,7 +548,7 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 	var traffic *SubscriptionTraffic
 	if isRemoteSubscription(input) {
 		userAgents := []string{
-			"high-mae/1.0",
+			"wing/1.0",
 			"ClashMeta",
 			"Clash.Meta",
 			"Clash",

@@ -1,4 +1,4 @@
-# High-Mae 构建脚本
+# wing 构建脚本
 # 使用方法: .\mk.ps1 build
 
 # 核心插件标签
@@ -14,7 +14,7 @@ function Protect-LegacyGoModCache {
         $legacyGoMod = Join-Path $legacyGoModCache "go.mod"
         if (-not (Test-Path $legacyGoMod)) {
             @"
-module high-mae/gomodcache2
+module wing/gomodcache2
 
 go 1.25.0
 "@ | Set-Content -LiteralPath $legacyGoMod -Encoding ASCII
@@ -73,7 +73,7 @@ switch ($args[0]) {
     "build" {
         Copy-CronetDll
         Write-Host "🚀 正在进行 Wails 桌面应用隐私保护构建..." -ForegroundColor Cyan
-        $outputExe = Join-Path $repoRoot "build\bin\HighMae.exe"
+        $outputExe = Join-Path $repoRoot "build\bin\wing.exe"
 
         Invoke-WithProjectGoCache {
             wails build -tags $tags -ldflags "-s -w"
@@ -82,10 +82,10 @@ switch ($args[0]) {
             throw "Wails 构建失败，退出码: $LASTEXITCODE"
         }
         if (Test-Path $outputExe) {
-            Copy-Item $outputExe -Destination (Join-Path $repoRoot "HighMae.exe") -Force
-            Write-Host "✅ Wails 桌面应用构建完成: HighMae.exe" -ForegroundColor Green
+            Copy-Item $outputExe -Destination (Join-Path $repoRoot "wing.exe") -Force
+            Write-Host "✅ Wails 桌面应用构建完成: wing.exe" -ForegroundColor Green
         } else {
-            throw "编译失败: 未能在 build\bin 中找到 HighMae.exe"
+            throw "编译失败: 未能在 build\bin 中找到 wing.exe"
         }
     }
     "test" {

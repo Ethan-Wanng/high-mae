@@ -1,8 +1,8 @@
 package proxy
 
 import (
-	"high-mae/pkg/common"
-	"high-mae/pkg/utils"
+	"wing/pkg/common"
+	"wing/pkg/utils"
 
 	"context"
 	"encoding/binary"

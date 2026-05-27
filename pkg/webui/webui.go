@@ -1,18 +1,17 @@
 package webui
 
 import (
-	"high-mae/pkg/common"
-	"high-mae/pkg/proxy"
-	"high-mae/pkg/routing"
-	"high-mae/pkg/stats"
-	"high-mae/pkg/storage"
-	"high-mae/pkg/sub"
-	"high-mae/pkg/utils"
+	"wing/pkg/common"
+	"wing/pkg/proxy"
+	"wing/pkg/routing"
+	"wing/pkg/stats"
+	"wing/pkg/storage"
+	"wing/pkg/sub"
+	"wing/pkg/utils"
 
 	"context"
 	"encoding/json"
 	"fmt"
-	"high-mae/protocol"
 	"net/http"
 	"os"
 	"runtime"
@@ -22,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"wing/protocol"
 )
 
 var (
@@ -833,7 +833,7 @@ func runBandwidthSample(client *http.Client, targetURL string, timeout time.Dura
 	defer cancel()
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-	req.Header.Set("User-Agent", "high-mae-speedtest/1.0")
+	req.Header.Set("User-Agent", "wing-speedtest/1.0")
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {

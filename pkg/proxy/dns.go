@@ -1,9 +1,9 @@
 package proxy
 
 import (
-	"high-mae/pkg/common"
-	"high-mae/pkg/storage"
-	"high-mae/pkg/utils"
+	"wing/pkg/common"
+	"wing/pkg/storage"
+	"wing/pkg/utils"
 
 	"context"
 	"encoding/json"

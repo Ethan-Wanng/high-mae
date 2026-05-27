@@ -1,4 +1,4 @@
-module high-mae
+module wing
 
 go 1.25.0
 

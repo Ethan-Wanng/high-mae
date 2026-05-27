@@ -8,10 +8,10 @@ import (
 	"time"
 
 	mieruClient "github.com/enfein/mieru/v3/apis/client"
+	mieruCommon "github.com/enfein/mieru/v3/apis/common"
 	mieruConstant "github.com/enfein/mieru/v3/apis/constant"
 	mieruModel "github.com/enfein/mieru/v3/apis/model"
 	mieruTraffic "github.com/enfein/mieru/v3/apis/trafficpattern"
-	mieruCommon "github.com/enfein/mieru/v3/apis/common"
 	mieruAppctlCommon "github.com/enfein/mieru/v3/pkg/appctl/appctlcommon"
 	mieruPB "github.com/enfein/mieru/v3/pkg/appctl/appctlpb"
 	mieruProtocol "github.com/enfein/mieru/v3/pkg/protocol"
@@ -19,9 +19,9 @@ import (
 	"github.com/sagernet/sing/common/metadata"
 	"google.golang.org/protobuf/proto"
 
-	"high-mae/pkg/common"
-	"high-mae/pkg/utils"
-	"high-mae/protocol"
+	"wing/pkg/common"
+	"wing/pkg/utils"
+	"wing/protocol"
 )
 
 type mieruRuntime interface {
@@ -445,4 +445,3 @@ func (r mieruResolver) LookupIP(ctx context.Context, network, host string) ([]ne
 	}
 	return []net.IP{ip}, nil
 }
-

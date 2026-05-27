@@ -12,7 +12,7 @@ import (
 var highMaeInstanceMutex windows.Handle
 
 func AcquireSingleInstanceLock() (bool, error) {
-	name, err := syscall.UTF16PtrFromString(`Local\HighMaeSingleInstance`)
+	name, err := syscall.UTF16PtrFromString(`Local\wingSingleInstance`)
 	if err != nil {
 		return false, err
 	}

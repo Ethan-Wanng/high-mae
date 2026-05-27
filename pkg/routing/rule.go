@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"high-mae/pkg/common"
-	"high-mae/pkg/storage"
+	"wing/pkg/common"
+	"wing/pkg/storage"
 )
 
 var cancelAnyTLS interface{}

@@ -1,7 +1,7 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "High-Mae",
-  "outputfilename": "HighMae",
+  "name": "wing",
+  "outputfilename": "wing",
   "frontend:dir": "pkg/webui/ui",
   "wailsjsdir": "./frontend",
   "author": {

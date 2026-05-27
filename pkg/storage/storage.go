@@ -10,14 +10,14 @@ import (
 	bolt "github.com/sagernet/bbolt"
 )
 
-const DBFile = "high_mae.db"
+const DBFile = "wing.db"
 
 var (
 	dataBucket = []byte("data")
 )
 
 func databasePath() string {
-	if path := strings.TrimSpace(os.Getenv("HIGH_MAE_DB_PATH")); path != "" {
+	if path := strings.TrimSpace(os.Getenv("WING_DB_PATH")); path != "" {
 		return path
 	}
 	return DBFile

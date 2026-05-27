@@ -1,8 +1,8 @@
 package proxy
 
 import (
-	"high-mae/pkg/common"
 	"testing"
+	"wing/pkg/common"
 )
 
 func TestToggleTunModeState(t *testing.T) {

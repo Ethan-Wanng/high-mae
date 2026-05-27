@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
-	"high-mae/pkg/storage"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"wing/pkg/storage"
 )
 
 const MagicHeader = "HMSEC\x01"
@@ -52,7 +52,7 @@ func GetMachineID() string {
 	if id == "" {
 		hostname, _ := os.Hostname()
 		home, _ := os.UserHomeDir()
-		id = hostname + "|" + home + "|high-mae-fallback-key"
+		id = hostname + "|" + home + "|wing-fallback-key"
 	}
 	cachedMachineID = id
 	return id
@@ -137,7 +137,7 @@ func writeFileBestEffortAtomic(filename string, data []byte, perm os.FileMode) e
 	if idx := strings.LastIndexAny(filename, `\/`); idx >= 0 {
 		dir = filename[:idx]
 	}
-	tmp, err := os.CreateTemp(dir, ".high-mae-*")
+	tmp, err := os.CreateTemp(dir, ".wing-*")
 	if err != nil {
 		return os.WriteFile(filename, data, perm)
 	}

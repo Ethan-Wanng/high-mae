@@ -3,9 +3,9 @@ package stats
 import (
 	"fmt"
 	"github.com/getlantern/systray"
-	"high-mae/pkg/common"
 	"sync/atomic"
 	"time"
+	"wing/pkg/common"
 )
 
 func getNetTraffic() (uint64, uint64) {

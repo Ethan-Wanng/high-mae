@@ -1,15 +1,15 @@
 package main
 
 import (
-	"high-mae/pkg/common"
-	"high-mae/pkg/proxy"
-	"high-mae/pkg/routing"
-	"high-mae/pkg/stats"
-	"high-mae/pkg/storage"
-	"high-mae/pkg/sub"
-	"high-mae/pkg/utils"
-	"high-mae/pkg/webui"
-	"high-mae/protocol"
+	"wing/pkg/common"
+	"wing/pkg/proxy"
+	"wing/pkg/routing"
+	"wing/pkg/stats"
+	"wing/pkg/storage"
+	"wing/pkg/sub"
+	"wing/pkg/utils"
+	"wing/pkg/webui"
+	"wing/protocol"
 
 	_ "embed"
 	"fmt"
@@ -34,8 +34,8 @@ func onReady() {
 	defer utils.RecoverPanic("systray ready")
 
 	systray.SetIcon(iconBytes)
-	systray.SetTitle("High Mae")
-	systray.SetTooltip("High Mae")
+	systray.SetTitle("wing")
+	systray.SetTooltip("wing")
 
 	utils.SafeGo("net speed monitor", func() { stats.StartNetSpeedMonitor(nil) })
 
@@ -143,8 +143,8 @@ func onReady() {
 				}
 				stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
 			case <-mAbout.ClickedCh:
-				aboutMsg := "High-Mae v1.2.0 - Windows 桌面代理客户端\n\n" +
-					"High-Mae 集成 sing-box、Mieru Client 与本地 Web 控制面板，支持节点订阅、测速、规则分流、TUN 接管、DNS 分流与 WebRTC 防泄漏。\n\n" +
+				aboutMsg := "wing v1.2.0 - Windows 桌面代理客户端\n\n" +
+					"wing 集成 sing-box、Mieru Client 与本地 Web 控制面板，支持节点订阅、测速、规则分流、TUN 接管、DNS 分流与 WebRTC 防泄漏。\n\n" +
 					"协议支持：Hysteria2、TUIC、VLESS、VMess、Trojan、Shadowsocks、AnyTLS、Naive、Mieru、HTTP/SOCKS 等。\n\n" +
 					"命令行进程规则可按完整命令或命令前缀选择直连/代理，默认预设 go test 直连。该规则作用于进入本地 HTTP 代理的 TCP 请求；ping 等 ICMP 流量需使用 TUN 模式接管。\n\n" +
 					"核心技术栈：\n" +
@@ -154,7 +154,7 @@ func onReady() {
 					"• 控制面板：Go 标准库 (net/http)\n" +
 					"• 网络驱动：sing-box TUN\n\n" +
 					"Created with ❤️ by Ethan-Wanng"
-				utils.ShowWindowsMsgBox("关于 High-Mae", aboutMsg)
+				utils.ShowWindowsMsgBox("关于 wing", aboutMsg)
 			case <-common.MQuit.ClickedCh:
 				isQuitting.Store(true)
 				systray.Quit()
@@ -187,11 +187,11 @@ func main() {
 
 	locked, err := utils.AcquireSingleInstanceLock()
 	if err != nil {
-		utils.ShowWindowsMsgBox("High-Mae", "无法创建单实例锁: "+err.Error())
+		utils.ShowWindowsMsgBox("wing", "无法创建单实例锁: "+err.Error())
 		return
 	}
 	if !locked {
-		utils.ShowWindowsMsgBox("High-Mae", "High-Mae 已经在运行，请从系统托盘打开控制面板。")
+		utils.ShowWindowsMsgBox("wing", "wing 已经在运行，请从系统托盘打开控制面板。")
 		return
 	}
 	defer utils.ReleaseSingleInstanceLock()
@@ -205,7 +205,7 @@ func main() {
 	app := NewApp()
 
 	err = wails.Run(&options.App{
-		Title:             "海魅 High-Mae",
+		Title:             "wing",
 		Width:             1280,
 		Height:            800,
 		DisableResize:     false,

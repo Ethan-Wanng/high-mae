@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"high-mae/pkg/common"
+	"wing/pkg/common"
 
 	"fmt"
 	"os"
@@ -88,7 +88,7 @@ func GetDefaultGatewayAndIP() (gateway string, localIP string) {
 		if len(fields) >= 4 && fields[0] == "0.0.0.0" {
 			gw := fields[2]
 			ip := fields[3]
-			// 只排除 High Mae 自己的 TUN 地址；真实局域网也可能使用 10.0.0.x。
+			// 只排除 wing 自己的 TUN 地址；真实局域网也可能使用 10.0.0.x。
 			if ip != common.TunIP && gw != common.TunIP && ip != "10.0.0.2" && gw != "10.0.0.1" && ip != "172.19.0.1" {
 				return gw, ip
 			}

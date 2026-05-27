@@ -1,10 +1,10 @@
 package proxy
 
 import (
-	"high-mae/pkg/common"
-	"high-mae/pkg/routing"
-	"high-mae/pkg/stats"
-	"high-mae/pkg/utils"
+	"wing/pkg/common"
+	"wing/pkg/routing"
+	"wing/pkg/stats"
+	"wing/pkg/utils"
 
 	"fmt"
 	"github.com/sagernet/sing/common/metadata"

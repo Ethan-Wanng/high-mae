@@ -2,10 +2,10 @@ package stats
 
 import (
 	"encoding/json"
-	"high-mae/pkg/storage"
 	"strings"
 	"sync"
 	"time"
+	"wing/pkg/storage"
 )
 
 type TrafficSession struct {

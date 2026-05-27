@@ -1,6 +1,6 @@
-# High-Mae
+# wing
 
-High-Mae 是一款面向 Windows 的桌面代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，提供节点订阅、测速、规则分流、TUN 接管、DNS 分流、WebRTC 防泄漏和命令行进程规则等能力。
+wing 是一款面向 Windows 的桌面代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，提供节点订阅、测速、规则分流、TUN 接管、DNS 分流、WebRTC 防泄漏和命令行进程规则等能力。
 
 ## 核心特性
 
@@ -43,7 +43,7 @@ go test -> 直连
 
 ### 使用方式
 
-1. 运行 `HighMae.exe`。
+1. 运行 `wing.exe`。
 2. 在桌面窗口或托盘菜单中打开控制面板。
 3. 导入订阅链接或节点分享链接。
 4. 选择节点并开启系统代理；需要接管更多应用流量时开启 TUN。

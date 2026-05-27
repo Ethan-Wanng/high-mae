@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"high-mae/pkg/common"
-	"high-mae/pkg/utils"
+	"wing/pkg/common"
+	"wing/pkg/utils"
 )
 
 //go:embed tun2socks.exe

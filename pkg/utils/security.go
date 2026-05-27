@@ -1,6 +1,6 @@
 package utils
 
-import "high-mae/pkg/secure"
+import "wing/pkg/secure"
 
 // GetMachineID 获取机器唯一标识，用于生成本地加密密钥
 func GetMachineID() string {
