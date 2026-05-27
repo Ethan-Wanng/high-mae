@@ -36,6 +36,9 @@ const TunIP = "10.0.0.2"
 
 // ToggleTunMode 切换 TUN 模式的开/关状态，返回需要展示给用户的消息（空串表示成功）
 func ToggleTunMode() string {
+	networkTransitionMu.Lock()
+	defer networkTransitionMu.Unlock()
+
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
@@ -55,7 +58,8 @@ func ToggleTunMode() string {
 		return "使用虚拟网卡(TUN)需要管理员权限！请以管理员身份运行。"
 	}
 
-	if err := startTunLocked(); err != nil {
+	nodeIP := common.GlobalNodeIP
+	if err := startTunLocked(nodeIP); err != nil {
 		return fmt.Sprintf("启动 TUN 失败: %v", err)
 	}
 
@@ -78,7 +82,7 @@ func RestartSingBoxTun(nodeServer, nodeIP string) error {
 	}
 
 	stopTunLocked()
-	return startTunLocked()
+	return startTunLocked(nodeIP)
 }
 
 // StopSingBoxTun 停止 TUN（程序退出时由 main.go 调用）
@@ -107,14 +111,8 @@ func stopTunLocked() {
 	utils.RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", TunIP)
 
 	routedNodeIP := tunRoutedNodeIP
-	common.ClientMu.RLock()
-	currentNodeIP := common.GlobalNodeIP
-	common.ClientMu.RUnlock()
 	if routedNodeIP != "" {
 		utils.RunHiddenCommand("route", "delete", routedNodeIP, "mask", "255.255.255.255")
-	}
-	if currentNodeIP != "" && currentNodeIP != routedNodeIP {
-		utils.RunHiddenCommand("route", "delete", currentNodeIP, "mask", "255.255.255.255")
 	}
 	tunGateway = ""
 	tunRealLocalIP = ""
@@ -123,8 +121,30 @@ func stopTunLocked() {
 	log.Println("旧 TUN 实例已关闭")
 }
 
+func prepareNodeBypassRouteForSwitch(nodeIP string) func() {
+	if nodeIP == "" {
+		return func() {}
+	}
+
+	tunMu.Lock()
+	defer tunMu.Unlock()
+	if !common.IsTunModeOn || tunGateway == "" || nodeIP == tunRoutedNodeIP {
+		return func() {}
+	}
+
+	utils.RunHiddenCommand("route", "delete", nodeIP, "mask", "255.255.255.255")
+	utils.RunHiddenCommand("route", "add", nodeIP, "mask", "255.255.255.255", tunGateway, "metric", "1")
+	return func() {
+		tunMu.Lock()
+		defer tunMu.Unlock()
+		if tunRoutedNodeIP != nodeIP {
+			utils.RunHiddenCommand("route", "delete", nodeIP, "mask", "255.255.255.255")
+		}
+	}
+}
+
 // startTunLocked 启动一个全新的 TUN Box 实例（调用者必须持有 tunMu）
-func startTunLocked() error {
+func startTunLocked(nodeIP string) error {
 	realGateway := utils.GetDefaultGateway()
 	if realGateway == "" {
 		return fmt.Errorf("无法识别系统的默认网关")
@@ -141,6 +161,9 @@ func startTunLocked() error {
 	if tunRoutedNodeIP != "" {
 		utils.RunHiddenCommand("route", "delete", tunRoutedNodeIP, "mask", "255.255.255.255")
 		tunRoutedNodeIP = ""
+	}
+	if nodeIP != "" {
+		utils.RunHiddenCommand("route", "delete", nodeIP, "mask", "255.255.255.255")
 	}
 
 	if err := ensureTunAssetsLocked(); err != nil {
@@ -166,10 +189,6 @@ func startTunLocked() error {
 	time.Sleep(3 * time.Second) // 增加到 3 秒，防止 wintun 还没初始化完毕导致 netsh 失败
 
 	utils.RunHiddenCommand("netsh", "interface", "ip", "set", "address", "AnyTLS-TUN", "static", TunIP, "255.255.255.0", "10.0.0.1")
-
-	common.ClientMu.RLock()
-	nodeIP := common.GlobalNodeIP
-	common.ClientMu.RUnlock()
 
 	if nodeIP != "" {
 		utils.RunHiddenCommand("route", "add", nodeIP, "mask", "255.255.255.255", realGateway, "metric", "1")
@@ -274,7 +293,7 @@ func reconcileTunRoute() {
 	if gateway != tunGateway || (realLocalIP != "" && realLocalIP != tunRealLocalIP) {
 		log.Printf("TUN 自愈：网络环境变化，重建路由。gateway %s -> %s, localIP %s -> %s", tunGateway, gateway, tunRealLocalIP, realLocalIP)
 		stopTunLocked()
-		if err := startTunLocked(); err != nil {
+		if err := startTunLocked(currentNodeIP); err != nil {
 			log.Printf("TUN 自愈重启失败: %v", err)
 		}
 	}

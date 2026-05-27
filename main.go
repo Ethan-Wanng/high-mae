@@ -121,22 +121,26 @@ func onReady() {
 			case <-mImportLink.ClickedCh:
 				sub.ImportNodeFromClipboard()
 			case <-common.MToggleProxy.ClickedCh:
-				common.IsSystemProxyOn = !common.IsSystemProxyOn
-				utils.SetSystemProxy(common.IsSystemProxyOn)
-				stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
-				if common.IsSystemProxyOn {
-					common.MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
-				} else {
-					common.MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
-				}
+				proxy.RunNetworkTransition(func() {
+					common.IsSystemProxyOn = !common.IsSystemProxyOn
+					utils.SetSystemProxy(common.IsSystemProxyOn)
+					stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
+					if common.IsSystemProxyOn {
+						common.MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
+					} else {
+						common.MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
+					}
+				})
 			case <-common.MToggleMode.ClickedCh:
-				if common.ProxyMode == "Rule" {
-					common.ProxyMode = "Global"
-					common.MToggleMode.SetTitle("🌐 路由模式: [全局代理]")
-				} else {
-					common.ProxyMode = "Rule"
-					common.MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
-				}
+				proxy.RunNetworkTransition(func() {
+					if common.ProxyMode == "Rule" {
+						common.ProxyMode = "Global"
+						common.MToggleMode.SetTitle("🌐 路由模式: [全局代理]")
+					} else {
+						common.ProxyMode = "Rule"
+						common.MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
+					}
+				})
 			case <-common.MToggleTun.ClickedCh:
 				if msg := proxy.ToggleTunMode(); msg != "" {
 					utils.ShowWindowsMsgBox("TUN 模式", msg)

@@ -34,6 +34,7 @@ var cancelAnyTLS context.CancelFunc
 var (
 	globalRegistryContext context.Context
 	globalRegistryOnce    sync.Once
+	networkTransitionMu   sync.Mutex
 )
 
 func getRegistryContext() context.Context {
@@ -43,34 +44,41 @@ func getRegistryContext() context.Context {
 	return globalRegistryContext
 }
 
+func RunNetworkTransition(fn func()) {
+	networkTransitionMu.Lock()
+	defer networkTransitionMu.Unlock()
+	fn()
+}
+
 func SwitchNode(node protocol.Node) {
-	if common.MCurrentNode != nil {
-		common.MCurrentNode.SetTitle(fmt.Sprintf("📍 当前节点: [%s] %s", strings.ToUpper(node.Type), node.Name))
+	networkTransitionMu.Lock()
+	defer networkTransitionMu.Unlock()
+
+	newIP := ResolveNodeServer(node)
+	cleanupBypass := prepareNodeBypassRouteForSwitch(newIP)
+	newClient, err := CreateNodeClientWithResolvedIP(node, newIP)
+	if err != nil {
+		cleanupBypass()
+		log.Printf("节点 %s 初始化失败，保留当前可用节点: %v", node.Name, err)
+		return
 	}
 
 	common.ClientMu.Lock()
-	defer common.ClientMu.Unlock()
-
-	// 🚀 修复 1：使用智能解析函数，防止给原本就是 IP 的地址做二次 DNS 污染解析
-	newIP := ResolveNodeServer(node)
-	var realIP string
-	if common.IsTunModeOn {
-		realIP = common.RealLocalIPBeforeTun
-		if realIP == "" {
-			realIP = utils.GetRealLocalIP()
-		}
-	}
-
+	oldClient := common.ActiveClient
 	common.GlobalNodeServer = node.Server
 	common.GlobalNodeIP = newIP
 	common.ActiveNode = node
 	common.ActiveNodeName = node.Name
+	common.ActiveClient = newClient
+	common.ClientMu.Unlock()
 
 	if node.Name != "" {
 		_ = storage.Write("last_active_node_name", []byte(node.Name))
 	}
+	if common.MCurrentNode != nil {
+		common.MCurrentNode.SetTitle(fmt.Sprintf("📍 当前节点: [%s] %s", strings.ToUpper(node.Type), node.Name))
+	}
 
-	// 🚀 修复 2：彻底清理上一个节点的残留资源（无论是 Sing-box 还是 AnyTLS）
 	ClearNodeClientsCache()
 	if currentBox != nil {
 		currentBox.Close()
@@ -84,112 +92,9 @@ func SwitchNode(node protocol.Node) {
 		currentMieru.Close()
 		currentMieru = nil
 	}
-	if closer, ok := common.ActiveClient.(io.Closer); ok {
-		closer.Close()
+	if closer, ok := oldClient.(io.Closer); ok {
+		_ = closer.Close()
 	}
-	common.ActiveClient = nil
-
-	// ==========================================
-	// 专门处理 AnyTLS 节点
-	// ==========================================
-	if node.Type == "anytls" {
-		var localAddr *net.TCPAddr
-		if realIP != "" && realIP != common.TunIP {
-			localAddr = &net.TCPAddr{IP: net.ParseIP(realIP), Port: 0}
-		}
-		dialer := &net.Dialer{Timeout: 10 * time.Second, LocalAddr: localAddr}
-		dialOut := func(ctx context.Context) (net.Conn, error) {
-			dialHost := node.Server
-			if newIP != "" {
-				dialHost = newIP
-			}
-			nodeAddr := net.JoinHostPort(dialHost, fmt.Sprint(node.Port))
-			conn, err := dialer.DialContext(ctx, "tcp", nodeAddr)
-			if err != nil {
-				return nil, err
-			}
-			sni := node.SNI
-			if sni == "" {
-				sni = node.Server
-			}
-			tlsConfig := &utls.Config{ServerName: sni, InsecureSkipVerify: node.SkipCertVerify}
-			tlsConn := utls.UClient(conn, tlsConfig, utls.HelloFirefox_Auto)
-			if err := tlsConn.HandshakeContext(ctx); err != nil {
-				conn.Close()
-				return nil, err
-			}
-			return tlsConn, nil
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		cancelAnyTLS = cancel
-
-		newClient, err := sing_anytls.NewClient(ctx, sing_anytls.ClientConfig{
-			Password:       node.Password,
-			MinIdleSession: 1,
-			DialOut:        anytls_util.DialOutFunc(dialOut),
-			Logger:         dummyLogger{},
-		})
-		if err != nil {
-			log.Printf("AnyTLS Client 创建失败: %v", err)
-			cancel()
-			return
-		}
-		common.ActiveClient = newClient
-		restartTunAfterNodeSwitch()
-		return
-	}
-
-	if node.Type == "mieru" {
-		newClient, err := newMieruSocks5Adapter(node, false)
-		if err != nil {
-			log.Printf("Mieru Client 创建失败: %v", err)
-			return
-		}
-		currentMieru = newClient
-		common.ActiveClient = newClient
-		restartTunAfterNodeSwitch()
-		return
-	}
-
-	if (node.Type == "socks5" || node.Type == "socks") && (node.TLS || node.Tls) {
-		adapter := &Socks5TLSAdapter{
-			Server:         node.Server,
-			ResolvedIP:     newIP,
-			Port:           node.Port,
-			Username:       node.Username,
-			Password:       node.Password,
-			SNI:            node.SNI,
-			SkipCertVerify: node.SkipCertVerify,
-			LocalIP:        realIP,
-		}
-		common.ActiveClient = adapter
-		restartTunAfterNodeSwitch()
-		return
-	}
-
-	log.Printf("初始化通用代理引擎 [%s] 节点: %s", node.Type, node.Name)
-	opts, err := buildSingBoxOptions(node, newIP)
-	if err != nil {
-		log.Printf("构建 Sing-Box 配置失败: %v", err)
-		return
-	}
-
-	b, err := box.New(box.Options{
-		Options: opts,
-		Context: getRegistryContext(),
-	})
-	if err != nil {
-		log.Printf("启动 Sing-Box 引擎失败: %v", err)
-		return
-	}
-	if err := b.Start(); err != nil {
-		log.Printf("开启 Sing-Box 失败: %v", err)
-		b.Close()
-		return
-	}
-	currentBox = b
-	common.ActiveClient = &SingBoxAdapter{Instance: b}
 	restartTunAfterNodeSwitch()
 }
 
@@ -197,17 +102,15 @@ func restartTunAfterNodeSwitch() {
 	if !common.IsTunModeOn {
 		return
 	}
-	// 🚀 关键修复：必须异步执行！
-	// SwitchNode 持有 common.ClientMu 写锁，而 RestartSingBoxTun → startTunLocked
-	// 会尝试获取 common.ClientMu 读锁，导致 RWMutex 死锁。
-	// 使用 goroutine 确保写锁释放后再重启 TUN。
 	nodeServer := common.GlobalNodeServer
 	nodeIP := common.GlobalNodeIP
-	utils.SafeGo("tun restart after node switch", func() {
-		if err := RestartSingBoxTun(nodeServer, nodeIP); err != nil {
-			log.Printf("重启 sing-box TUN 失败: %v", err)
+	if err := RestartSingBoxTun(nodeServer, nodeIP); err != nil {
+		log.Printf("重启 TUN 失败: %v", err)
+		common.IsTunModeOn = false
+		if common.MToggleTun != nil {
+			common.MToggleTun.SetTitle("🔌 虚拟网卡 (TUN): [已关闭]")
 		}
-	})
+	}
 }
 
 func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options, error) {
@@ -543,6 +446,13 @@ func (s *SingBoxAdapter) CreateProxy(ctx context.Context, dest metadata.Socksadd
 	return def.DialContext(ctx, "tcp", dest)
 }
 
+func (s *SingBoxAdapter) Close() error {
+	if s != nil && s.Instance != nil {
+		s.Instance.Close()
+	}
+	return nil
+}
+
 // Helpers are provided by other files in the proxy package (e.g. latency.go)
 
 var (
@@ -576,6 +486,10 @@ func ClearNodeClientsCache() {
 
 func CreateNodeClient(node protocol.Node) (common.GenericClient, error) {
 	newIP := ResolveNodeServer(node)
+	return CreateNodeClientWithResolvedIP(node, newIP)
+}
+
+func CreateNodeClientWithResolvedIP(node protocol.Node, newIP string) (common.GenericClient, error) {
 	var realIP string
 	if common.IsTunModeOn {
 		realIP = common.RealLocalIPBeforeTun

@@ -11,6 +11,7 @@ let lastDashboardPoll = 0;
 let nodeGroupMode = "subscription";
 let selectedNodeGroupFile = "";
 let switchingNodeIndex = null;
+let pendingActions = new Set();
 
 function escapeHTML(value) {
     return String(value ?? '').replace(/[&<>"']/g, ch => ({
@@ -408,14 +409,27 @@ async function importSubscription() {
 }
 
 async function doAction(type) {
-    const res = await fetch('/api/action?type=' + type, { method: 'POST' });
+    if (pendingActions.has(type)) {
+        showToast('正在切换中，请稍候。', 'info', 1600);
+        loadStatus();
+        return;
+    }
+    pendingActions.add(type);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), type === 'tun' ? 12000 : 5000);
     try {
+        const res = await fetch('/api/action?type=' + type, { method: 'POST', signal: controller.signal });
         const data = await res.json();
         if (data && data.msg) {
             showToast(data.msg, data.ok === false ? 'error' : 'info');
         }
     } catch(e) {}
-    setTimeout(loadStatus, 300);
+    finally {
+        clearTimeout(timeout);
+        setTimeout(() => pendingActions.delete(type), type === 'tun' ? 1500 : 400);
+        setTimeout(loadStatus, 300);
+        if (type === 'tun') setTimeout(loadStatus, 2500);
+    }
 }
 
 async function loadNodes() {
@@ -459,6 +473,7 @@ async function switchNode(idx) {
         if (data.msg) showToast(data.msg, 'info', 1800);
         setTimeout(loadNodes, 500);
         setTimeout(loadNodes, 1800);
+        setTimeout(loadNodes, 4500);
         loadStatus();
     } catch(e) {
         allNodesList = previousNodes;
@@ -468,7 +483,7 @@ async function switchNode(idx) {
         setTimeout(() => {
             switchingNodeIndex = null;
             renderNodes();
-        }, 700);
+        }, 1800);
     }
 }
 

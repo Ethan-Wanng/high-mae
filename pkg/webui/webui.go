@@ -991,28 +991,32 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch actionType {
 	case "proxy":
-		common.IsSystemProxyOn = !common.IsSystemProxyOn
-		utils.SetSystemProxy(common.IsSystemProxyOn)
-		stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
-		if common.MToggleProxy != nil {
-			if common.IsSystemProxyOn {
-				common.MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
-			} else {
-				common.MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
+		proxy.RunNetworkTransition(func() {
+			common.IsSystemProxyOn = !common.IsSystemProxyOn
+			utils.SetSystemProxy(common.IsSystemProxyOn)
+			stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
+			if common.MToggleProxy != nil {
+				if common.IsSystemProxyOn {
+					common.MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
+				} else {
+					common.MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
+				}
 			}
-		}
+		})
 	case "mode":
-		if common.ProxyMode == "Rule" {
-			common.ProxyMode = "Global"
-			if common.MToggleMode != nil {
-				common.MToggleMode.SetTitle("🌐 路由模式: [全局代理]")
+		proxy.RunNetworkTransition(func() {
+			if common.ProxyMode == "Rule" {
+				common.ProxyMode = "Global"
+				if common.MToggleMode != nil {
+					common.MToggleMode.SetTitle("🌐 路由模式: [全局代理]")
+				}
+			} else {
+				common.ProxyMode = "Rule"
+				if common.MToggleMode != nil {
+					common.MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
+				}
 			}
-		} else {
-			common.ProxyMode = "Rule"
-			if common.MToggleMode != nil {
-				common.MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
-			}
-		}
+		})
 	case "tun":
 		if !utils.IsAdmin() {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "开启虚拟网卡(TUN)需要管理员权限！请以管理员身份运行。"})
@@ -1020,7 +1024,10 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		// 标记 TUN 正在切换中，防止轮询期间把 checkbox 闪回旧状态
 		tunTarget := !common.IsTunModeOn
-		tunPending.Store(true)
+		if !tunPending.CompareAndSwap(false, true) {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "TUN 正在切换中，请稍候。"})
+			return
+		}
 		tunPendingState.Store(tunTarget)
 		utils.SafeGo("webui tun toggle", func() {
 			defer tunPending.Store(false)
