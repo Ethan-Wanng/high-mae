@@ -72,8 +72,8 @@ func ToggleTunMode() string {
 	return ""
 }
 
-// RestartSingBoxTun 重启 TUN（在切换节点后由 proxy.go 调用）
-func RestartSingBoxTun(nodeServer, nodeIP string) error {
+// RestartTun 重启 TUN（在切换节点后由 proxy.go 调用）
+func RestartTun(nodeServer, nodeIP string) error {
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
@@ -85,8 +85,8 @@ func RestartSingBoxTun(nodeServer, nodeIP string) error {
 	return startTunLocked(nodeIP)
 }
 
-// StopSingBoxTun 停止 TUN（程序退出时由 main.go 调用）
-func StopSingBoxTun() {
+// StopTun 停止 TUN（程序退出时由 main.go 调用）
+func StopTun() {
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
@@ -100,7 +100,7 @@ func StopSingBoxTun() {
 // 内部实现
 // =====================================================
 
-// stopTunLocked 关闭正在运行的 TUN Box 实例（调用者必须持有 tunMu）
+// stopTunLocked 关闭正在运行的 tun2socks 实例（调用者必须持有 tunMu）
 func stopTunLocked() {
 	if tunCmd != nil && tunCmd.Process != nil {
 		_ = tunCmd.Process.Kill()
@@ -143,7 +143,7 @@ func prepareNodeBypassRouteForSwitch(nodeIP string) func() {
 	}
 }
 
-// startTunLocked 启动一个全新的 TUN Box 实例（调用者必须持有 tunMu）
+// startTunLocked 启动一个全新的 tun2socks 实例（调用者必须持有 tunMu）
 func startTunLocked(nodeIP string) error {
 	realGateway := utils.GetDefaultGateway()
 	if realGateway == "" {

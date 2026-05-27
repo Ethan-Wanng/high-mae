@@ -156,7 +156,7 @@ func onReady() {
 					"• 引擎：sing-box (及定制版 mbox) & Mieru Client\n" +
 					"• 托盘：getlantern/systray\n" +
 					"• 控制面板：Go 标准库 (net/http)\n" +
-					"• 网络驱动：sing-box TUN\n\n" +
+					"• 网络接管：Wintun + tun2socks\n\n" +
 					"Created with ❤️ by Ethan-Wanng"
 				utils.ShowWindowsMsgBox("关于 wing", aboutMsg)
 			case <-common.MQuit.ClickedCh:
@@ -176,7 +176,7 @@ func onExit() {
 		common.IsSystemDNSHijacked = false
 	}
 	if common.IsTunModeOn {
-		proxy.StopSingBoxTun()
+		proxy.StopTun()
 		common.IsTunModeOn = false
 	}
 	common.IsSystemProxyOn = false

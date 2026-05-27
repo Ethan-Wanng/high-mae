@@ -32,7 +32,7 @@ go test -> 直连
 - Mieru 支持：Mieru Client API
 - 控制面板：Go 标准库 `net/http` + 内置静态页面
 - 存储：bbolt 与本地配置文件迁移兼容
-- 网络接管：sing-box TUN
+- 网络接管：Wintun + tun2socks
 
 ## 快速开始
 

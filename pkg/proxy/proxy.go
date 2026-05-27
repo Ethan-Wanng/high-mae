@@ -104,7 +104,7 @@ func restartTunAfterNodeSwitch() {
 	}
 	nodeServer := common.GlobalNodeServer
 	nodeIP := common.GlobalNodeIP
-	if err := RestartSingBoxTun(nodeServer, nodeIP); err != nil {
+	if err := RestartTun(nodeServer, nodeIP); err != nil {
 		log.Printf("重启 TUN 失败: %v", err)
 		common.IsTunModeOn = false
 		if common.MToggleTun != nil {
