@@ -515,7 +515,12 @@ func normalizeNaiveQUICCongestion(value string) string {
 }
 
 func StartAnyTLSHttpServer() {
-	server := &http.Server{Addr: "127.0.0.1:" + common.LocalHttpPort, Handler: &HTTPProxyHandler{}}
+	server := &http.Server{
+		Addr:              "127.0.0.1:" + common.LocalHttpPort,
+		Handler:           &HTTPProxyHandler{},
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
 	server.ListenAndServe()
 }
 

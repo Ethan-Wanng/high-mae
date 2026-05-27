@@ -31,8 +31,8 @@ type TrackingConn struct {
 	net.Conn
 	logID       int64
 	node        string
-	in          uint64
-	out         uint64
+	in          atomic.Uint64
+	out         atomic.Uint64
 	lastLogIn   uint64 // 上次记录日志时的 in 值
 	lastLogOut  uint64 // 上次记录日志时的 out 值
 	lastStatIn  uint64
@@ -44,15 +44,15 @@ func (c *TrackingConn) Read(b []byte) (n int, err error) {
 	if n > 0 {
 		bytes := uint64(n)
 		atomic.AddUint64(&common.GlobalProxyIn, bytes)
-		c.in += bytes
-		if c.in-c.lastStatIn >= updateThreshold {
-			stats.AddSessionTraffic(c.node, c.in-c.lastStatIn, 0)
-			c.lastStatIn = c.in
+		totalIn := c.in.Add(bytes)
+		if totalIn-c.lastStatIn >= updateThreshold {
+			stats.AddSessionTraffic(c.node, totalIn-c.lastStatIn, 0)
+			c.lastStatIn = totalIn
 		}
 		// 限制 UpdateConnLog 调用频率，减少锁竞争
-		if c.in-c.lastLogIn >= updateThreshold {
-			stats.UpdateConnLog(c.logID, c.in, c.out, false)
-			c.lastLogIn = c.in
+		if totalIn-c.lastLogIn >= updateThreshold {
+			stats.UpdateConnLog(c.logID, totalIn, c.out.Load(), false)
+			c.lastLogIn = totalIn
 		}
 	}
 	return
@@ -63,17 +63,21 @@ func (c *TrackingConn) Write(b []byte) (n int, err error) {
 	if n > 0 {
 		bytes := uint64(n)
 		atomic.AddUint64(&common.GlobalProxyOut, bytes)
-		c.out += bytes
-		if c.out-c.lastStatOut >= updateThreshold {
-			stats.AddSessionTraffic(c.node, 0, c.out-c.lastStatOut)
-			c.lastStatOut = c.out
+		totalOut := c.out.Add(bytes)
+		if totalOut-c.lastStatOut >= updateThreshold {
+			stats.AddSessionTraffic(c.node, 0, totalOut-c.lastStatOut)
+			c.lastStatOut = totalOut
 		}
-		if c.out-c.lastLogOut >= updateThreshold {
-			stats.UpdateConnLog(c.logID, c.in, c.out, false)
-			c.lastLogOut = c.out
+		if totalOut-c.lastLogOut >= updateThreshold {
+			stats.UpdateConnLog(c.logID, c.in.Load(), totalOut, false)
+			c.lastLogOut = totalOut
 		}
 	}
 	return
+}
+
+func (c *TrackingConn) Totals() (uint64, uint64) {
+	return c.in.Load(), c.out.Load()
 }
 
 type HTTPProxyHandler struct{}
@@ -111,7 +115,8 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if routeAction == "reject" {
 		http.Error(w, "已根据规则拦截", http.StatusForbidden)
-		stats.AddConnLog(targetAddr, "Blocked")
+		logID := stats.AddConnLog(targetAddr, "Blocked")
+		stats.UpdateConnLog(logID, 0, 0, true)
 		return
 	} else if routeAction == "direct" {
 		nodeUsed = "Direct"
@@ -167,9 +172,10 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	defer func() {
 		tc.Conn.Close()
-		stats.AddSessionTraffic(tc.node, tc.in-tc.lastStatIn, tc.out-tc.lastStatOut)
+		in, out := tc.Totals()
+		stats.AddSessionTraffic(tc.node, in-tc.lastStatIn, out-tc.lastStatOut)
 		if !common.PrivacyMode {
-			stats.UpdateConnLog(logID, tc.in, tc.out, true)
+			stats.UpdateConnLog(logID, in, out, true)
 		}
 	}()
 
@@ -181,7 +187,14 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		return
 	}
-	defer clientConn.Close()
+	var closeOnce sync.Once
+	closeBoth := func() {
+		closeOnce.Do(func() {
+			_ = upstream.Close()
+			_ = clientConn.Close()
+		})
+	}
+	defer closeBoth()
 
 	if req.Method == http.MethodConnect {
 		clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
@@ -198,7 +211,10 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(upstream, "\r\n")
 	}
 
+	uploadDone := make(chan struct{})
 	utils.SafeGo("proxy upload copy", func() {
+		defer close(uploadDone)
+		defer closeBoth()
 		buf := bufferPool.Get().([]byte)
 		defer bufferPool.Put(buf)
 		io.CopyBuffer(upstream, bufrw, buf)
@@ -207,4 +223,6 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)
 	io.CopyBuffer(clientConn, upstream, buf)
+	closeBoth()
+	<-uploadDone
 }
