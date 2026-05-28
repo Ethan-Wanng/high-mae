@@ -27,6 +27,7 @@
 
             <div class="header-actions">
                 <button class="btn-success" onclick="openAddModal()">添加节点</button>
+                <button class="btn-primary" id="btnFreeTraffic" onclick="useFreeTraffic()">获取免费流量</button>
                 <button class="btn-ghost" id="btnImport" onclick="importSubscription()">导入订阅</button>
                 <button class="btn-primary" id="btnTestAll" onclick="testAll()">极速测速</button>
                 <div class="dropdown">
@@ -43,6 +44,7 @@
         <div class="tabs">
             <button class="tab-btn active" onclick="showTab('nodes')">节点选择</button>
             <button class="tab-btn" onclick="showTab('dashboard')">数据看板</button>
+            <button class="tab-btn" onclick="showTab('sitecheck')">网站测试</button>
             <button class="tab-btn" onclick="showTab('settings')">系统设置</button>
         </div>
 
@@ -129,7 +131,35 @@
         </div>
 
 
-        <!-- Tab 3: System Settings -->
+        <div id="tab-sitecheck" class="tab-content">
+            <div class="sitecheck-layout">
+                <div class="log-container sitecheck-panel">
+                    <div class="log-header">
+                        <h3>网站可用性测试</h3>
+                        <button class="btn-primary" id="btnRunSiteTests" onclick="runSiteTests()">测试当前节点</button>
+                    </div>
+                    <div class="sitecheck-summary" id="siteCheckSummary">选择节点后可测试主流 AI、视频、新闻和体育网站。</div>
+                    <div id="siteCheckResults" class="sitecheck-results"></div>
+                </div>
+
+                <div class="log-container sitecheck-panel">
+                    <div class="log-header">
+                        <h3>测试网站</h3>
+                        <button class="btn-ghost" onclick="loadSiteTargets()">刷新</button>
+                    </div>
+                    <div class="sitecheck-form">
+                        <input type="text" id="siteTargetName" placeholder="名称，如 OpenAI">
+                        <input type="text" id="siteTargetCategory" placeholder="分类，如 AI">
+                        <input type="text" id="siteTargetURL" placeholder="https://example.com/">
+                        <button class="btn-success" onclick="addSiteTarget()">添加</button>
+                    </div>
+                    <div id="siteTargetList" class="site-target-list"></div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Tab 4: System Settings -->
         <div id="tab-settings" class="tab-content">
             <div class="settings-layout" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;">
                 <!-- Left Column: Feature Toggles & Subscription Traffic -->
@@ -165,6 +195,42 @@
                     <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg);">
                         <h4 style="margin: 0 0 12px 0; font-size: 14px; color: var(--accent-2); display: flex; align-items: center; gap: 6px;">📦 订阅流量状态</h4>
                         <div class="supplier-traffic" id="supplierTraffic" style="font-size: 13px; color: var(--text-sub); line-height: 1.6; min-height: 40px;"></div>
+                    </div>
+
+                    <div class="log-container auto-select-panel">
+                        <div class="auto-select-header">
+                            <h4>自动选择节点</h4>
+                            <label class="toggle"><input type="checkbox" id="autoSelectEnabled" onchange="setAutoSelectEnabled(this.checked)"><span class="slider"></span></label>
+                        </div>
+                        <div class="auto-select-controls">
+                            <select id="autoSelectScope" onchange="setAutoSelectScope(this.value)">
+                                <option value="all">全部节点</option>
+                                <option value="subscription">当前订阅组</option>
+                                <option value="aggregate">指定聚合组</option>
+                            </select>
+                            <select id="autoSelectAggregate" onchange="setAutoSelectAggregate(this.value)"></select>
+                            <button class="btn-primary" onclick="runAutoSelectNow()">立即选择</button>
+                        </div>
+                        <div class="auto-select-site-rule">
+                            <select id="autoSelectSiteMode" onchange="setAutoSelectSiteMode(this.value)">
+                                <option value="none">不要求网站测试</option>
+                                <option value="any">所选网站任一可用</option>
+                                <option value="all">所选网站全部可用</option>
+                            </select>
+                            <div id="autoSelectSiteList" class="auto-select-site-list"></div>
+                        </div>
+                        <div class="auto-select-rule-form">
+                            <select id="autoSelectRuleType">
+                                <option value="exclude_keyword">不使用包含</option>
+                                <option value="include_region">只选择地区</option>
+                                <option value="include_node">只选择节点</option>
+                                <option value="include_subscription">只选择订阅组</option>
+                                <option value="include_aggregate_group">只选择聚合组</option>
+                            </select>
+                            <input type="text" id="autoSelectRuleValue" placeholder="多个值用逗号分隔，如 美国,日本">
+                            <button class="btn-success" onclick="addAutoSelectRule()">添加规则</button>
+                        </div>
+                        <div id="autoSelectRuleList" class="auto-select-rule-list"></div>
                     </div>
                 </div>
 

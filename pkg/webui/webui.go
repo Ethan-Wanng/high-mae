@@ -1,18 +1,13 @@
 package webui
 
 import (
-	"wing/pkg/common"
-	"wing/pkg/proxy"
-	"wing/pkg/routing"
-	"wing/pkg/stats"
-	"wing/pkg/storage"
-	"wing/pkg/sub"
-	"wing/pkg/utils"
-
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"runtime/debug"
@@ -21,6 +16,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"wing/pkg/common"
+	"wing/pkg/freeflow"
+	"wing/pkg/proxy"
+	"wing/pkg/routing"
+	"wing/pkg/stats"
+	"wing/pkg/storage"
+	"wing/pkg/sub"
+	"wing/pkg/utils"
 	"wing/protocol"
 )
 
@@ -42,6 +46,38 @@ type AggregateGroup struct {
 }
 
 const AggregateGroupsFile = "aggregate_groups.json"
+const SiteTestTargetsFile = "site_test_targets.json"
+const siteTestTimeout = 25 * time.Second
+
+type SiteTestTarget struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Category string `json:"category"`
+	URL      string `json:"url"`
+	Preset   bool   `json:"preset"`
+}
+
+type SiteTestResult struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Category   string `json:"category"`
+	URL        string `json:"url"`
+	OK         bool   `json:"ok"`
+	StatusCode int    `json:"statusCode,omitempty"`
+	LatencyMS  int64  `json:"latencyMs,omitempty"`
+	Message    string `json:"message"`
+}
+
+var presetSiteTargets = []SiteTestTarget{
+	{ID: "preset_chatgpt", Name: "ChatGPT", Category: "AI", URL: "https://chatgpt.com/", Preset: true},
+	{ID: "preset_gemini", Name: "Gemini", Category: "AI", URL: "https://gemini.google.com/", Preset: true},
+	{ID: "preset_claude", Name: "Claude", Category: "AI", URL: "https://claude.ai/", Preset: true},
+	{ID: "preset_tiktok", Name: "TikTok", Category: "视频", URL: "https://www.tiktok.com/", Preset: true},
+	{ID: "preset_youtube", Name: "YouTube", Category: "视频", URL: "https://www.youtube.com/", Preset: true},
+	{ID: "preset_netflix", Name: "Netflix", Category: "视频", URL: "https://www.netflix.com/", Preset: true},
+	{ID: "preset_bbc", Name: "BBC News", Category: "新闻", URL: "https://www.bbc.com/news", Preset: true},
+	{ID: "preset_espn", Name: "ESPN", Category: "体育", URL: "https://www.espn.com/", Preset: true},
+}
 
 func init() {
 	sub.OnSubscriptionNodesUpdated = syncAggregateGroupsForSubscriptionUpdate
@@ -73,6 +109,8 @@ func buildWebUIMux() *http.ServeMux {
 	mux.HandleFunc("/api/add_node", addNodeHandler)
 	mux.HandleFunc("/api/status", getStatusHandler)
 	mux.HandleFunc("/api/action", actionHandler)
+	mux.HandleFunc("/api/site_targets", siteTargetsHandler)
+	mux.HandleFunc("/api/site_test", siteTestHandler)
 	mux.HandleFunc("/api/suppliers", getSuppliersHandler)
 	mux.HandleFunc("/api/switch_supplier", switchSupplierHandler)
 	mux.HandleFunc("/api/update_supplier", updateSupplierHandler)
@@ -86,6 +124,8 @@ func buildWebUIMux() *http.ServeMux {
 	mux.HandleFunc("/api/switch_aggregate_group", switchAggregateGroupHandler)
 	mux.HandleFunc("/api/delete_aggregate_group", deleteAggregateGroupHandler)
 	mux.HandleFunc("/api/import_subscription", importSubscriptionHandler)
+	mux.HandleFunc("/api/free_traffic", freeTrafficHandler)
+	mux.HandleFunc("/api/set_supplier_update_interval", setSupplierUpdateIntervalHandler)
 	mux.HandleFunc("/api/aggregate_group_nodes", aggGroupNodesHandler)
 	mux.HandleFunc("/api/aggregate_group_add_nodes", aggGroupAddNodesHandler)
 	mux.HandleFunc("/api/aggregate_group_remove_node", aggGroupRemoveNodeHandler)
@@ -117,15 +157,17 @@ func StartWebUI() {
 }
 
 type GlobalNodeInfo struct {
-	Index    int    `json:"index"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Latency  int64  `json:"latency"`
-	Speed    int64  `json:"speed"`
-	Active   bool   `json:"active"`
-	Group    string `json:"group"`
-	FileName string `json:"fileName"`
-	SubIndex int    `json:"subIndex"`
+	Index      int    `json:"index"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Latency    int64  `json:"latency"`
+	Speed      int64  `json:"speed"`
+	Active     bool   `json:"active"`
+	Group      string `json:"group"`
+	FileName   string `json:"fileName"`
+	SubIndex   int    `json:"subIndex"`
+	SourceFile string `json:"sourceFile,omitempty"`
+	SourceName string `json:"sourceName,omitempty"`
 }
 
 var (
@@ -152,15 +194,17 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 				speed, _ := spd.(int64)
 
 				newCache = append(newCache, GlobalNodeInfo{
-					Index:    globalIdx,
-					Name:     n.Name,
-					Type:     n.Type,
-					Latency:  latency,
-					Speed:    speed,
-					Active:   n.Name == common.ActiveNodeName,
-					Group:    s.Name,
-					FileName: s.FileName,
-					SubIndex: subIdx,
+					Index:      globalIdx,
+					Name:       n.Name,
+					Type:       n.Type,
+					Latency:    latency,
+					Speed:      speed,
+					Active:     n.Name == common.ActiveNodeName,
+					Group:      s.Name,
+					FileName:   s.FileName,
+					SubIndex:   subIdx,
+					SourceFile: s.FileName,
+					SourceName: n.Name,
 				})
 				globalIdx++
 			}
@@ -177,17 +221,23 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 				latency, _ := lat.(int64)
 				spd, _ := speedCache.Load(globalIdx)
 				speed, _ := spd.(int64)
+				sourceName := n.SourceName
+				if sourceName == "" {
+					sourceName = n.Name
+				}
 
 				newCache = append(newCache, GlobalNodeInfo{
-					Index:    globalIdx,
-					Name:     n.Name,
-					Type:     n.Type,
-					Latency:  latency,
-					Speed:    speed,
-					Active:   n.Name == common.ActiveNodeName,
-					Group:    g.Name,
-					FileName: g.FileName,
-					SubIndex: subIdx,
+					Index:      globalIdx,
+					Name:       n.Name,
+					Type:       n.Type,
+					Latency:    latency,
+					Speed:      speed,
+					Active:     n.Name == common.ActiveNodeName,
+					Group:      g.Name,
+					FileName:   g.FileName,
+					SubIndex:   subIdx,
+					SourceFile: n.SourceFile,
+					SourceName: sourceName,
 				})
 				globalIdx++
 			}
@@ -975,15 +1025,488 @@ func getStatusHandler(w http.ResponseWriter, r *http.Request) {
 		tunState = tunPendingState.Load()
 	}
 	status := map[string]interface{}{
-		"proxy":    common.IsSystemProxyOn,
-		"mode":     common.ProxyMode,
-		"tun":      tunState,
-		"webrtc":   common.IsWebRTCPolicyOn,
-		"speedIn":  stats.CurrentSpeedIn,
-		"speedOut": stats.CurrentSpeedOut,
+		"proxy":       common.IsSystemProxyOn,
+		"mode":        common.ProxyMode,
+		"tun":         tunState,
+		"webrtc":      common.IsWebRTCPolicyOn,
+		"speedIn":     stats.CurrentSpeedIn,
+		"speedOut":    stats.CurrentSpeedOut,
+		"freeTraffic": freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
+}
+
+func freeTrafficHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodGet {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":      true,
+			"traffic": freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
+		})
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	state := freeflow.Snapshot(false)
+	if state.Remaining <= 0 {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "本周免费流量已用完，下周自动恢复。", "traffic": state})
+		return
+	}
+
+	node, err := freeflow.Node()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "免费流量暂时不可用。"})
+		return
+	}
+	proxy.SwitchNode(node)
+	if !common.IsSystemProxyOn {
+		utils.SetSystemProxy(true)
+		common.IsSystemProxyOn = true
+		stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
+		if common.MToggleProxy != nil {
+			common.MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
+		}
+	}
+	if common.MCurrentNode != nil {
+		common.MCurrentNode.SetTitle("📍 当前节点: [免费流量]")
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":      true,
+		"msg":     "免费流量已启用。",
+		"traffic": freeflow.Snapshot(true),
+	})
+}
+
+func siteTargetsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch r.Method {
+	case http.MethodGet:
+		json.NewEncoder(w).Encode(readSiteTestTargets())
+	case http.MethodPost:
+		var target SiteTestTarget
+		if err := json.NewDecoder(r.Body).Decode(&target); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "请求格式错误"})
+			return
+		}
+		target.Name = strings.TrimSpace(target.Name)
+		target.Category = strings.TrimSpace(target.Category)
+		target.URL = strings.TrimSpace(target.URL)
+		if target.Name == "" || target.URL == "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "请输入名称和网址"})
+			return
+		}
+		if target.Category == "" {
+			target.Category = "自定义"
+		}
+		parsed, err := url.Parse(target.URL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "请输入 http 或 https 开头的网址"})
+			return
+		}
+		target.ID = fmt.Sprintf("custom_%d", time.Now().UnixNano())
+		target.Preset = false
+		custom := readCustomSiteTestTargets()
+		custom = append(custom, target)
+		if err := saveCustomSiteTestTargets(custom); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "保存测试网站失败"})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "target": target})
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		if isPresetSiteTarget(id) {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "预设测试网站不能删除"})
+			return
+		}
+		custom := readCustomSiteTestTargets()
+		next := custom[:0]
+		found := false
+		for _, target := range custom {
+			if target.ID == id {
+				found = true
+				continue
+			}
+			next = append(next, target)
+		}
+		if !found {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "测试网站不存在"})
+			return
+		}
+		if err := saveCustomSiteTestTargets(next); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "删除测试网站失败"})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func siteTestHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	common.ClientMu.RLock()
+	activeNode := common.ActiveNode
+	activeName := common.ActiveNodeName
+	common.ClientMu.RUnlock()
+	if strings.TrimSpace(activeName) == "" || strings.TrimSpace(activeNode.Type) == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "请先选择一个节点"})
+		return
+	}
+
+	targets := readSiteTestTargets()
+	targetID := strings.TrimSpace(r.URL.Query().Get("id"))
+	if targetID != "" {
+		filtered := targets[:0]
+		for _, target := range targets {
+			if target.ID == targetID {
+				filtered = append(filtered, target)
+				break
+			}
+		}
+		if len(filtered) == 0 {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "测试网站不存在"})
+			return
+		}
+		targets = filtered
+	}
+	client, cleanup, err := proxy.CreateTempHTTPClient(activeNode)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "当前节点初始化失败: " + err.Error()})
+		return
+	}
+	defer cleanup()
+	client.Timeout = siteTestTimeout
+
+	proxyReady, proxyMsg := verifySiteTestProxy(client)
+	if !proxyReady {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":         false,
+			"node":       activeName,
+			"proxyReady": false,
+			"msg":        proxyMsg,
+		})
+		return
+	}
+
+	results := runSiteTests(client, targets)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":         true,
+		"node":       activeName,
+		"proxyReady": true,
+		"results":    results,
+	})
+}
+
+func verifySiteTestProxy(client *http.Client) (bool, string) {
+	probes := []string{
+		"https://www.gstatic.com/generate_204",
+		"https://cp.cloudflare.com/generate_204",
+		"https://www.apple.com/library/test/success.html",
+	}
+	var lastErr string
+	for _, probeURL := range probes {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		req.Header.Set("User-Agent", "wing-sitecheck/1.0")
+		start := time.Now()
+		resp, err := client.Do(req)
+		latency := time.Since(start).Milliseconds()
+		cancel()
+		if err != nil {
+			lastErr = friendlySiteTestError(err)
+			continue
+		}
+		_, _ = io.CopyN(io.Discard, resp.Body, 512)
+		resp.Body.Close()
+		if resp.StatusCode >= 200 && resp.StatusCode < 500 {
+			return true, fmt.Sprintf("代理链已生效，基础探测 %dms", latency)
+		}
+		lastErr = fmt.Sprintf("基础探测返回 HTTP %d", resp.StatusCode)
+	}
+	if lastErr == "" {
+		lastErr = "基础连通性探测失败"
+	}
+	return false, "当前选择的节点代理未生效或不可用：" + lastErr
+}
+
+func readSiteTestTargets() []SiteTestTarget {
+	targets := make([]SiteTestTarget, 0, len(presetSiteTargets))
+	targets = append(targets, presetSiteTargets...)
+	targets = append(targets, readCustomSiteTestTargets()...)
+	return targets
+}
+
+func readCustomSiteTestTargets() []SiteTestTarget {
+	data, err := storage.ReadOrMigrateFile(SiteTestTargetsFile)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	var targets []SiteTestTarget
+	if err := json.Unmarshal(data, &targets); err != nil {
+		return nil
+	}
+	out := make([]SiteTestTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.ID == "" || target.URL == "" || target.Name == "" || target.Preset {
+			continue
+		}
+		if target.Category == "" {
+			target.Category = "自定义"
+		}
+		out = append(out, target)
+	}
+	return out
+}
+
+func saveCustomSiteTestTargets(targets []SiteTestTarget) error {
+	for i := range targets {
+		targets[i].Preset = false
+	}
+	data, err := json.MarshalIndent(targets, "", "  ")
+	if err != nil {
+		return err
+	}
+	return storage.Write(SiteTestTargetsFile, data)
+}
+
+func isPresetSiteTarget(id string) bool {
+	for _, target := range presetSiteTargets {
+		if target.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func runSiteTests(client *http.Client, targets []SiteTestTarget) []SiteTestResult {
+	results := make([]SiteTestResult, len(targets))
+	sem := make(chan struct{}, 6)
+	var wg sync.WaitGroup
+	for i, target := range targets {
+		wg.Add(1)
+		go func(idx int, t SiteTestTarget) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[idx] = testSiteTarget(client, t)
+		}(i, target)
+	}
+	wg.Wait()
+	return results
+}
+
+func testSiteTarget(client *http.Client, target SiteTestTarget) SiteTestResult {
+	result := SiteTestResult{
+		ID:       target.ID,
+		Name:     target.Name,
+		Category: target.Category,
+		URL:      target.URL,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), siteTestTimeout)
+	defer cancel()
+
+	probe := siteProbe{URL: target.URL}
+	if isGeminiTarget(target) {
+		probe.FallbackURL = "https://gemini.google.com/_/BardChatUi/"
+	}
+	result = runSiteProbe(ctx, client, target, result, probe)
+	return result
+}
+
+type siteProbe struct {
+	URL         string
+	FallbackURL string
+}
+
+func runSiteProbe(ctx context.Context, client *http.Client, target SiteTestTarget, result SiteTestResult, probe siteProbe) SiteTestResult {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probe.URL, nil)
+	if err != nil {
+		result.Message = "网址无效"
+		return result
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	result.LatencyMS = time.Since(start).Milliseconds()
+	if err != nil {
+		result.Message = friendlySiteTestError(err)
+		return result
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+
+	result.StatusCode = resp.StatusCode
+	result.OK, result.Message = evaluateSiteAccess(target, resp.StatusCode, string(body))
+	if shouldRetryGeminiProbe(target, result, string(body), probe.FallbackURL) {
+		fallbackResult := result
+		fallbackResult.URL = probe.FallbackURL
+		fallbackResult.StatusCode = 0
+		fallbackResult.LatencyMS = 0
+		fallbackResult.OK = false
+		fallbackResult.Message = ""
+		return runSiteProbe(ctx, client, target, fallbackResult, siteProbe{URL: probe.FallbackURL})
+	}
+	return result
+}
+
+func shouldRetryGeminiProbe(target SiteTestTarget, result SiteTestResult, body string, fallbackURL string) bool {
+	return isGeminiTarget(target) &&
+		fallbackURL != "" &&
+		!hasRegionUnsupportedSignal(target, body) &&
+		(!result.OK || result.StatusCode >= 400)
+}
+
+func evaluateSiteAccess(target SiteTestTarget, status int, body string) (bool, string) {
+	if hasRegionUnsupportedSignal(target, body) {
+		return false, "地区不支持"
+	}
+	if status == http.StatusUnavailableForLegalReasons {
+		return false, "地区或合规限制"
+	}
+	if isAIProbeTarget(target) && status < 500 {
+		if status >= 400 {
+			return true, "可访问，探测遇到登录或风控页"
+		}
+		return true, siteStatusMessage(status)
+	}
+	return status >= 200 && status < 400, siteStatusMessage(status)
+}
+
+func isAIProbeTarget(target SiteTestTarget) bool {
+	category := strings.ToLower(strings.TrimSpace(target.Category))
+	id := strings.ToLower(strings.TrimSpace(target.ID))
+	host := ""
+	if parsed, err := url.Parse(target.URL); err == nil {
+		host = strings.ToLower(parsed.Host)
+	}
+	return category == "ai" ||
+		strings.Contains(id, "chatgpt") ||
+		strings.Contains(id, "gemini") ||
+		strings.Contains(id, "claude") ||
+		strings.Contains(host, "chatgpt.com") ||
+		strings.Contains(host, "gemini.google.com") ||
+		strings.Contains(host, "claude.ai")
+}
+
+func isGeminiTarget(target SiteTestTarget) bool {
+	id := strings.ToLower(strings.TrimSpace(target.ID))
+	host := ""
+	if parsed, err := url.Parse(target.URL); err == nil {
+		host = strings.ToLower(parsed.Host)
+	}
+	return strings.Contains(id, "gemini") || strings.Contains(host, "gemini.google.com")
+}
+
+func hasRegionUnsupportedSignal(target SiteTestTarget, body string) bool {
+	text := strings.ToLower(body)
+	host := ""
+	if parsed, err := url.Parse(target.URL); err == nil {
+		host = strings.ToLower(parsed.Host)
+	}
+	commonPatterns := []string{
+		"not available in your country",
+		"not available in your region",
+		"not currently supported in your country",
+		"not currently supported in your region",
+		"not supported in your country",
+		"not supported in your region",
+		"your country is not supported",
+		"unsupported_country",
+		"unsupported country",
+		"地区不支持",
+		"不支持你所在的地区",
+		"不支持您所在的地区",
+		"暂不支持你所在",
+		"暂不支持您所在",
+		"所在的地区。敬请期待",
+	}
+	for _, pattern := range commonPatterns {
+		if strings.Contains(text, pattern) {
+			return true
+		}
+	}
+	if strings.Contains(host, "gemini.google.com") {
+		geminiPatterns := []string{
+			"gemini isn’t currently supported",
+			"gemini isn't currently supported",
+			"gemini is not currently supported",
+			"gemini目前不支持",
+			"gemini 目前不支持",
+		}
+		for _, pattern := range geminiPatterns {
+			if strings.Contains(text, pattern) {
+				return true
+			}
+		}
+	}
+	if strings.Contains(host, "chatgpt.com") {
+		openAIPatterns := []string{
+			"openai's services are not available",
+			"openai services are not available",
+			"chatgpt is not available",
+			"chatgpt isn't available",
+		}
+		for _, pattern := range openAIPatterns {
+			if strings.Contains(text, pattern) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func siteStatusMessage(status int) string {
+	switch {
+	case status >= 200 && status < 300:
+		return "可访问"
+	case status >= 300 && status < 400:
+		return "可访问，发生跳转"
+	case status == http.StatusForbidden:
+		return "访问受限"
+	case status == http.StatusTooManyRequests:
+		return "请求被限流"
+	case status == http.StatusUnavailableForLegalReasons:
+		return "地区或合规限制"
+	case status >= 500:
+		return "目标站点或线路异常"
+	default:
+		return fmt.Sprintf("HTTP %d", status)
+	}
+}
+
+func friendlySiteTestError(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "连接超时"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "no such host"):
+		return "DNS 解析失败"
+	case strings.Contains(msg, "handshake"):
+		return "TLS 握手失败"
+	case strings.Contains(msg, "connection refused"):
+		return "连接被拒绝"
+	case strings.Contains(msg, "connection reset"):
+		return "连接被重置"
+	default:
+		return "无法访问"
+	}
 }
 
 func actionHandler(w http.ResponseWriter, r *http.Request) {
@@ -1055,20 +1578,24 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
 	links, _ := sub.ReadSubscriptions()
 	type SupplierInfo struct {
-		Name     string                   `json:"name"`
-		FileName string                   `json:"fileName"`
-		URL      string                   `json:"url"`
-		Active   bool                     `json:"active"`
-		Traffic  *sub.SubscriptionTraffic `json:"traffic,omitempty"`
+		Name                  string                   `json:"name"`
+		FileName              string                   `json:"fileName"`
+		URL                   string                   `json:"url"`
+		Active                bool                     `json:"active"`
+		Traffic               *sub.SubscriptionTraffic `json:"traffic,omitempty"`
+		UpdateIntervalMinutes int64                    `json:"updateIntervalMinutes"`
+		LastUpdatedAt         int64                    `json:"lastUpdatedAt,omitempty"`
 	}
 	var list []SupplierInfo
 	for _, l := range links {
 		list = append(list, SupplierInfo{
-			Name:     l.Name,
-			FileName: l.FileName,
-			URL:      l.URL,
-			Active:   l.FileName == sub.CurrentConfigFile,
-			Traffic:  l.Traffic,
+			Name:                  l.Name,
+			FileName:              l.FileName,
+			URL:                   l.URL,
+			Active:                l.FileName == sub.CurrentConfigFile,
+			Traffic:               l.Traffic,
+			UpdateIntervalMinutes: l.UpdateIntervalMinutes,
+			LastUpdatedAt:         l.LastUpdatedAt,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1129,13 +1656,31 @@ func updateSupplierHandler(w http.ResponseWriter, r *http.Request) {
 		runtime.GC()
 		debug.FreeOSMemory()
 	}
-	if traffic != nil {
-		target.Traffic = traffic
-		_ = sub.UpdateSubscriptionTraffic(target.URL, traffic)
-	}
+	_ = sub.MarkSubscriptionUpdated(target.URL, traffic)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": fmt.Sprintf("成功更新 %d 个节点", len(nodes)), "traffic": traffic})
+}
+
+func setSupplierUpdateIntervalHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	fileName := r.URL.Query().Get("file")
+	minutes, err := strconv.ParseInt(r.URL.Query().Get("minutes"), 10, 64)
+	if err != nil || minutes <= 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "请输入有效的分钟数"})
+		return
+	}
+	if err := sub.SetSubscriptionUpdateInterval(fileName, minutes); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "自动更新间隔已保存"})
 }
 
 func deleteSupplierHandler(w http.ResponseWriter, r *http.Request) {

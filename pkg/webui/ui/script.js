@@ -12,6 +12,14 @@ let nodeGroupMode = "subscription";
 let selectedNodeGroupFile = "";
 let switchingNodeIndex = null;
 let pendingActions = new Set();
+let freeTrafficState = null;
+let siteTargetsCache = [];
+let siteResultsCache = [];
+let testingSiteIds = new Set();
+let autoSelectConfig = null;
+let groupLatencyTesting = new Set();
+let autoSelectTimer = null;
+let autoSelectRunning = false;
 
 function escapeHTML(value) {
     return String(value ?? '').replace(/[&<>"']/g, ch => ({
@@ -32,6 +40,7 @@ async function loadStatus() {
         document.getElementById('chkTun').checked = st.tun;
         document.getElementById('chkWebRTC').checked = st.webrtc;
         document.getElementById('speedMonitor').innerHTML = '↑ ' + st.speedOut + ' &nbsp; ↓ ' + st.speedIn;
+        renderFreeTrafficState(st.freeTraffic);
     } catch(e) {}
 }
 
@@ -47,6 +56,7 @@ function showTab(tabId) {
     if (activeContent) activeContent.classList.add('active');
 
     if (tabId === 'dashboard') loadDashboard();
+    if (tabId === 'sitecheck') loadSiteTargets();
 }
 
 
@@ -78,6 +88,8 @@ function renderNodes() {
             active: !!s.active,
             count: s.nodeCount || s.count || 0,
             traffic: s.traffic,
+            updateIntervalMinutes: s.updateIntervalMinutes,
+            lastUpdatedAt: s.lastUpdatedAt,
             type: "subscription"
         }));
 
@@ -157,9 +169,11 @@ function filterNodeRows(nodes, keyword) {
 function renderSelectedGroupActions(group) {
     if (!group || group.type !== "subscription") return "";
     const file = encodeURIComponent(group.fileName);
+    const interval = Number(group.updateIntervalMinutes || 360);
     return `
         <button class="btn-mini" title="分享订阅" onclick="shareSupplierFile('${file}', event)">分享</button>
         <button class="btn-mini" title="刷新订阅" onclick="updateSupplierFile('${file}', this, event)">刷新</button>
+        <button class="btn-mini" title="自动更新间隔：${interval} 分钟" onclick="setSupplierInterval('${file}', ${interval}, event)">间隔 ${formatInterval(interval)}</button>
         <button class="btn-mini btn-mini-danger" title="删除订阅" onclick="deleteSupplierFile('${file}', event)">删除</button>
     `;
 }
@@ -234,6 +248,7 @@ async function selectNodeGroup(fileName) {
     }
     selectedNodeGroupFile = fileName;
     renderNodes();
+    autoTestSelectedNodeGroup(fileName);
 }
 
 
@@ -302,6 +317,7 @@ async function loadAggregateGroups() {
             if (g.active) opt.selected = true;
             sel.appendChild(opt);
         });
+        renderAutoSelectConfig();
         renderNodes();
     } catch(e) {}
 }
@@ -375,6 +391,47 @@ function renderSupplierTraffic(fileName) {
     `;
 }
 
+function renderFreeTrafficState(state) {
+    const btn = document.getElementById('btnFreeTraffic');
+    if (!btn || !state) return;
+    freeTrafficState = state;
+    const remaining = formatBytes(state.remaining || 0);
+    btn.textContent = state.active ? `免费流量 ${remaining}` : '获取免费流量';
+    btn.disabled = !!state.exceeded;
+    btn.title = state.exceeded ? '本周免费流量已用完，下周自动恢复' : `本周剩余 ${remaining}`;
+
+    const activeNodeEl = document.getElementById('selectedNodeDisplay');
+    if (activeNodeEl && state.active) {
+        activeNodeEl.textContent = '当前节点: 免费流量';
+    }
+}
+
+async function useFreeTraffic() {
+    const btn = document.getElementById('btnFreeTraffic');
+    if (!btn) return;
+    const oldText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '启用中';
+    try {
+        const res = await fetch('/api/free_traffic', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(data.msg || '免费流量已启用', 'success');
+            renderFreeTrafficState(data.traffic);
+            loadStatus();
+            loadNodes();
+        } else {
+            showToast(data.msg || '免费流量暂时不可用', 'error');
+            renderFreeTrafficState(data.traffic);
+        }
+    } catch(e) {
+        showToast('启用免费流量失败', 'error');
+    }
+    if (btn.textContent === '启用中') btn.textContent = oldText;
+    btn.disabled = false;
+    loadStatus();
+}
+
 function showToast(msg, type = 'info', duration = 4000) {
     const container = document.getElementById('toastContainer');
     const toast = document.createElement('div');
@@ -441,7 +498,7 @@ async function loadNodes() {
         const activeNode = allNodesList.find(n => n.active);
         const nodeDisplayEl = document.getElementById('selectedNodeDisplay');
         if (nodeDisplayEl) {
-            nodeDisplayEl.textContent = activeNode ? `当前节点: ${activeNode.name}` : '当前节点: 直连 (Direct)';
+            nodeDisplayEl.textContent = activeNode ? `当前节点: ${activeNode.name}` : (freeTrafficState?.active ? '当前节点: 免费流量' : '当前节点: 直连 (Direct)');
         }
         
         renderNodes();
@@ -493,6 +550,36 @@ async function testSingle(idx) {
     latEl.className = 'latency unknown';
     await fetch('/api/test_single?idx=' + idx, { method: 'POST' });
     loadNodes();
+}
+
+async function autoTestSelectedNodeGroup(fileName) {
+    if (!fileName || groupLatencyTesting.has(fileName)) return;
+    const groupNodes = allNodesList.filter(n => n.fileName === fileName);
+    if (!groupNodes.length) return;
+
+    groupLatencyTesting.add(fileName);
+    groupNodes.forEach(n => {
+        const latEl = document.getElementById('lat-' + n.index);
+        if (latEl) {
+            latEl.textContent = '检测中';
+            latEl.className = 'latency unknown';
+        }
+    });
+
+    const queue = [...groupNodes];
+    const workerCount = Math.min(8, queue.length);
+    async function worker() {
+        while (queue.length) {
+            const node = queue.shift();
+            try {
+                await fetch('/api/test_single?idx=' + node.index, { method: 'POST' });
+            } catch(e) {}
+        }
+    }
+
+    await Promise.all(Array.from({ length: workerCount }, worker));
+    groupLatencyTesting.delete(fileName);
+    await loadNodes();
 }
 
 function formatSpeed(bytesPerSec) {
@@ -592,6 +679,652 @@ function renderDashboardHistory(sessions) {
     `).join('');
 }
 
+async function loadSiteTargets() {
+    try {
+        const res = await fetch('/api/site_targets');
+        siteTargetsCache = await res.json() || [];
+        renderSiteTargets();
+        renderSiteResults();
+        renderAutoSelectConfig();
+    } catch(e) {
+        showToast('测试网站加载失败', 'error');
+    }
+}
+
+function renderSiteTargets() {
+    const list = document.getElementById('siteTargetList');
+    if (!list) return;
+    if (!siteTargetsCache.length) {
+        list.innerHTML = '<div class="empty-state">暂无测试网站。</div>';
+        return;
+    }
+    list.innerHTML = siteTargetsCache.map(target => `
+        <div class="site-target-row">
+            <div class="site-target-main">
+                <span class="site-target-name">${escapeHTML(target.name)}</span>
+                <span class="site-target-category">${escapeHTML(target.category || '自定义')}</span>
+                ${target.preset ? '<span class="site-target-lock">预设</span>' : ''}
+            </div>
+            <div class="site-target-url">${escapeHTML(target.url)}</div>
+            <div class="site-target-actions">
+                <button class="btn-mini" ${testingSiteIds.has(target.id) ? 'disabled' : ''} onclick="runSingleSiteTest('${encodeURIComponent(target.id)}')">${testingSiteIds.has(target.id) ? '测试中' : '测试'}</button>
+                <button class="btn-mini btn-mini-danger" ${target.preset ? 'disabled title="预设网站不能删除"' : ''} onclick="deleteSiteTarget('${encodeURIComponent(target.id)}')">删除</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function addSiteTarget() {
+    const nameEl = document.getElementById('siteTargetName');
+    const categoryEl = document.getElementById('siteTargetCategory');
+    const urlEl = document.getElementById('siteTargetURL');
+    const payload = {
+        name: (nameEl?.value || '').trim(),
+        category: (categoryEl?.value || '').trim() || '自定义',
+        url: (urlEl?.value || '').trim()
+    };
+    if (!payload.name || !payload.url) {
+        showToast('请输入网站名称和网址', 'warning');
+        return;
+    }
+    try {
+        const res = await fetch('/api/site_targets', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.ok) {
+            nameEl.value = '';
+            categoryEl.value = '';
+            urlEl.value = '';
+            showToast('测试网站已添加', 'success');
+            await loadSiteTargets();
+        } else {
+            showToast(data.msg || '添加失败', 'error');
+        }
+    } catch(e) {
+        showToast('添加测试网站失败', 'error');
+    }
+}
+
+async function deleteSiteTarget(encodedId) {
+    const id = decodeURIComponent(encodedId);
+    const target = siteTargetsCache.find(t => t.id === id);
+    if (!target || target.preset) return;
+    if (!confirm('确定删除测试网站「' + target.name + '」吗？')) return;
+    try {
+        const res = await fetch('/api/site_targets?id=' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast('测试网站已删除', 'success');
+            await loadSiteTargets();
+        } else {
+            showToast(data.msg || '删除失败', 'error');
+        }
+    } catch(e) {
+        showToast('删除测试网站失败', 'error');
+    }
+}
+
+async function runSiteTests() {
+    const btn = document.getElementById('btnRunSiteTests');
+    const summary = document.getElementById('siteCheckSummary');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '测试中';
+    }
+    if (summary) summary.textContent = '正在通过当前节点访问测试网站...';
+    siteResultsCache = [];
+    renderSiteResults(true);
+    try {
+        const res = await fetch('/api/site_test', { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) {
+            showToast(data.msg || '网站测试失败', 'error');
+            if (summary) summary.textContent = data.msg || '网站测试失败';
+            return;
+        }
+        siteResultsCache = data.results || [];
+        const okCount = siteResultsCache.filter(r => r.ok).length;
+        if (summary) summary.textContent = `当前节点「${data.node || '未命名'}」可访问 ${okCount} / ${siteResultsCache.length} 个测试网站`;
+        renderSiteResults();
+    } catch(e) {
+        showToast('网站测试请求失败', 'error');
+        if (summary) summary.textContent = '网站测试请求失败';
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '测试当前节点';
+        }
+    }
+}
+
+async function runSingleSiteTest(encodedId) {
+    const id = decodeURIComponent(encodedId);
+    const target = siteTargetsCache.find(t => t.id === id);
+    const summary = document.getElementById('siteCheckSummary');
+    if (!target || testingSiteIds.has(id)) return;
+    testingSiteIds.add(id);
+    renderSiteTargets();
+    upsertSiteResult({
+        id,
+        name: target.name,
+        category: target.category,
+        url: target.url,
+        ok: false,
+        message: '测试中'
+    });
+    renderSiteResults();
+    if (summary) summary.textContent = `正在测试「${target.name}」...`;
+    try {
+        const res = await fetch('/api/site_test?id=' + encodeURIComponent(id), { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) {
+            showToast(data.msg || '单点测试失败', 'error');
+            if (summary) summary.textContent = data.msg || '单点测试失败';
+            return;
+        }
+        const result = (data.results || [])[0];
+        if (result) {
+            upsertSiteResult(result);
+            if (summary) summary.textContent = `当前节点「${data.node || '未命名'}」测试「${result.name}」：${result.ok ? '可访问' : '不可用'}`;
+        }
+        renderSiteResults();
+    } catch(e) {
+        showToast('单点测试请求失败', 'error');
+        if (summary) summary.textContent = '单点测试请求失败';
+    } finally {
+        testingSiteIds.delete(id);
+        renderSiteTargets();
+    }
+}
+
+function upsertSiteResult(result) {
+    const idx = siteResultsCache.findIndex(r => r.id === result.id);
+    if (idx >= 0) {
+        siteResultsCache[idx] = result;
+    } else {
+        siteResultsCache.push(result);
+    }
+}
+
+function renderSiteResults(loading = false) {
+    const el = document.getElementById('siteCheckResults');
+    if (!el) return;
+    if (loading) {
+        el.innerHTML = '<div class="empty-state">正在测试，请稍候...</div>';
+        return;
+    }
+    if (!siteResultsCache.length) {
+        el.innerHTML = '<div class="empty-state">尚未运行测试。</div>';
+        return;
+    }
+    el.innerHTML = siteResultsCache.map(result => `
+        <div class="site-result-row ${result.ok ? 'ok' : 'fail'}">
+            <div class="site-result-status">${result.ok ? '可访问' : '不可用'}</div>
+            <div class="site-result-main">
+                <div>
+                    <span class="site-target-name">${escapeHTML(result.name)}</span>
+                    <span class="site-target-category">${escapeHTML(result.category || '')}</span>
+                </div>
+                <div class="site-target-url">${escapeHTML(result.url)}</div>
+            </div>
+            <div class="site-result-meta">
+                <span>${result.latencyMs ? result.latencyMs + ' ms' : '--'}</span>
+                <span>${escapeHTML(result.message || '')}${result.statusCode ? ' · HTTP ' + result.statusCode : ''}</span>
+            </div>
+        </div>
+    `).join('');
+}
+
+function defaultAutoSelectConfig() {
+    return {
+        enabled: false,
+        scope: 'subscription',
+        aggregateFile: '',
+        siteCheck: {
+            mode: 'none',
+            ids: []
+        },
+        rules: [
+            { id: 'preset_no_hk', type: 'exclude_keyword', value: '香港', label: '不使用香港的节点' }
+        ]
+    };
+}
+
+function loadAutoSelectConfig() {
+    try {
+        const raw = localStorage.getItem('wing_auto_select_config');
+        autoSelectConfig = raw ? JSON.parse(raw) : defaultAutoSelectConfig();
+    } catch(e) {
+        autoSelectConfig = defaultAutoSelectConfig();
+    }
+    if (!autoSelectConfig || !Array.isArray(autoSelectConfig.rules)) {
+        autoSelectConfig = defaultAutoSelectConfig();
+    }
+    if (!autoSelectConfig.scope) autoSelectConfig.scope = 'subscription';
+    if (!autoSelectConfig.aggregateFile) autoSelectConfig.aggregateFile = '';
+    if (!autoSelectConfig.siteCheck || typeof autoSelectConfig.siteCheck !== 'object') {
+        autoSelectConfig.siteCheck = { mode: 'none', ids: [] };
+    }
+    if (!Array.isArray(autoSelectConfig.siteCheck.ids)) autoSelectConfig.siteCheck.ids = [];
+    if (!['none', 'any', 'all'].includes(autoSelectConfig.siteCheck.mode)) autoSelectConfig.siteCheck.mode = 'none';
+    renderAutoSelectConfig();
+}
+
+function saveAutoSelectConfig() {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    localStorage.setItem('wing_auto_select_config', JSON.stringify(autoSelectConfig));
+}
+
+function renderAutoSelectConfig() {
+    const enabledEl = document.getElementById('autoSelectEnabled');
+    const scopeEl = document.getElementById('autoSelectScope');
+    const aggregateEl = document.getElementById('autoSelectAggregate');
+    const siteModeEl = document.getElementById('autoSelectSiteMode');
+    const siteListEl = document.getElementById('autoSelectSiteList');
+    const listEl = document.getElementById('autoSelectRuleList');
+    if (!enabledEl || !scopeEl || !listEl || !autoSelectConfig) return;
+
+    enabledEl.checked = !!autoSelectConfig.enabled;
+    scopeEl.value = autoSelectConfig.scope || 'subscription';
+    if (aggregateEl) {
+        aggregateEl.style.display = autoSelectConfig.scope === 'aggregate' ? '' : 'none';
+        aggregateEl.innerHTML = aggregateGroupsCache.length
+            ? aggregateGroupsCache.map(g => `<option value="${escapeHTML(g.fileName)}">${escapeHTML(g.name)}</option>`).join('')
+            : '<option value="">暂无聚合组</option>';
+        if (autoSelectConfig.aggregateFile && aggregateGroupsCache.some(g => g.fileName === autoSelectConfig.aggregateFile)) {
+            aggregateEl.value = autoSelectConfig.aggregateFile;
+        } else if (aggregateGroupsCache.length) {
+            autoSelectConfig.aggregateFile = aggregateGroupsCache[0].fileName;
+            aggregateEl.value = autoSelectConfig.aggregateFile;
+            saveAutoSelectConfig();
+        }
+    }
+    if (siteModeEl) siteModeEl.value = autoSelectConfig.siteCheck?.mode || 'none';
+    if (siteListEl) {
+        if (!siteTargetsCache.length) {
+            siteListEl.innerHTML = '<div class="auto-select-empty">测试网站加载后可选择。</div>';
+        } else {
+            const ids = new Set(autoSelectConfig.siteCheck?.ids || []);
+            siteListEl.innerHTML = siteTargetsCache.map(target => `
+                <label class="auto-select-check">
+                    <input type="checkbox" ${ids.has(target.id) ? 'checked' : ''} onchange="setAutoSelectSiteTarget('${encodeURIComponent(target.id)}', this.checked)">
+                    <span>${escapeHTML(target.name)}</span>
+                </label>
+            `).join('');
+        }
+    }
+    if (!autoSelectConfig.rules.length) {
+        listEl.innerHTML = '<div class="auto-select-empty">暂无筛选规则</div>';
+        return;
+    }
+    listEl.innerHTML = autoSelectConfig.rules.map(rule => `
+        <div class="auto-select-rule-row">
+            <div>
+                <strong>${escapeHTML(autoSelectRuleLabel(rule))}</strong>
+                <span>${escapeHTML(autoSelectRuleDescription(rule))}</span>
+            </div>
+            <button class="btn-mini btn-mini-danger" onclick="deleteAutoSelectRule('${encodeURIComponent(rule.id)}')">删除</button>
+        </div>
+    `).join('');
+}
+
+function setAutoSelectEnabled(checked) {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    autoSelectConfig.enabled = !!checked;
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+    scheduleAutoSelectTimer();
+}
+
+function setAutoSelectScope(scope) {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    autoSelectConfig.scope = ['all', 'subscription', 'aggregate'].includes(scope) ? scope : 'subscription';
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+}
+
+function setAutoSelectAggregate(fileName) {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    autoSelectConfig.aggregateFile = fileName || '';
+    saveAutoSelectConfig();
+}
+
+function setAutoSelectSiteMode(mode) {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    autoSelectConfig.siteCheck.mode = ['none', 'any', 'all'].includes(mode) ? mode : 'none';
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+}
+
+function setAutoSelectSiteTarget(encodedId, checked) {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    const id = decodeURIComponent(encodedId);
+    const ids = new Set(autoSelectConfig.siteCheck.ids || []);
+    if (checked) ids.add(id);
+    else ids.delete(id);
+    autoSelectConfig.siteCheck.ids = Array.from(ids);
+    saveAutoSelectConfig();
+}
+
+function addAutoSelectRule() {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    const typeEl = document.getElementById('autoSelectRuleType');
+    const input = document.getElementById('autoSelectRuleValue');
+    const type = typeEl?.value || 'exclude_keyword';
+    const value = (input?.value || '').trim();
+    if (!value) {
+        showToast('请输入规则内容，多个值可用逗号分隔', 'warning');
+        return;
+    }
+    autoSelectConfig.rules.push({
+        id: 'rule_' + Date.now(),
+        type,
+        value,
+        values: splitAutoSelectValues(value)
+    });
+    if (input) input.value = '';
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+}
+
+function deleteAutoSelectRule(encodedId) {
+    if (!autoSelectConfig) return;
+    const id = decodeURIComponent(encodedId);
+    autoSelectConfig.rules = autoSelectConfig.rules.filter(rule => rule.id !== id);
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+}
+
+function autoSelectScopeName(scope) {
+    switch (scope) {
+        case 'all': return '全部节点';
+        case 'aggregate': return '聚合组';
+        default: return '订阅组';
+    }
+}
+
+function splitAutoSelectValues(value) {
+    return String(value || '')
+        .split(/[,\n，、]/)
+        .map(v => v.trim())
+        .filter(Boolean);
+}
+
+function autoSelectRuleValues(rule) {
+    return Array.isArray(rule.values) && rule.values.length
+        ? rule.values
+        : splitAutoSelectValues(rule.value);
+}
+
+function autoSelectRuleLabel(rule) {
+    if (rule.label) return rule.label;
+    switch (rule.type) {
+        case 'include_region': return '只选择指定地区';
+        case 'include_node': return '只选择指定节点';
+        case 'include_subscription': return '只选择指定订阅组';
+        case 'include_aggregate_group': return '只选择指定聚合组';
+        default: return '不使用指定关键字';
+    }
+}
+
+function autoSelectRuleDescription(rule) {
+    const values = autoSelectRuleValues(rule).join('、') || rule.value || '';
+    switch (rule.type) {
+        case 'include_region': return '地区/关键字：' + values;
+        case 'include_node': return '节点：' + values;
+        case 'include_subscription': return '订阅组：' + values;
+        case 'include_aggregate_group': return '聚合组：' + values;
+        default: return '排除：' + values;
+    }
+}
+
+function supplierNameByFile(fileName) {
+    return suppliersCache.find(s => s.fileName === fileName)?.name || '';
+}
+
+function supplierNameForNode(node) {
+    return supplierNameByFile(node.sourceFile || node.fileName);
+}
+
+function aggregateNameByFile(fileName) {
+    return aggregateGroupsCache.find(g => g.fileName === fileName)?.name || '';
+}
+
+function activeSubscriptionFile() {
+    const selected = nodeGroupMode === 'subscription' ? selectedNodeGroupFile : '';
+    return selected || suppliersCache.find(s => s.active)?.fileName || suppliersCache[0]?.fileName || '';
+}
+
+function selectedAggregateFile() {
+    return autoSelectConfig?.aggregateFile || aggregateGroupsCache.find(g => g.active)?.fileName || aggregateGroupsCache[0]?.fileName || '';
+}
+
+function nodeSearchText(node) {
+    const sourceName = supplierNameForNode(node) || aggregateNameByFile(node.fileName);
+    return [
+        node.name || '',
+        node.sourceName || '',
+        node.group || '',
+        node.type || '',
+        node.fileName || '',
+        node.sourceFile || '',
+        sourceName
+    ].join(' ').toLowerCase();
+}
+
+function valuesMatchText(values, text) {
+    const haystack = String(text || '').toLowerCase();
+    return values.some(value => {
+        const needle = String(value || '').trim().toLowerCase();
+        return needle && haystack.includes(needle);
+    });
+}
+
+function nodePassesAutoSelectRules(node) {
+    const rules = autoSelectConfig?.rules || [];
+    const text = nodeSearchText(node);
+    const supplierText = [node.sourceFile || node.fileName || '', supplierNameForNode(node)].join(' ');
+    const aggregateText = [node.fileName || '', aggregateNameByFile(node.fileName)].join(' ');
+    return rules.every(rule => {
+        const values = autoSelectRuleValues(rule);
+        if (!values.length) return true;
+        switch (rule.type) {
+            case 'exclude_keyword':
+                return !valuesMatchText(values, text);
+            case 'include_region':
+            case 'include_node':
+                return valuesMatchText(values, text);
+            case 'include_subscription':
+                return valuesMatchText(values, supplierText);
+            case 'include_aggregate_group':
+                return valuesMatchText(values, aggregateText);
+            default:
+                return true;
+        }
+    });
+}
+
+function autoSelectCandidates(fileName = '') {
+    const scope = autoSelectConfig?.scope || 'subscription';
+    if (scope === 'all') return allNodesList || [];
+    if (scope === 'subscription') {
+        const targetFile = fileName || activeSubscriptionFile();
+        if (!targetFile) return [];
+        return (allNodesList || []).filter(n => n.fileName === targetFile);
+    }
+    if (scope === 'aggregate') {
+        const targetFile = fileName || selectedAggregateFile();
+        if (!targetFile) return [];
+        return (allNodesList || []).filter(n => n.fileName === targetFile);
+    }
+    return [];
+}
+
+function bestAutoSelectNode(fileName = selectedNodeGroupFile) {
+    const candidates = autoSelectCandidates(fileName)
+        .filter(n => n.latency > 0)
+        .filter(nodePassesAutoSelectRules);
+    candidates.sort((a, b) => a.latency - b.latency);
+    return candidates[0] || null;
+}
+
+function maybeAutoSelectNode(fileName = selectedNodeGroupFile) {
+    if (!autoSelectConfig?.enabled || switchingNodeIndex !== null) return;
+    const best = bestAutoSelectNode(fileName);
+    if (!best) {
+        showToast(`${autoSelectScopeName(autoSelectConfig.scope)}自动选择未找到可用节点`, 'warning');
+        return;
+    }
+    if (best.active) return;
+    showToast(`自动选择 ${best.name} · ${best.latency} ms`, 'success');
+    switchNode(best.index);
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function testAutoSelectCandidateLatencies(candidates) {
+    const unique = Array.from(new Map(candidates.map(n => [n.index, n])).values());
+    if (!unique.length) return;
+    unique.forEach(n => {
+        const latEl = document.getElementById('lat-' + n.index);
+        if (latEl) {
+            latEl.textContent = '检测中';
+            latEl.className = 'latency unknown';
+        }
+    });
+    const queue = [...unique];
+    const workerCount = Math.min(8, queue.length);
+    async function worker() {
+        while (queue.length) {
+            const node = queue.shift();
+            try {
+                await fetch('/api/test_single?idx=' + node.index, { method: 'POST' });
+            } catch(e) {}
+        }
+    }
+    await Promise.all(Array.from({ length: workerCount }, worker));
+    await loadNodes();
+}
+
+function autoSelectSiteTargetIds() {
+    const mode = autoSelectConfig?.siteCheck?.mode || 'none';
+    if (mode === 'none') return [];
+    const configured = autoSelectConfig?.siteCheck?.ids || [];
+    if (configured.length) return configured;
+    return siteTargetsCache.map(t => t.id);
+}
+
+async function ensureSiteTargetsLoaded() {
+    if (siteTargetsCache.length) return;
+    try {
+        const res = await fetch('/api/site_targets');
+        siteTargetsCache = await res.json() || [];
+    } catch(e) {}
+}
+
+async function switchNodeAndWait(idx) {
+    const node = allNodesList.find(n => n.index === idx);
+    if (node?.active) return true;
+    await switchNode(idx);
+    await sleep(5500);
+    await loadNodes();
+    return !!allNodesList.find(n => n.index === idx && n.active);
+}
+
+async function testActiveNodeSitesForAutoSelect() {
+    const mode = autoSelectConfig?.siteCheck?.mode || 'none';
+    if (mode === 'none') return true;
+    await ensureSiteTargetsLoaded();
+    const ids = autoSelectSiteTargetIds();
+    if (!ids.length) return true;
+    let passed = 0;
+    for (const id of ids) {
+        try {
+            const res = await fetch('/api/site_test?id=' + encodeURIComponent(id), { method: 'POST' });
+            const data = await res.json();
+            const result = (data.results || [])[0];
+            if (data.ok && result?.ok) passed++;
+            if (mode === 'any' && passed > 0) return true;
+        } catch(e) {}
+    }
+    return mode === 'all' ? passed === ids.length : passed > 0;
+}
+
+async function pickAutoSelectNodeWithSiteRules(candidates) {
+    const siteMode = autoSelectConfig?.siteCheck?.mode || 'none';
+    if (siteMode === 'none') return candidates[0] || null;
+    const original = allNodesList.find(n => n.active);
+    for (const candidate of candidates) {
+        if (!(await switchNodeAndWait(candidate.index))) continue;
+        if (await testActiveNodeSitesForAutoSelect()) return candidate;
+    }
+    if (original && !allNodesList.find(n => n.index === original.index && n.active)) {
+        await switchNodeAndWait(original.index);
+    }
+    return null;
+}
+
+async function runAutoSelectCycle(options = {}) {
+    if (!autoSelectConfig?.enabled) {
+        if (!options.silent) showToast('请先开启自动选择节点', 'warning');
+        return;
+    }
+    if (autoSelectRunning || switchingNodeIndex !== null) return;
+    autoSelectRunning = true;
+    try {
+        const candidates = autoSelectCandidates(options.fileName)
+            .filter(nodePassesAutoSelectRules);
+        if (!candidates.length) {
+            if (!options.silent) showToast(`${autoSelectScopeName(autoSelectConfig.scope)}自动选择没有符合规则的候选节点`, 'warning');
+            return;
+        }
+        if (!options.silent) showToast('正在重测候选节点延迟...', 'info', 1800);
+        await testAutoSelectCandidateLatencies(candidates);
+        const ranked = autoSelectCandidates(options.fileName)
+            .filter(n => n.latency > 0)
+            .filter(nodePassesAutoSelectRules)
+            .sort((a, b) => a.latency - b.latency);
+        if (!ranked.length) {
+            if (!options.silent) showToast(`${autoSelectScopeName(autoSelectConfig.scope)}自动选择未找到可用节点`, 'warning');
+            return;
+        }
+        const best = await pickAutoSelectNodeWithSiteRules(ranked);
+        if (!best) {
+            if (!options.silent) showToast('没有节点满足网站可用性规则', 'warning');
+            return;
+        }
+        const active = allNodesList.find(n => n.active);
+        if (active?.index === best.index) {
+            if (!options.silent) showToast(`当前已是最佳节点 ${best.name} · ${best.latency} ms`, 'success');
+            return;
+        }
+        showToast(`自动选择 ${best.name} · ${best.latency} ms`, 'success');
+        await switchNodeAndWait(best.index);
+    } finally {
+        autoSelectRunning = false;
+    }
+}
+
+function runAutoSelectNow() {
+    runAutoSelectCycle({ silent: false });
+}
+
+function scheduleAutoSelectTimer() {
+    if (autoSelectTimer) {
+        clearInterval(autoSelectTimer);
+        autoSelectTimer = null;
+    }
+    if (!autoSelectConfig?.enabled) return;
+    autoSelectTimer = setInterval(() => {
+        runAutoSelectCycle({ silent: true });
+    }, 5 * 60 * 1000);
+}
+
 let testingNodes = new Set();
 
 async function testSpeed(idx) {
@@ -658,13 +1391,19 @@ async function updateSupplier() {
     }
 
     let successCount = 0;
-    for (const sub of suppliersCache) {
-        try {
-            const res = await fetch('/api/update_supplier?file=' + encodeURIComponent(sub.fileName), { method: 'POST' });
-            const data = await res.json();
-            if (data.ok) successCount++;
-        } catch(e) {}
+    const queue = [...suppliersCache];
+    const workerCount = Math.min(3, queue.length);
+    async function worker() {
+        while (queue.length) {
+            const sub = queue.shift();
+            try {
+                const res = await fetch('/api/update_supplier?file=' + encodeURIComponent(sub.fileName), { method: 'POST' });
+                const data = await res.json();
+                if (data.ok) successCount++;
+            } catch(e) {}
+        }
     }
+    await Promise.all(Array.from({ length: workerCount }, worker));
 
     showToast(`成功更新 ${successCount} / ${suppliersCache.length} 个订阅！`, 'success');
     loadNodes();
@@ -719,6 +1458,37 @@ async function updateSupplierFile(encodedFile, btn, event) {
     }
     btn.disabled = false;
     btn.textContent = oldText;
+}
+
+function formatInterval(minutes) {
+    minutes = Number(minutes) || 0;
+    if (minutes >= 1440 && minutes % 1440 === 0) return (minutes / 1440) + '天';
+    if (minutes >= 60 && minutes % 60 === 0) return (minutes / 60) + '小时';
+    return minutes + '分钟';
+}
+
+async function setSupplierInterval(encodedFile, currentMinutes, event) {
+    if (event) event.stopPropagation();
+    const file = decodeURIComponent(encodedFile);
+    const input = prompt('设置该订阅的自动更新间隔（分钟，最低 15 分钟）', String(currentMinutes || 360));
+    if (input === null) return;
+    const minutes = Number(input);
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+        showToast('请输入有效的分钟数', 'warning');
+        return;
+    }
+    try {
+        const res = await fetch('/api/set_supplier_update_interval?file=' + encodeURIComponent(file) + '&minutes=' + encodeURIComponent(Math.round(minutes)), { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(data.msg || '自动更新间隔已保存', 'success');
+            await loadSuppliers();
+        } else {
+            showToast(data.msg || '保存失败', 'error');
+        }
+    } catch(e) {
+        showToast('保存自动更新间隔失败', 'error');
+    }
 }
 
 async function deleteSupplierFile(encodedFile, event) {
@@ -2079,9 +2849,12 @@ async function submitAggAction() {
 }
 
 window.onload = () => {
+    loadAutoSelectConfig();
     loadStatus();
     loadSuppliers();
     loadNodes();
+    ensureSiteTargetsLoaded().then(renderAutoSelectConfig);
+    scheduleAutoSelectTimer();
     
     showTab('nodes');
     

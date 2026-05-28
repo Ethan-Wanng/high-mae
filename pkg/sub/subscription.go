@@ -26,13 +26,17 @@ import (
 )
 
 type SubInfo struct {
-	Name     string               `json:"name"`
-	URL      string               `json:"url"`
-	FileName string               `json:"file_name"`
-	Traffic  *SubscriptionTraffic `json:"traffic,omitempty"`
+	Name                  string               `json:"name"`
+	URL                   string               `json:"url"`
+	FileName              string               `json:"file_name"`
+	Traffic               *SubscriptionTraffic `json:"traffic,omitempty"`
+	UpdateIntervalMinutes int64                `json:"update_interval_minutes,omitempty"`
+	LastUpdatedAt         int64                `json:"last_updated_at,omitempty"`
 }
 
 const SubscriptionsFile = "subscription.json"
+const DefaultUpdateIntervalMinutes int64 = 6 * 60
+const minUpdateIntervalMinutes int64 = 15
 
 var (
 	OnSubscriptionNodesUpdated func(fileName string, oldNodes []protocol.Node, newNodes []protocol.Node)
@@ -67,6 +71,7 @@ func ReadSubscriptions() ([]SubInfo, error) {
 	if err := json.Unmarshal(data, &links); err != nil {
 		return nil, fmt.Errorf("解析 JSON 失败: %w", err)
 	}
+	normalizeSubscriptions(links)
 	return links, nil
 }
 
@@ -80,10 +85,8 @@ func AppendSubscriptionWithTraffic(newLink string, traffic *SubscriptionTraffic)
 
 	for _, existing := range links {
 		if existing.URL == newLink {
-			if traffic != nil {
-				if err := UpdateSubscriptionTraffic(existing.URL, traffic); err != nil {
-					return "", true, err
-				}
+			if err := MarkSubscriptionUpdated(existing.URL, traffic); err != nil {
+				return "", true, err
 			}
 			return existing.FileName, true, nil
 		}
@@ -101,10 +104,12 @@ func AppendSubscriptionWithTraffic(newLink string, traffic *SubscriptionTraffic)
 	}
 
 	links = append(links, SubInfo{
-		Name:     name,
-		URL:      newLink,
-		FileName: fileName,
-		Traffic:  traffic,
+		Name:                  name,
+		URL:                   newLink,
+		FileName:              fileName,
+		Traffic:               traffic,
+		UpdateIntervalMinutes: DefaultUpdateIntervalMinutes,
+		LastUpdatedAt:         time.Now().Unix(),
 	})
 
 	data, err := json.MarshalIndent(links, "", "  ")
@@ -113,6 +118,17 @@ func AppendSubscriptionWithTraffic(newLink string, traffic *SubscriptionTraffic)
 	}
 
 	return fileName, false, storage.Write(SubscriptionsFile, data)
+}
+
+func normalizeSubscriptions(links []SubInfo) {
+	for i := range links {
+		if links[i].UpdateIntervalMinutes <= 0 {
+			links[i].UpdateIntervalMinutes = DefaultUpdateIntervalMinutes
+		}
+		if links[i].UpdateIntervalMinutes < minUpdateIntervalMinutes {
+			links[i].UpdateIntervalMinutes = minUpdateIntervalMinutes
+		}
+	}
 }
 
 func UpdateSubscriptionTraffic(url string, traffic *SubscriptionTraffic) error {
@@ -133,6 +149,59 @@ func UpdateSubscriptionTraffic(url string, traffic *SubscriptionTraffic) error {
 	}
 	if !changed {
 		return nil
+	}
+	data, err := json.MarshalIndent(links, "", "  ")
+	if err != nil {
+		return err
+	}
+	return storage.Write(SubscriptionsFile, data)
+}
+
+func MarkSubscriptionUpdated(url string, traffic *SubscriptionTraffic) error {
+	links, err := ReadSubscriptions()
+	if err != nil {
+		return err
+	}
+	changed := false
+	now := time.Now().Unix()
+	for i := range links {
+		if links[i].URL == url {
+			links[i].LastUpdatedAt = now
+			if traffic != nil {
+				links[i].Traffic = traffic
+			}
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return nil
+	}
+	data, err := json.MarshalIndent(links, "", "  ")
+	if err != nil {
+		return err
+	}
+	return storage.Write(SubscriptionsFile, data)
+}
+
+func SetSubscriptionUpdateInterval(fileName string, minutes int64) error {
+	if minutes < minUpdateIntervalMinutes {
+		minutes = minUpdateIntervalMinutes
+	}
+	links, err := ReadSubscriptions()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i := range links {
+		if links[i].FileName == fileName {
+			links[i].UpdateIntervalMinutes = minutes
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return fmt.Errorf("订阅不存在")
 	}
 	data, err := json.MarshalIndent(links, "", "  ")
 	if err != nil {
@@ -426,9 +495,7 @@ func RefreshSupplierMenu() {
 						err = SaveNodesToYAML(s.FileName, nodes)
 						if err == nil {
 							NotifySubscriptionNodesUpdated(s.FileName, oldNodes, nodes)
-							if traffic != nil {
-								UpdateSubscriptionTraffic(s.URL, traffic)
-							}
+							_ = MarkSubscriptionUpdated(s.URL, traffic)
 							if CurrentConfigFile == s.FileName {
 								common.AllNodes = nodes
 								RefreshNodeMenu(nil) // just refresh, no auto-switch
@@ -558,34 +625,63 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 			"Karing/2.0.0",
 			"Mihomo/1.18.3",
 		}
+		type parseResult struct {
+			nodes   []protocol.Node
+			traffic *SubscriptionTraffic
+			err     error
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		results := make(chan parseResult, len(userAgents))
+		for _, userAgent := range userAgents {
+			ua := userAgent
+			utils.SafeGo("parse subscription "+ua, func() {
+				info, infoErr := protocol.LoadInputWithUserAgentInfoContext(ctx, input, ua)
+				if infoErr != nil {
+					results <- parseResult{err: infoErr}
+					return
+				}
+
+				currentTraffic := ParseSubscriptionTraffic(info.Headers)
+
+				parsed, parseErr := protocol.ParseSubscriptionRaw(info.Body)
+				if parseErr != nil {
+					results <- parseResult{err: parseErr}
+					return
+				}
+				results <- parseResult{nodes: parsed, traffic: currentTraffic}
+			})
+		}
+
 		var bestNodes []protocol.Node
 		var bestTraffic *SubscriptionTraffic
 		var firstErr error
-
-		for _, userAgent := range userAgents {
-			info, infoErr := protocol.LoadInputWithUserAgentInfo(input, userAgent)
-			if infoErr != nil {
+		var settle <-chan time.Time
+		for i := 0; i < len(userAgents); i++ {
+			select {
+			case result := <-results:
+				if result.err != nil {
+					if firstErr == nil {
+						firstErr = result.err
+					}
+					continue
+				}
+				if len(result.nodes) > len(bestNodes) {
+					bestNodes = result.nodes
+					if result.traffic != nil {
+						bestTraffic = result.traffic
+					}
+				}
+				if len(bestNodes) > 0 && settle == nil {
+					settle = time.After(2 * time.Second)
+				}
+			case <-settle:
+				i = len(userAgents)
+			case <-ctx.Done():
 				if firstErr == nil {
-					firstErr = infoErr
+					firstErr = ctx.Err()
 				}
-				continue
-			}
-
-			currentTraffic := ParseSubscriptionTraffic(info.Headers)
-
-			parsed, parseErr := protocol.ParseSubscriptionRaw(info.Body)
-			if parseErr != nil {
-				if firstErr == nil {
-					firstErr = parseErr
-				}
-				continue
-			}
-
-			if len(parsed) > len(bestNodes) {
-				bestNodes = parsed
-				if currentTraffic != nil {
-					bestTraffic = currentTraffic
-				}
+				i = len(userAgents)
 			}
 		}
 
@@ -773,14 +869,12 @@ func UpdateAllSubscriptions() {
 	for _, info := range links {
 		nodes, traffic, err := ParseSubscriptionWithInfo(info.URL)
 		if err == nil && len(nodes) > 0 {
-			if traffic != nil {
-				UpdateSubscriptionTraffic(info.URL, traffic)
-			}
 			oldNodes, _ := protocol.ParseNodes(info.FileName)
 			err = SaveNodesToYAML(info.FileName, nodes)
 			if err != nil {
 				fmt.Printf("⚠️ 写入文件失败: %v\n", err)
 			} else {
+				_ = MarkSubscriptionUpdated(info.URL, traffic)
 				NotifySubscriptionNodesUpdated(info.FileName, oldNodes, nodes)
 				totalUpdated += len(nodes)
 			}
@@ -803,34 +897,41 @@ func UpdateAllSubscriptions() {
 
 // StartAutoUpdateSubscriptions 启动后台自动更新任务
 func StartAutoUpdateSubscriptions() {
-	// 每 6 小时更新一次
-	ticker := time.NewTicker(6 * time.Hour)
+	ticker := time.NewTicker(1 * time.Minute)
 	utils.SafeGo("subscription auto update", func() {
 		for range ticker.C {
-			fmt.Println("开始执行后台自动更新订阅...")
-			UpdateAllSubscriptionsSilently()
+			UpdateDueSubscriptionsSilently()
 		}
 	})
 }
 
 // UpdateAllSubscriptionsSilently 静默更新，不弹窗
 func UpdateAllSubscriptionsSilently() {
+	updateSubscriptionsSilently(false)
+}
+
+func UpdateDueSubscriptionsSilently() {
+	updateSubscriptionsSilently(true)
+}
+
+func updateSubscriptionsSilently(onlyDue bool) {
 	links, err := ReadSubscriptions()
 	if err != nil || len(links) == 0 {
 		return
 	}
 
 	for _, info := range links {
+		if onlyDue && !subscriptionDue(info, time.Now()) {
+			continue
+		}
 		nodes, traffic, err := ParseSubscriptionWithInfo(info.URL)
 		if err == nil && len(nodes) > 0 {
-			if traffic != nil {
-				UpdateSubscriptionTraffic(info.URL, traffic)
-			}
 			oldNodes, _ := protocol.ParseNodes(info.FileName)
 			if err := SaveNodesToYAML(info.FileName, nodes); err != nil {
 				fmt.Printf("⚠️ 写入文件失败: %v\n", err)
 				continue
 			}
+			_ = MarkSubscriptionUpdated(info.URL, traffic)
 			NotifySubscriptionNodesUpdated(info.FileName, oldNodes, nodes)
 			if CurrentConfigFile == info.FileName {
 				common.AllNodes = nodes
@@ -838,4 +939,18 @@ func UpdateAllSubscriptionsSilently() {
 			}
 		}
 	}
+}
+
+func subscriptionDue(info SubInfo, now time.Time) bool {
+	interval := info.UpdateIntervalMinutes
+	if interval <= 0 {
+		interval = DefaultUpdateIntervalMinutes
+	}
+	if interval < minUpdateIntervalMinutes {
+		interval = minUpdateIntervalMinutes
+	}
+	if info.LastUpdatedAt <= 0 {
+		return true
+	}
+	return now.Unix()-info.LastUpdatedAt >= interval*60
 }

@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -161,7 +162,7 @@ func LoadInput(input string) ([]byte, error) {
 }
 
 func LoadInputWithUserAgent(input string, userAgent string) ([]byte, error) {
-	result, err := LoadInputWithUserAgentInfo(input, userAgent)
+	result, err := LoadInputWithUserAgentInfoContext(context.Background(), input, userAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -174,12 +175,16 @@ type LoadInputResult struct {
 }
 
 func LoadInputWithUserAgentInfo(input string, userAgent string) (LoadInputResult, error) {
+	return LoadInputWithUserAgentInfoContext(context.Background(), input, userAgent)
+}
+
+func LoadInputWithUserAgentInfoContext(ctx context.Context, input string, userAgent string) (LoadInputResult, error) {
 	s := strings.TrimSpace(input)
 	s = strings.Trim(s, "“”\"'")
 
 	isSingleLine := !strings.Contains(s, "\n")
 	if (strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")) && isSingleLine && !strings.Contains(s, "@") {
-		req, err := http.NewRequest(http.MethodGet, s, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s, nil)
 		if err != nil {
 			return LoadInputResult{}, err
 		}
