@@ -416,6 +416,10 @@ function renderFreeTrafficState(state) {
     if (activeNodeEl && state.active) {
         activeNodeEl.textContent = '当前节点: 免费流量';
     }
+    const groupEl = document.getElementById('selectedNodeGroupDisplay');
+    if (groupEl && state.active) {
+        groupEl.textContent = '来源组: 免费流量';
+    }
 }
 
 async function useFreeTraffic() {
@@ -540,9 +544,29 @@ async function loadNodes() {
         if (nodeDisplayEl) {
             nodeDisplayEl.textContent = activeNode ? `当前节点: ${activeNode.name}` : (freeTrafficState?.active ? '当前节点: 免费流量' : '当前节点: 直连 (Direct)');
         }
+        renderSelectedNodeGroup(activeNode);
         
         renderNodes();
     } catch(e) {}
+}
+
+function renderSelectedNodeGroup(activeNode) {
+    const groupEl = document.getElementById('selectedNodeGroupDisplay');
+    if (!groupEl) return;
+    if (activeNode) {
+        const isAggregate = aggregateGroupsCache.some(g => g.fileName === activeNode.fileName);
+        const groupType = isAggregate ? '聚合组' : '订阅组';
+        const sourceName = activeNode.sourceFile && activeNode.sourceFile !== activeNode.fileName
+            ? supplierNameByFile(activeNode.sourceFile)
+            : '';
+        groupEl.textContent = sourceName
+            ? `来源组: ${groupType} / ${activeNode.group || '--'} · 原订阅 ${sourceName}`
+            : `来源组: ${groupType} / ${activeNode.group || '--'}`;
+    } else if (freeTrafficState?.active) {
+        groupEl.textContent = '来源组: 免费流量';
+    } else {
+        groupEl.textContent = '来源组: 直连';
+    }
 }
 
 
@@ -924,6 +948,7 @@ function defaultAutoSelectConfig() {
         scope: 'subscription',
         subscriptionFile: '',
         aggregateFile: '',
+        intervalMinutes: 5,
         siteCheck: {
             mode: 'none',
             ids: []
@@ -947,6 +972,7 @@ function loadAutoSelectConfig() {
     if (!autoSelectConfig.scope) autoSelectConfig.scope = 'subscription';
     if (!autoSelectConfig.subscriptionFile) autoSelectConfig.subscriptionFile = '';
     if (!autoSelectConfig.aggregateFile) autoSelectConfig.aggregateFile = '';
+    autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
     if (!autoSelectConfig.siteCheck || typeof autoSelectConfig.siteCheck !== 'object') {
         autoSelectConfig.siteCheck = { mode: 'none', ids: [] };
     }
@@ -965,6 +991,7 @@ function renderAutoSelectConfig() {
     const scopeEl = document.getElementById('autoSelectScope');
     const subscriptionEl = document.getElementById('autoSelectSubscription');
     const aggregateEl = document.getElementById('autoSelectAggregate');
+    const intervalEl = document.getElementById('autoSelectIntervalMinutes');
     const siteModeEl = document.getElementById('autoSelectSiteMode');
     const siteListEl = document.getElementById('autoSelectSiteList');
     const listEl = document.getElementById('autoSelectRuleList');
@@ -972,6 +999,7 @@ function renderAutoSelectConfig() {
 
     enabledEl.checked = !!autoSelectConfig.enabled;
     scopeEl.value = autoSelectConfig.scope || 'subscription';
+    if (intervalEl) intervalEl.value = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
     if (subscriptionEl) {
         subscriptionEl.style.display = autoSelectConfig.scope === 'subscription' ? '' : 'none';
         subscriptionEl.innerHTML = suppliersCache.length
@@ -1052,6 +1080,20 @@ function setAutoSelectAggregate(fileName) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.aggregateFile = fileName || '';
     saveAutoSelectConfig();
+}
+
+function normalizeAutoSelectInterval(value) {
+    const minutes = Number.parseInt(value, 10);
+    if (!Number.isFinite(minutes) || minutes < 1) return 5;
+    return Math.min(minutes, 1440);
+}
+
+function setAutoSelectInterval(value) {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(value);
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+    scheduleAutoSelectTimer();
 }
 
 function setAutoSelectSiteMode(mode) {
@@ -1381,9 +1423,10 @@ function scheduleAutoSelectTimer() {
         autoSelectTimer = null;
     }
     if (!autoSelectConfig?.enabled) return;
+    const intervalMs = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes) * 60 * 1000;
     autoSelectTimer = setInterval(() => {
         runAutoSelectCycle({ silent: true });
-    }, 5 * 60 * 1000);
+    }, intervalMs);
 }
 
 let testingNodes = new Set();
