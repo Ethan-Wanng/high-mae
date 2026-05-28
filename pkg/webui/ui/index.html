@@ -98,16 +98,19 @@
                                 <div id="autoSelectSiteList" class="auto-select-site-list"></div>
                             </div>
                             <div class="auto-select-rule-form">
-                                <select id="autoSelectRuleType">
+                                <select id="autoSelectRuleType" onchange="renderAutoSelectRulePicker()">
                                     <option value="exclude_keyword">不使用包含</option>
                                     <option value="include_region">只选择地区</option>
                                     <option value="include_node">只选择节点</option>
                                     <option value="include_subscription">只选择订阅组</option>
                                     <option value="include_aggregate_group">只选择聚合组</option>
+                                    <option value="include_protocol">只使用协议</option>
+                                    <option value="exclude_protocol">不使用协议</option>
                                 </select>
                                 <input type="text" id="autoSelectRuleValue" placeholder="多个值用逗号分隔，如 美国,日本">
                                 <button class="btn-success" onclick="addAutoSelectRule()">添加规则</button>
                             </div>
+                            <div id="autoSelectRulePicker" class="auto-select-picker"></div>
                             <div id="autoSelectRuleList" class="auto-select-rule-list"></div>
                         </div>
                     </div>

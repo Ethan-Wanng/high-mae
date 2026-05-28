@@ -1042,17 +1042,22 @@ function renderAutoSelectConfig() {
     }
     if (!autoSelectConfig.rules.length) {
         listEl.innerHTML = '<div class="auto-select-empty">暂无筛选规则</div>';
+        renderAutoSelectRulePicker();
         return;
     }
     listEl.innerHTML = autoSelectConfig.rules.map(rule => `
         <div class="auto-select-rule-row">
-            <div>
-                <strong>${escapeHTML(autoSelectRuleLabel(rule))}</strong>
+            <div class="auto-select-rule-editor">
+                <select onchange="updateAutoSelectRuleType('${encodeURIComponent(rule.id)}', this.value)">
+                    ${autoSelectRuleTypeOptions(rule.type)}
+                </select>
+                ${autoSelectRuleValueEditor(rule)}
                 <span>${escapeHTML(autoSelectRuleDescription(rule))}</span>
             </div>
             <button class="btn-mini btn-mini-danger" onclick="deleteAutoSelectRule('${encodeURIComponent(rule.id)}')">删除</button>
         </div>
     `).join('');
+    renderAutoSelectRulePicker();
 }
 
 function setAutoSelectEnabled(checked) {
@@ -1134,6 +1139,126 @@ function addAutoSelectRule() {
     renderAutoSelectConfig();
 }
 
+function autoSelectRuleTypeOptions(selected) {
+    const types = [
+        ['exclude_keyword', '不使用包含'],
+        ['include_region', '只选择地区'],
+        ['include_node', '只选择节点'],
+        ['include_subscription', '只选择订阅组'],
+        ['include_aggregate_group', '只选择聚合组'],
+        ['include_protocol', '只使用协议'],
+        ['exclude_protocol', '不使用协议'],
+    ];
+    return types.map(([value, label]) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`).join('');
+}
+
+function selectableAutoSelectValues(type) {
+    const unique = new Map();
+    if (type === 'include_node') {
+        (allNodesList || []).forEach(n => {
+            if (n.name) unique.set(n.name, n.name);
+        });
+    } else if (type === 'include_subscription') {
+        (suppliersCache || []).forEach(s => unique.set(s.name || s.fileName, s.name || s.fileName));
+    } else if (type === 'include_aggregate_group') {
+        (aggregateGroupsCache || []).forEach(g => unique.set(g.name || g.fileName, g.name || g.fileName));
+    } else if (type === 'include_protocol' || type === 'exclude_protocol') {
+        (allNodesList || []).forEach(n => {
+            if (n.type) unique.set(n.type.toLowerCase(), n.type);
+        });
+    }
+    return Array.from(unique.values()).sort((a, b) => a.localeCompare(b));
+}
+
+function autoSelectRuleUsesPicker(type) {
+    return ['include_node', 'include_subscription', 'include_aggregate_group', 'include_protocol', 'exclude_protocol'].includes(type);
+}
+
+function renderAutoSelectRulePicker() {
+    const type = document.getElementById('autoSelectRuleType')?.value || 'exclude_keyword';
+    const input = document.getElementById('autoSelectRuleValue');
+    const picker = document.getElementById('autoSelectRulePicker');
+    if (!picker || !input) return;
+    const values = selectableAutoSelectValues(type);
+    if (!autoSelectRuleUsesPicker(type) || !values.length) {
+        picker.innerHTML = '';
+        input.style.display = '';
+        return;
+    }
+    input.style.display = 'none';
+    const selected = new Set(splitAutoSelectValues(input.value));
+    picker.innerHTML = values.map(value => `
+        <label class="auto-select-check">
+            <input type="checkbox" ${selected.has(value) ? 'checked' : ''} onchange="syncAutoSelectPickerValue('autoSelectRuleValue', 'autoSelectRulePicker')">
+            <span>${escapeHTML(value)}</span>
+        </label>
+    `).join('');
+}
+
+function syncAutoSelectPickerValue(inputId, pickerId) {
+    const input = document.getElementById(inputId);
+    const picker = document.getElementById(pickerId);
+    if (!input || !picker) return;
+    const values = Array.from(picker.querySelectorAll('label')).filter(label => label.querySelector('input')?.checked).map(label => label.textContent.trim());
+    input.value = values.join(',');
+}
+
+function autoSelectRuleValueEditor(rule) {
+    const values = autoSelectRuleValues(rule);
+    if (!autoSelectRuleUsesPicker(rule.type)) {
+        return `<input type="text" value="${escapeAttr(values.join(','))}" onblur="updateAutoSelectRuleValue('${encodeURIComponent(rule.id)}', this.value)" onkeydown="if(event.key==='Enter') this.blur()">`;
+    }
+    const options = selectableAutoSelectValues(rule.type);
+    if (!options.length) {
+        return `<input type="text" value="${escapeAttr(values.join(','))}" onblur="updateAutoSelectRuleValue('${encodeURIComponent(rule.id)}', this.value)" onkeydown="if(event.key==='Enter') this.blur()">`;
+    }
+    const selected = new Set(values);
+    return `<div class="auto-select-picker compact">${options.map(value => `
+        <label class="auto-select-check">
+            <input type="checkbox" ${selected.has(value) ? 'checked' : ''} onchange="updateAutoSelectRulePickedValue('${encodeURIComponent(rule.id)}', '${encodeURIComponent(value)}', this.checked)">
+            <span>${escapeHTML(value)}</span>
+        </label>
+    `).join('')}</div>`;
+}
+
+function updateAutoSelectRuleType(encodedId, type) {
+    const id = decodeURIComponent(encodedId);
+    const rule = autoSelectConfig?.rules?.find(r => r.id === id);
+    if (!rule) return;
+    rule.type = type;
+    rule.values = [];
+    rule.value = '';
+    delete rule.label;
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+}
+
+function updateAutoSelectRuleValue(encodedId, value) {
+    const id = decodeURIComponent(encodedId);
+    const rule = autoSelectConfig?.rules?.find(r => r.id === id);
+    if (!rule) return;
+    rule.value = value.trim();
+    rule.values = splitAutoSelectValues(value);
+    delete rule.label;
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+}
+
+function updateAutoSelectRulePickedValue(encodedId, encodedValue, checked) {
+    const id = decodeURIComponent(encodedId);
+    const value = decodeURIComponent(encodedValue);
+    const rule = autoSelectConfig?.rules?.find(r => r.id === id);
+    if (!rule) return;
+    const values = new Set(autoSelectRuleValues(rule));
+    if (checked) values.add(value);
+    else values.delete(value);
+    rule.values = Array.from(values);
+    rule.value = rule.values.join(',');
+    delete rule.label;
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+}
+
 function deleteAutoSelectRule(encodedId) {
     if (!autoSelectConfig) return;
     const id = decodeURIComponent(encodedId);
@@ -1170,6 +1295,8 @@ function autoSelectRuleLabel(rule) {
         case 'include_node': return '只选择指定节点';
         case 'include_subscription': return '只选择指定订阅组';
         case 'include_aggregate_group': return '只选择指定聚合组';
+        case 'include_protocol': return '只使用指定协议';
+        case 'exclude_protocol': return '不使用指定协议';
         default: return '不使用指定关键字';
     }
 }
@@ -1181,6 +1308,8 @@ function autoSelectRuleDescription(rule) {
         case 'include_node': return '节点：' + values;
         case 'include_subscription': return '订阅组：' + values;
         case 'include_aggregate_group': return '聚合组：' + values;
+        case 'include_protocol': return '协议：' + values;
+        case 'exclude_protocol': return '排除协议：' + values;
         default: return '排除：' + values;
     }
 }
@@ -1244,6 +1373,10 @@ function nodePassesAutoSelectRules(node) {
                 return valuesMatchText(values, supplierText);
             case 'include_aggregate_group':
                 return valuesMatchText(values, aggregateText);
+            case 'include_protocol':
+                return valuesMatchText(values, node.type || '');
+            case 'exclude_protocol':
+                return !valuesMatchText(values, node.type || '');
             default:
                 return true;
         }
@@ -2521,14 +2654,18 @@ function renderCmdRules() {
         return;
     }
     list.innerHTML = cmdRules.map((rule, idx) => {
-        const action = rule.action || 'direct';
-        const actionColor = action === 'direct' ? 'var(--success)' : 'var(--accent)';
         return `
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px solid rgba(148,163,184,0.1);font-size:13px;">
                 <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;flex-wrap:wrap;">
-                    <span style="background:rgba(255,255,255,0.06);border:1px solid rgba(148,163,184,0.15);padding:2px 6px;border-radius:6px;font-size:11px;color:var(--text-sub);">${cmdRuleTypeName(rule.type)}</span>
-                    <code style="color:var(--text-main);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:430px;">${escapeHtml(rule.pattern)}</code>
-                    <span style="color:${actionColor};font-weight:700;">${actionName(action)}</span>
+                    <select onchange="updateCmdRule(${idx}, 'type', this.value)" style="min-width:110px;padding:5px 8px;border-radius:8px;font-size:12px;">
+                        <option value="prefix" ${(rule.type || 'prefix') === 'prefix' ? 'selected' : ''}>命令前缀</option>
+                        <option value="exact" ${rule.type === 'exact' ? 'selected' : ''}>完整命令</option>
+                    </select>
+                    <input type="text" value="${escapeAttr(rule.pattern)}" onblur="updateCmdRule(${idx}, 'pattern', this.value)" onkeydown="if(event.key==='Enter') this.blur()" style="min-width:260px;max-width:430px;width:36vw;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:6px 9px;border-radius:8px;outline:none;font-size:13px;">
+                    <select onchange="updateCmdRule(${idx}, 'action', this.value)" style="min-width:90px;padding:5px 8px;border-radius:8px;font-size:12px;">
+                        <option value="direct" ${(rule.action || 'direct') === 'direct' ? 'selected' : ''}>直连</option>
+                        <option value="proxy" ${rule.action === 'proxy' ? 'selected' : ''}>代理</option>
+                    </select>
                 </div>
                 <button class="btn-ghost" style="padding:4px 8px;font-size:12px;border-color:rgba(239,68,68,0.3);color:var(--danger);" onclick="deleteCmdRule(${idx})">删除</button>
             </div>
@@ -2544,6 +2681,14 @@ function addCmdRule() {
     const action = document.getElementById('cmdRuleAction').value || 'direct';
     cmdRules.push({ pattern, type, action });
     patternEl.value = '';
+    renderCmdRules();
+}
+
+function updateCmdRule(idx, field, value) {
+    if (!cmdRules || idx < 0 || idx >= cmdRules.length) return;
+    if (field === 'pattern') cmdRules[idx].pattern = value.trim();
+    if (field === 'type') cmdRules[idx].type = value === 'exact' ? 'exact' : 'prefix';
+    if (field === 'action') cmdRules[idx].action = value === 'proxy' ? 'proxy' : 'direct';
     renderCmdRules();
 }
 
