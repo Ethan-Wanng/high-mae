@@ -1075,7 +1075,7 @@ input:checked + .slider:before {
 .auto-select-controls,
 .auto-select-rule-form {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
     gap: 8px;
     margin-bottom: 10px;
 }

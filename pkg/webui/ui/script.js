@@ -298,6 +298,7 @@ async function loadSuppliers() {
         });
         renderSupplierTraffic(sel.value);
         await loadAggregateGroups();
+        renderAutoSelectConfig();
         renderNodes();
     } catch(e) {}
 }
@@ -921,6 +922,7 @@ function defaultAutoSelectConfig() {
     return {
         enabled: false,
         scope: 'subscription',
+        subscriptionFile: '',
         aggregateFile: '',
         siteCheck: {
             mode: 'none',
@@ -943,6 +945,7 @@ function loadAutoSelectConfig() {
         autoSelectConfig = defaultAutoSelectConfig();
     }
     if (!autoSelectConfig.scope) autoSelectConfig.scope = 'subscription';
+    if (!autoSelectConfig.subscriptionFile) autoSelectConfig.subscriptionFile = '';
     if (!autoSelectConfig.aggregateFile) autoSelectConfig.aggregateFile = '';
     if (!autoSelectConfig.siteCheck || typeof autoSelectConfig.siteCheck !== 'object') {
         autoSelectConfig.siteCheck = { mode: 'none', ids: [] };
@@ -960,6 +963,7 @@ function saveAutoSelectConfig() {
 function renderAutoSelectConfig() {
     const enabledEl = document.getElementById('autoSelectEnabled');
     const scopeEl = document.getElementById('autoSelectScope');
+    const subscriptionEl = document.getElementById('autoSelectSubscription');
     const aggregateEl = document.getElementById('autoSelectAggregate');
     const siteModeEl = document.getElementById('autoSelectSiteMode');
     const siteListEl = document.getElementById('autoSelectSiteList');
@@ -968,6 +972,19 @@ function renderAutoSelectConfig() {
 
     enabledEl.checked = !!autoSelectConfig.enabled;
     scopeEl.value = autoSelectConfig.scope || 'subscription';
+    if (subscriptionEl) {
+        subscriptionEl.style.display = autoSelectConfig.scope === 'subscription' ? '' : 'none';
+        subscriptionEl.innerHTML = suppliersCache.length
+            ? suppliersCache.map(s => `<option value="${escapeHTML(s.fileName)}">${escapeHTML(s.name)}</option>`).join('')
+            : '<option value="">暂无订阅组</option>';
+        if (autoSelectConfig.subscriptionFile && suppliersCache.some(s => s.fileName === autoSelectConfig.subscriptionFile)) {
+            subscriptionEl.value = autoSelectConfig.subscriptionFile;
+        } else if (suppliersCache.length) {
+            autoSelectConfig.subscriptionFile = suppliersCache[0].fileName;
+            subscriptionEl.value = autoSelectConfig.subscriptionFile;
+            saveAutoSelectConfig();
+        }
+    }
     if (aggregateEl) {
         aggregateEl.style.display = autoSelectConfig.scope === 'aggregate' ? '' : 'none';
         aggregateEl.innerHTML = aggregateGroupsCache.length
@@ -1023,6 +1040,12 @@ function setAutoSelectScope(scope) {
     autoSelectConfig.scope = ['all', 'subscription', 'aggregate'].includes(scope) ? scope : 'subscription';
     saveAutoSelectConfig();
     renderAutoSelectConfig();
+}
+
+function setAutoSelectSubscription(fileName) {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    autoSelectConfig.subscriptionFile = fileName || '';
+    saveAutoSelectConfig();
 }
 
 function setAutoSelectAggregate(fileName) {
@@ -1132,9 +1155,8 @@ function aggregateNameByFile(fileName) {
     return aggregateGroupsCache.find(g => g.fileName === fileName)?.name || '';
 }
 
-function activeSubscriptionFile() {
-    const selected = nodeGroupMode === 'subscription' ? selectedNodeGroupFile : '';
-    return selected || suppliersCache.find(s => s.active)?.fileName || suppliersCache[0]?.fileName || '';
+function selectedSubscriptionFile() {
+    return autoSelectConfig?.subscriptionFile || suppliersCache.find(s => s.active)?.fileName || suppliersCache[0]?.fileName || '';
 }
 
 function selectedAggregateFile() {
@@ -1190,7 +1212,7 @@ function autoSelectCandidates(fileName = '') {
     const scope = autoSelectConfig?.scope || 'subscription';
     if (scope === 'all') return allNodesList || [];
     if (scope === 'subscription') {
-        const targetFile = fileName || activeSubscriptionFile();
+        const targetFile = fileName || selectedSubscriptionFile();
         if (!targetFile) return [];
         return (allNodesList || []).filter(n => n.fileName === targetFile);
     }

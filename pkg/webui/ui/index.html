@@ -76,9 +76,10 @@
                             <div class="auto-select-controls">
                                 <select id="autoSelectScope" onchange="setAutoSelectScope(this.value)">
                                     <option value="all">全部节点</option>
-                                    <option value="subscription">当前订阅组</option>
+                                    <option value="subscription">指定订阅组</option>
                                     <option value="aggregate">指定聚合组</option>
                                 </select>
+                                <select id="autoSelectSubscription" onchange="setAutoSelectSubscription(this.value)"></select>
                                 <select id="autoSelectAggregate" onchange="setAutoSelectAggregate(this.value)"></select>
                                 <button class="btn-primary" onclick="runAutoSelectNow()">立即选择</button>
                             </div>
