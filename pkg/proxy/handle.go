@@ -164,14 +164,19 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		if targetClient == nil {
-			http.Error(w, "尚未选择或初始化任何节点！", http.StatusServiceUnavailable)
-			return
-		}
-		dest := metadata.ParseSocksaddr(targetAddr)
-		upstream, err = targetClient.CreateProxy(req.Context(), dest)
-		if err != nil {
-			http.Error(w, "代理连接失败: "+err.Error(), http.StatusServiceUnavailable)
-			return
+			nodeUsed = "Direct"
+			upstream, err = net.DialTimeout("tcp", targetAddr, 5*time.Second)
+			if err != nil {
+				http.Error(w, "直连失败: "+err.Error(), http.StatusBadGateway)
+				return
+			}
+		} else {
+			dest := metadata.ParseSocksaddr(targetAddr)
+			upstream, err = targetClient.CreateProxy(req.Context(), dest)
+			if err != nil {
+				http.Error(w, "代理连接失败: "+err.Error(), http.StatusServiceUnavailable)
+				return
+			}
 		}
 	}
 

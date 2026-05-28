@@ -30,21 +30,13 @@
                 <button class="btn-primary" id="btnFreeTraffic" onclick="useFreeTraffic()">获取免费流量</button>
                 <button class="btn-ghost" id="btnImport" onclick="importSubscription()">导入订阅</button>
                 <button class="btn-primary" id="btnTestAll" onclick="testAll()">极速测速</button>
-                <div class="dropdown">
-                    <button class="btn-ghost">管理</button>
-                    <div class="dropdown-content">
-                        <a href="javascript:void(0)" onclick="openRuleModal()">规则管理</a>
-                        <a href="javascript:void(0)" onclick="openDNSModal()">DNS 管理</a>
-                        <a href="javascript:void(0)" onclick="openAggGroupModal()">聚合分组</a>
-                    </div>
-                </div>
             </div>
         </div>
 
         <div class="tabs">
             <button class="tab-btn active" onclick="showTab('nodes')">节点选择</button>
             <button class="tab-btn" onclick="showTab('dashboard')">数据看板</button>
-            <button class="tab-btn" onclick="showTab('sitecheck')">网站测试</button>
+            <button class="tab-btn" onclick="showTab('sitecheck')">测试网站</button>
             <button class="tab-btn" onclick="showTab('settings')">系统设置</button>
         </div>
 
@@ -64,7 +56,7 @@
                                 <select id="supplierSelect" onchange="switchSupplier(this.value)" style="display:none;"></select>
                                 <select id="aggregateSelect" onchange="switchAggregateGroup(this.value)" style="display:none;"></select>
                                 <button class="btn-update icon-button" id="btnUpdate" onclick="updateSupplier()" title="更新全部订阅">↻</button>
-                                <button class="btn-delete icon-button" id="btnDelete" onclick="deleteSupplier()" title="删除当前订阅">×</button>
+                                <button class="btn-ghost direct-button" id="btnDirect" onclick="selectDirect()" title="不选择节点，所有代理入口改为直连">直连</button>
                             </div>
                         </div>
                     </div>
@@ -72,6 +64,45 @@
                     <div class="node-source-tabs">
                         <button class="node-source-tab active" data-mode="subscription" onclick="setNodeGroupMode('subscription')">订阅组</button>
                         <button class="node-source-tab" data-mode="aggregate" onclick="setNodeGroupMode('aggregate')">聚合组</button>
+                        <button class="node-source-tab" data-mode="auto" onclick="setNodeGroupMode('auto')">自动选择</button>
+                    </div>
+
+                    <div class="auto-select-node-pane" id="autoSelectNodePane" style="display:none;">
+                        <div class="log-container auto-select-panel">
+                            <div class="auto-select-header">
+                                <h4>自动选择节点</h4>
+                                <label class="toggle"><input type="checkbox" id="autoSelectEnabled" onchange="setAutoSelectEnabled(this.checked)"><span class="slider"></span></label>
+                            </div>
+                            <div class="auto-select-controls">
+                                <select id="autoSelectScope" onchange="setAutoSelectScope(this.value)">
+                                    <option value="all">全部节点</option>
+                                    <option value="subscription">当前订阅组</option>
+                                    <option value="aggregate">指定聚合组</option>
+                                </select>
+                                <select id="autoSelectAggregate" onchange="setAutoSelectAggregate(this.value)"></select>
+                                <button class="btn-primary" onclick="runAutoSelectNow()">立即选择</button>
+                            </div>
+                            <div class="auto-select-site-rule">
+                                <select id="autoSelectSiteMode" onchange="setAutoSelectSiteMode(this.value)">
+                                    <option value="none">不要求网站测试</option>
+                                    <option value="any">所选网站任一可用</option>
+                                    <option value="all">所选网站全部可用</option>
+                                </select>
+                                <div id="autoSelectSiteList" class="auto-select-site-list"></div>
+                            </div>
+                            <div class="auto-select-rule-form">
+                                <select id="autoSelectRuleType">
+                                    <option value="exclude_keyword">不使用包含</option>
+                                    <option value="include_region">只选择地区</option>
+                                    <option value="include_node">只选择节点</option>
+                                    <option value="include_subscription">只选择订阅组</option>
+                                    <option value="include_aggregate_group">只选择聚合组</option>
+                                </select>
+                                <input type="text" id="autoSelectRuleValue" placeholder="多个值用逗号分隔，如 美国,日本">
+                                <button class="btn-success" onclick="addAutoSelectRule()">添加规则</button>
+                            </div>
+                            <div id="autoSelectRuleList" class="auto-select-rule-list"></div>
+                        </div>
                     </div>
                     
                     <div class="grid node-browser" id="nodeGrid">
@@ -197,41 +228,6 @@
                         <div class="supplier-traffic" id="supplierTraffic" style="font-size: 13px; color: var(--text-sub); line-height: 1.6; min-height: 40px;"></div>
                     </div>
 
-                    <div class="log-container auto-select-panel">
-                        <div class="auto-select-header">
-                            <h4>自动选择节点</h4>
-                            <label class="toggle"><input type="checkbox" id="autoSelectEnabled" onchange="setAutoSelectEnabled(this.checked)"><span class="slider"></span></label>
-                        </div>
-                        <div class="auto-select-controls">
-                            <select id="autoSelectScope" onchange="setAutoSelectScope(this.value)">
-                                <option value="all">全部节点</option>
-                                <option value="subscription">当前订阅组</option>
-                                <option value="aggregate">指定聚合组</option>
-                            </select>
-                            <select id="autoSelectAggregate" onchange="setAutoSelectAggregate(this.value)"></select>
-                            <button class="btn-primary" onclick="runAutoSelectNow()">立即选择</button>
-                        </div>
-                        <div class="auto-select-site-rule">
-                            <select id="autoSelectSiteMode" onchange="setAutoSelectSiteMode(this.value)">
-                                <option value="none">不要求网站测试</option>
-                                <option value="any">所选网站任一可用</option>
-                                <option value="all">所选网站全部可用</option>
-                            </select>
-                            <div id="autoSelectSiteList" class="auto-select-site-list"></div>
-                        </div>
-                        <div class="auto-select-rule-form">
-                            <select id="autoSelectRuleType">
-                                <option value="exclude_keyword">不使用包含</option>
-                                <option value="include_region">只选择地区</option>
-                                <option value="include_node">只选择节点</option>
-                                <option value="include_subscription">只选择订阅组</option>
-                                <option value="include_aggregate_group">只选择聚合组</option>
-                            </select>
-                            <input type="text" id="autoSelectRuleValue" placeholder="多个值用逗号分隔，如 美国,日本">
-                            <button class="btn-success" onclick="addAutoSelectRule()">添加规则</button>
-                        </div>
-                        <div id="autoSelectRuleList" class="auto-select-rule-list"></div>
-                    </div>
                 </div>
 
                 <!-- Right Column: Advanced Configuration Management Tools -->

@@ -61,8 +61,8 @@ function showTab(tabId) {
 
 
 function setNodeGroupMode(mode) {
-    nodeGroupMode = mode === "aggregate" ? "aggregate" : "subscription";
-    selectedNodeGroupFile = "";
+    nodeGroupMode = ["subscription", "aggregate", "auto"].includes(mode) ? mode : "subscription";
+    if (nodeGroupMode !== "auto") selectedNodeGroupFile = "";
     document.querySelectorAll('.node-source-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === nodeGroupMode);
     });
@@ -71,7 +71,18 @@ function setNodeGroupMode(mode) {
 
 function renderNodes() {
     const grid = document.getElementById('nodeGrid');
+    const autoPane = document.getElementById('autoSelectNodePane');
     if (!grid) return;
+    if (nodeGroupMode === "auto") {
+        grid.style.display = "none";
+        if (autoPane) {
+            autoPane.style.display = "block";
+            renderAutoSelectConfig();
+        }
+        return;
+    }
+    grid.style.display = "";
+    if (autoPane) autoPane.style.display = "none";
     grid.innerHTML = '';
 
     const groups = nodeGroupMode === "aggregate"
@@ -430,6 +441,34 @@ async function useFreeTraffic() {
     if (btn.textContent === '启用中') btn.textContent = oldText;
     btn.disabled = false;
     loadStatus();
+}
+
+async function selectDirect() {
+    const btn = document.getElementById('btnDirect');
+    const oldText = btn?.textContent || '直连';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '切换中';
+    }
+    try {
+        const res = await fetch('/api/direct', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+            showToast(data.msg || '切换直连失败', 'error');
+            return;
+        }
+        allNodesList = allNodesList.map(n => ({ ...n, active: false }));
+        showToast(data.msg || '已不选择节点，当前为直连', 'success');
+        await loadNodes();
+        loadStatus();
+    } catch(e) {
+        showToast('切换直连请求失败', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = oldText;
+        }
+    }
 }
 
 function showToast(msg, type = 'info', duration = 4000) {

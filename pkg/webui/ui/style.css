@@ -776,9 +776,15 @@ input:checked + .slider:before {
     background: rgba(20, 24, 29, 0.72);
     border: 1px solid var(--card-border);
     border-radius: 10px;
-    width: fit-content;
+    width: 100%;
+    position: sticky;
+    top: 92px;
+    z-index: 95;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
 }
 .tab-btn {
+    flex: 1;
     padding: 9px 18px;
     border-radius: 7px;
     border: none;
@@ -1443,6 +1449,13 @@ input:checked + .slider:before {
     gap: 6px;
 }
 
+.direct-button {
+    height: 34px;
+    padding: 0 12px;
+    border-color: rgba(45, 212, 191, 0.28);
+    color: var(--accent);
+}
+
 .icon-button {
     width: 34px;
     height: 34px;
@@ -1478,6 +1491,10 @@ input:checked + .slider:before {
 .node-source-tab.active {
     background: rgba(45, 212, 191, 0.14);
     color: var(--accent);
+}
+
+.auto-select-node-pane {
+    max-width: 860px;
 }
 
 .node-browser {

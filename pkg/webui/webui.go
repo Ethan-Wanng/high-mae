@@ -101,6 +101,7 @@ func buildWebUIMux() *http.ServeMux {
 	mux.HandleFunc("/script.js", serveJS)
 	mux.HandleFunc("/api/nodes", getNodes)
 	mux.HandleFunc("/api/switch", switchNodeHandler)
+	mux.HandleFunc("/api/direct", directNodeHandler)
 	mux.HandleFunc("/api/node_link", nodeLinkHandler)
 	mux.HandleFunc("/api/delete_node", deleteNodeHandler)
 	mux.HandleFunc("/api/test_single", testSingleHandler)
@@ -687,6 +688,25 @@ func switchNodeHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "msg": "正在切换节点..."})
+}
+
+func directNodeHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	common.ClientMu.Lock()
+	common.ActiveClient = nil
+	common.ActiveNode = protocol.Node{}
+	common.ActiveNodeName = ""
+	common.GlobalNodeServer = ""
+	common.GlobalNodeIP = ""
+	common.ClientMu.Unlock()
+	if common.MCurrentNode != nil {
+		common.MCurrentNode.SetTitle("当前节点: 直连")
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "已不选择节点，当前为直连"})
 }
 
 func nodeLinkHandler(w http.ResponseWriter, r *http.Request) {
