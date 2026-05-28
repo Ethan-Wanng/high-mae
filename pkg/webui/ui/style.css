@@ -1114,7 +1114,8 @@ input:checked + .slider:before {
     margin-bottom: 10px;
 }
 
-.auto-select-interval-row {
+.auto-select-interval-row,
+.auto-select-startup-row {
     display: grid;
     grid-template-columns: auto minmax(90px, 130px) auto;
     align-items: center;
@@ -1124,7 +1125,12 @@ input:checked + .slider:before {
     font-size: 12px;
 }
 
-.auto-select-interval-row input {
+.auto-select-startup-row {
+    grid-template-columns: auto minmax(130px, 180px);
+}
+
+.auto-select-interval-row input,
+.auto-select-startup-row select {
     min-width: 0;
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(148,163,184,0.18);
@@ -1132,6 +1138,12 @@ input:checked + .slider:before {
     padding: 10px 12px;
     border-radius: var(--radius);
     outline: none;
+}
+
+.auto-select-rule-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin: 2px 0 8px;
 }
 
 .auto-select-site-list {
@@ -1433,6 +1445,7 @@ input:checked + .slider:before {
     .auto-select-controls,
     .auto-select-rule-form,
     .auto-select-interval-row,
+    .auto-select-startup-row,
     .auto-select-rule-editor {
         grid-template-columns: 1fr;
     }

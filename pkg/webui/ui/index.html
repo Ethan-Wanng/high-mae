@@ -89,6 +89,14 @@
                                 <input type="number" id="autoSelectIntervalMinutes" min="1" max="1440" step="1" onchange="setAutoSelectInterval(this.value)">
                                 <span>分钟</span>
                             </div>
+                            <div class="auto-select-startup-row">
+                                <span>自动启动</span>
+                                <select id="autoSelectStartupMode" onchange="setAutoSelectStartupMode(this.value)">
+                                    <option value="none">不自动启动</option>
+                                    <option value="proxy">系统代理</option>
+                                    <option value="tun">TUN</option>
+                                </select>
+                            </div>
                             <div class="auto-select-site-rule">
                                 <select id="autoSelectSiteMode" onchange="setAutoSelectSiteMode(this.value)">
                                     <option value="none">不要求网站测试</option>
@@ -111,6 +119,9 @@
                                 <button class="btn-success" onclick="addAutoSelectRule()">添加规则</button>
                             </div>
                             <div id="autoSelectRulePicker" class="auto-select-picker"></div>
+                            <div class="auto-select-rule-toolbar">
+                                <button class="btn-mini btn-mini-danger" onclick="clearAutoSelectRules()">清空规则</button>
+                            </div>
                             <div id="autoSelectRuleList" class="auto-select-rule-list"></div>
                         </div>
                     </div>

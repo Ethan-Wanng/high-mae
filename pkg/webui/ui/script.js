@@ -949,6 +949,7 @@ function defaultAutoSelectConfig() {
         subscriptionFile: '',
         aggregateFile: '',
         intervalMinutes: 5,
+        startupMode: 'none',
         siteCheck: {
             mode: 'none',
             ids: []
@@ -973,6 +974,7 @@ function loadAutoSelectConfig() {
     if (!autoSelectConfig.subscriptionFile) autoSelectConfig.subscriptionFile = '';
     if (!autoSelectConfig.aggregateFile) autoSelectConfig.aggregateFile = '';
     autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
+    if (!['none', 'proxy', 'tun'].includes(autoSelectConfig.startupMode)) autoSelectConfig.startupMode = 'none';
     if (!autoSelectConfig.siteCheck || typeof autoSelectConfig.siteCheck !== 'object') {
         autoSelectConfig.siteCheck = { mode: 'none', ids: [] };
     }
@@ -992,6 +994,7 @@ function renderAutoSelectConfig() {
     const subscriptionEl = document.getElementById('autoSelectSubscription');
     const aggregateEl = document.getElementById('autoSelectAggregate');
     const intervalEl = document.getElementById('autoSelectIntervalMinutes');
+    const startupEl = document.getElementById('autoSelectStartupMode');
     const siteModeEl = document.getElementById('autoSelectSiteMode');
     const siteListEl = document.getElementById('autoSelectSiteList');
     const listEl = document.getElementById('autoSelectRuleList');
@@ -1000,6 +1003,7 @@ function renderAutoSelectConfig() {
     enabledEl.checked = !!autoSelectConfig.enabled;
     scopeEl.value = autoSelectConfig.scope || 'subscription';
     if (intervalEl) intervalEl.value = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
+    if (startupEl) startupEl.value = autoSelectConfig.startupMode || 'none';
     if (subscriptionEl) {
         subscriptionEl.style.display = autoSelectConfig.scope === 'subscription' ? '' : 'none';
         subscriptionEl.innerHTML = suppliersCache.length
@@ -1066,6 +1070,7 @@ function setAutoSelectEnabled(checked) {
     saveAutoSelectConfig();
     renderAutoSelectConfig();
     scheduleAutoSelectTimer();
+    if (autoSelectConfig.enabled) ensureAutoSelectNetworkMode();
 }
 
 function setAutoSelectScope(scope) {
@@ -1099,6 +1104,14 @@ function setAutoSelectInterval(value) {
     saveAutoSelectConfig();
     renderAutoSelectConfig();
     scheduleAutoSelectTimer();
+}
+
+function setAutoSelectStartupMode(mode) {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    autoSelectConfig.startupMode = ['none', 'proxy', 'tun'].includes(mode) ? mode : 'none';
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+    if (autoSelectConfig.enabled) ensureAutoSelectNetworkMode();
 }
 
 function setAutoSelectSiteMode(mode) {
@@ -1265,6 +1278,15 @@ function deleteAutoSelectRule(encodedId) {
     autoSelectConfig.rules = autoSelectConfig.rules.filter(rule => rule.id !== id);
     saveAutoSelectConfig();
     renderAutoSelectConfig();
+}
+
+function clearAutoSelectRules() {
+    if (!autoSelectConfig?.rules?.length) return;
+    if (!confirm('确定清空所有自动选择规则吗？')) return;
+    autoSelectConfig.rules = [];
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
+    showToast('自动选择规则已清空', 'success');
 }
 
 function autoSelectScopeName(scope) {
@@ -1513,6 +1535,7 @@ async function runAutoSelectCycle(options = {}) {
     if (autoSelectRunning || switchingNodeIndex !== null) return;
     autoSelectRunning = true;
     try {
+        await ensureAutoSelectNetworkMode();
         const candidates = autoSelectCandidates(options.fileName)
             .filter(nodePassesAutoSelectRules);
         if (!candidates.length) {
@@ -1543,6 +1566,22 @@ async function runAutoSelectCycle(options = {}) {
         await switchNodeAndWait(best.index);
     } finally {
         autoSelectRunning = false;
+    }
+}
+
+async function ensureAutoSelectNetworkMode() {
+    const mode = autoSelectConfig?.startupMode || 'none';
+    if (mode === 'none') return;
+    await loadStatus();
+    const proxyOn = !!document.getElementById('chkProxy')?.checked;
+    const tunOn = !!document.getElementById('chkTun')?.checked;
+    if (mode === 'proxy' && !proxyOn) {
+        showToast('自动选择已开启，正在启动系统代理', 'info', 1800);
+        await doAction('proxy');
+    }
+    if (mode === 'tun' && !tunOn) {
+        showToast('自动选择已开启，正在启动 TUN', 'info', 1800);
+        await doAction('tun');
     }
 }
 
