@@ -49,6 +49,7 @@ var (
 	GlobalDNSConfig DNSConfig
 	dnsCache        = make(map[string]dnsCacheEntry)
 	dnsCacheMu      sync.RWMutex
+	IPToDomainMap   sync.Map
 )
 
 const (
@@ -270,6 +271,11 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 			if first || ans.Header().Ttl < minTTL {
 				minTTL = ans.Header().Ttl
 				first = false
+			}
+			if a, ok := ans.(*dns.A); ok {
+				IPToDomainMap.Store(a.A.String(), domain)
+			} else if aaaa, ok := ans.(*dns.AAAA); ok {
+				IPToDomainMap.Store(aaaa.AAAA.String(), domain)
 			}
 		}
 		if minTTL > 3600 {

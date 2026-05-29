@@ -91,6 +91,16 @@ func (c *TrackingConn) Totals() (uint64, uint64) {
 
 type HTTPProxyHandler struct{}
 
+func dialDirect(targetAddr string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	if common.IsTunModeOn && common.RealLocalIPBeforeTun != "" {
+		if ip := net.ParseIP(common.RealLocalIPBeforeTun); ip != nil {
+			dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: 0}
+		}
+	}
+	return dialer.Dial("tcp", targetAddr)
+}
+
 func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	atomic.AddInt32(&stats.ActiveConnections, 1)
 	defer atomic.AddInt32(&stats.ActiveConnections, -1)
@@ -106,6 +116,18 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			targetAddr += ":443"
 		} else {
 			targetAddr += ":80"
+		}
+	}
+
+	// 🚀 TUN Mode IP -> Domain Restore
+	if host, port, err := net.SplitHostPort(targetAddr); err == nil && net.ParseIP(host) != nil {
+		if d, ok := IPToDomainMap.Load(host); ok {
+			domain := strings.TrimSuffix(d.(string), ".")
+			targetAddr = net.JoinHostPort(domain, port)
+		}
+	} else if err != nil && net.ParseIP(targetAddr) != nil {
+		if d, ok := IPToDomainMap.Load(targetAddr); ok {
+			targetAddr = strings.TrimSuffix(d.(string), ".")
 		}
 	}
 
@@ -129,7 +151,7 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	} else if routeAction == "direct" {
 		nodeUsed = "Direct"
-		upstream, err = net.DialTimeout("tcp", targetAddr, 5*time.Second)
+		upstream, err = dialDirect(targetAddr)
 		if err != nil {
 			http.Error(w, "直连失败: "+err.Error(), http.StatusBadGateway)
 			return
@@ -165,7 +187,7 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		if targetClient == nil {
 			nodeUsed = "Direct"
-			upstream, err = net.DialTimeout("tcp", targetAddr, 5*time.Second)
+			upstream, err = dialDirect(targetAddr)
 			if err != nil {
 				http.Error(w, "直连失败: "+err.Error(), http.StatusBadGateway)
 				return
