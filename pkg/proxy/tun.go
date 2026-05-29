@@ -173,11 +173,10 @@ func startTunLocked(nodeIP string) error {
 	tunCmd = exec.Command(
 		"./tun2socks.exe",
 		"-device", "tun://AnyTLS-TUN",
-		"-proxy", "http://127.0.0.1:"+common.LocalHttpPort,
+		"-proxy", "socks5://127.0.0.1:"+common.LocalSocksPort,
 		"-loglevel", "silent",
 		"-mtu", "1400",
-		"-tcp-rcvbuf", "256k",
-		"-tcp-sndbuf", "256k",
+		"-tcp-auto-tuning",
 		"-udp-timeout", "30s",
 	)
 	tunCmd.Env = append(os.Environ(), "GOGC=20", "GOMEMLIMIT=96MiB")

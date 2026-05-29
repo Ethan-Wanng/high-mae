@@ -425,6 +425,9 @@ func StartAnyTLSHttpServer() {
 	if err := launchLocalHTTPProxyServer(); err != nil {
 		log.Printf("本地 HTTP 代理启动失败: %v", err)
 	}
+	if err := launchLocalSOCKSProxyServer(); err != nil {
+		log.Printf("本地 SOCKS5 代理启动失败: %v", err)
+	}
 }
 
 func LoadNetworkShareConfig() {
@@ -478,7 +481,11 @@ func localHTTPProxyListenAddr() string {
 
 func RestartLocalHTTPProxyServer() error {
 	shutdownLocalHTTPProxyServer()
-	return launchLocalHTTPProxyServer()
+	shutdownLocalSOCKSProxyServer()
+	if err := launchLocalHTTPProxyServer(); err != nil {
+		return err
+	}
+	return launchLocalSOCKSProxyServer()
 }
 
 func launchLocalHTTPProxyServer() error {
