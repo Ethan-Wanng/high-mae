@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	bolt "github.com/sagernet/bbolt"
@@ -14,6 +15,8 @@ const DBFile = "wing.db"
 
 var (
 	dataBucket = []byte("data")
+	globalDB   *bolt.DB
+	dbMutex    sync.Mutex
 )
 
 func databasePath() string {
@@ -23,13 +26,20 @@ func databasePath() string {
 	return DBFile
 }
 
-func open() (*bolt.DB, error) {
+func getDB() (*bolt.DB, error) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	if globalDB != nil {
+		return globalDB, nil
+	}
+
 	path, err := filepath.Abs(databasePath())
 	if err != nil {
 		return nil, err
 	}
 
-	opened, err := bolt.Open(path, 0600, &bolt.Options{Timeout: time.Second})
+	opened, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		return nil, err
 	}
@@ -41,10 +51,18 @@ func open() (*bolt.DB, error) {
 		_ = opened.Close()
 		return nil, err
 	}
-	return opened, nil
+	globalDB = opened
+	return globalDB, nil
 }
 
 func Close() error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+	if globalDB != nil {
+		err := globalDB.Close()
+		globalDB = nil
+		return err
+	}
 	return nil
 }
 
@@ -55,11 +73,10 @@ func normalizeKey(key string) []byte {
 }
 
 func Read(key string) ([]byte, error) {
-	database, err := open()
+	database, err := getDB()
 	if err != nil {
 		return nil, err
 	}
-	defer database.Close()
 
 	var out []byte
 	err = database.View(func(tx *bolt.Tx) error {
@@ -75,11 +92,10 @@ func Read(key string) ([]byte, error) {
 }
 
 func Write(key string, data []byte) error {
-	database, err := open()
+	database, err := getDB()
 	if err != nil {
 		return err
 	}
-	defer database.Close()
 	return database.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(dataBucket)
 		if err != nil {
@@ -90,11 +106,10 @@ func Write(key string, data []byte) error {
 }
 
 func Delete(key string) error {
-	database, err := open()
+	database, err := getDB()
 	if err != nil {
 		return err
 	}
-	defer database.Close()
 	return database.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(dataBucket)
 		if bucket == nil {
