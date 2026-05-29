@@ -38,6 +38,14 @@ async function loadStatus() {
         document.getElementById('chkProxy').checked = st.proxy;
         document.getElementById('chkMode').checked = (st.mode === 'Global');
         document.getElementById('chkTun').checked = st.tun;
+        const shareToggle = document.getElementById('chkNetworkShare');
+        if (shareToggle) shareToggle.checked = !!st.networkShare;
+        const shareAddr = document.getElementById('networkShareAddress');
+        if (shareAddr) {
+            shareAddr.textContent = st.networkShare
+                ? ('代理地址: ' + (st.networkShareAddress || '--'))
+                : '仅本机可用';
+        }
         document.getElementById('chkWebRTC').checked = st.webrtc;
         document.getElementById('speedMonitor').innerHTML = '↑ ' + st.speedOut + ' &nbsp; ↓ ' + st.speedIn;
         renderFreeTrafficState(st.freeTraffic);
@@ -556,7 +564,7 @@ async function doAction(type) {
     }
     pendingActions.add(type);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), type === 'tun' ? 12000 : 5000);
+    const timeout = setTimeout(() => controller.abort(), (type === 'tun' || type === 'tunnel') ? 12000 : 5000);
     try {
         const res = await fetch('/api/action?type=' + type, { method: 'POST', signal: controller.signal });
         const data = await res.json();
@@ -566,9 +574,9 @@ async function doAction(type) {
     } catch(e) {}
     finally {
         clearTimeout(timeout);
-        setTimeout(() => pendingActions.delete(type), type === 'tun' ? 1500 : 400);
+        setTimeout(() => pendingActions.delete(type), (type === 'tun' || type === 'tunnel') ? 1500 : 400);
         setTimeout(loadStatus, 300);
-        if (type === 'tun') setTimeout(loadStatus, 2500);
+        if (type === 'tun' || type === 'tunnel') setTimeout(loadStatus, 2500);
     }
 }
 
@@ -993,6 +1001,7 @@ function defaultAutoSelectConfig() {
             mode: 'none',
             ids: []
         },
+        ignoreTimeout: false,
         rules: [
             { id: 'preset_no_hk', type: 'exclude_keyword', value: '香港', label: '不使用香港的节点' }
         ]
@@ -1045,6 +1054,7 @@ function renderAutoSelectConfig() {
     const siteModeEl = document.getElementById('autoSelectSiteMode');
     const siteListEl = document.getElementById('autoSelectSiteList');
     const listEl = document.getElementById('autoSelectRuleList');
+    const ignoreTimeoutEl = document.getElementById('autoSelectIgnoreTimeout');
     if (!enabledEl || !scopeEl || !listEl || !autoSelectConfig) return;
 
     const autoNodesTab = document.getElementById('autoNodesTab');
@@ -1057,6 +1067,7 @@ function renderAutoSelectConfig() {
     scopeEl.value = autoSelectConfig.scope || 'subscription';
     if (intervalEl) intervalEl.value = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
     if (startupEl) startupEl.value = autoSelectConfig.startupMode || 'none';
+    if (ignoreTimeoutEl) ignoreTimeoutEl.checked = !!autoSelectConfig.ignoreTimeout;
     if (subscriptionEl) {
         subscriptionEl.style.display = autoSelectConfig.scope === 'subscription' ? '' : 'none';
         if (!suppliersCache.length) {
@@ -1145,6 +1156,13 @@ function setAutoSelectEnabled(checked) {
     renderAutoSelectConfig();
     scheduleAutoSelectTimer();
     if (autoSelectConfig.enabled) ensureAutoSelectNetworkMode();
+}
+
+function setAutoSelectIgnoreTimeout(checked) {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    autoSelectConfig.ignoreTimeout = !!checked;
+    saveAutoSelectConfig();
+    renderAutoSelectConfig();
 }
 
 function setAutoSelectScope(scope) {
@@ -1464,6 +1482,9 @@ function valuesMatchText(values, text) {
 }
 
 function nodePassesAutoSelectRules(node) {
+    if (autoSelectConfig?.ignoreTimeout && node.latency === -1) {
+        return false;
+    }
     const rules = autoSelectConfig?.rules || [];
     const text = nodeSearchText(node);
     const supplierText = [node.sourceFile || node.fileName || '', supplierNameForNode(node)].join(' ');
