@@ -174,7 +174,7 @@ function renderAutoNodes() {
     if (!grid) return;
     grid.innerHTML = '';
     
-    let candidates = autoSelectCandidates();
+    let candidates = autoSelectCandidates().filter(nodePassesAutoSelectRules);
     const keyword = document.getElementById('nodeSearch')?.value.trim().toLowerCase() || "";
     candidates = filterNodeRows(candidates, keyword);
 
