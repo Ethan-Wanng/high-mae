@@ -179,7 +179,7 @@ function renderAutoNodes() {
     candidates = filterNodeRows(candidates, keyword);
 
     grid.innerHTML = `
-        <section class="node-detail-pane" style="width: 100%; border-left: none;">
+        <section class="node-detail-pane" style="grid-column: 1 / -1; width: 100%; border-left: none;">
             <div class="node-detail-header">
                 <div>
                     <div class="node-detail-title">自动选择节点范围</div>
