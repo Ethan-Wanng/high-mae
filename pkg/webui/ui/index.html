@@ -66,63 +66,106 @@
                         <button class="node-source-tab active" data-mode="subscription" onclick="setNodeGroupMode('subscription')">订阅组</button>
                         <button class="node-source-tab" data-mode="aggregate" onclick="setNodeGroupMode('aggregate')">聚合组</button>
                         <button class="node-source-tab" data-mode="auto" onclick="setNodeGroupMode('auto')">自动选择</button>
+                        <button class="node-source-tab auto-nodes-tab" data-mode="auto_nodes" id="autoNodesTab" onclick="setNodeGroupMode('auto_nodes')" style="display:none;">⚡ 自动节点</button>
                     </div>
 
                     <div class="auto-select-node-pane" id="autoSelectNodePane" style="display:none;">
                         <div class="log-container auto-select-panel">
-                            <div class="auto-select-header">
-                                <h4>自动选择节点</h4>
-                                <label class="toggle"><input type="checkbox" id="autoSelectEnabled" onchange="setAutoSelectEnabled(this.checked)"><span class="slider"></span></label>
+                            <!-- Section 1: Master Toggle -->
+                            <div class="auto-select-section">
+                                <div class="auto-select-section-header">
+                                    <div class="auto-select-section-icon icon-power">⚡</div>
+                                    <div class="auto-select-section-title">
+                                        自动选择节点
+                                        <small>开启后将根据规则自动选取最优节点</small>
+                                    </div>
+                                    <div class="auto-select-section-actions">
+                                        <button class="btn-primary" onclick="runAutoSelectNow()" style="padding: 8px 16px; font-size: 12px;">立即选择</button>
+                                        <label class="toggle"><input type="checkbox" id="autoSelectEnabled" onchange="setAutoSelectEnabled(this.checked)"><span class="slider"></span></label>
+                                    </div>
+                                </div>
+                                <div class="auto-select-controls">
+                                    <select id="autoSelectScope" onchange="setAutoSelectScope(this.value)">
+                                        <option value="all">全部节点</option>
+                                        <option value="subscription">指定订阅组</option>
+                                        <option value="aggregate">指定聚合组</option>
+                                    </select>
+                                    <div id="autoSelectSubscriptions" class="auto-select-group-list"></div>
+                                    <div id="autoSelectAggregates" class="auto-select-group-list"></div>
+                                </div>
                             </div>
-                            <div class="auto-select-controls">
-                                <select id="autoSelectScope" onchange="setAutoSelectScope(this.value)">
-                                    <option value="all">全部节点</option>
-                                    <option value="subscription">指定订阅组</option>
-                                    <option value="aggregate">指定聚合组</option>
-                                </select>
-                                <select id="autoSelectSubscription" onchange="setAutoSelectSubscription(this.value)"></select>
-                                <select id="autoSelectAggregate" onchange="setAutoSelectAggregate(this.value)"></select>
-                                <button class="btn-primary" onclick="runAutoSelectNow()">立即选择</button>
+
+                            <!-- Section 2: Timer & Startup -->
+                            <div class="auto-select-section">
+                                <div class="auto-select-section-header">
+                                    <div class="auto-select-section-icon icon-timer">⏱</div>
+                                    <div class="auto-select-section-title">
+                                        定时与启动
+                                        <small>配置自动切换间隔和启动行为</small>
+                                    </div>
+                                </div>
+                                <div class="auto-select-inline-row">
+                                    <span class="auto-select-inline-label">切换间隔</span>
+                                    <input type="number" id="autoSelectIntervalMinutes" min="1" max="1440" step="1" onchange="setAutoSelectInterval(this.value)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:var(--text-main);padding:8px 10px;border-radius:var(--radius);outline:none;">
+                                    <span class="unit-label">分钟</span>
+                                </div>
+                                <div class="auto-select-inline-row">
+                                    <span class="auto-select-inline-label">自动启动</span>
+                                    <select id="autoSelectStartupMode" onchange="setAutoSelectStartupMode(this.value)" style="min-width:140px;">
+                                        <option value="none">不自动启动</option>
+                                        <option value="proxy">系统代理</option>
+                                        <option value="tun">TUN</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div class="auto-select-interval-row">
-                                <span>自动切换间隔</span>
-                                <input type="number" id="autoSelectIntervalMinutes" min="1" max="1440" step="1" onchange="setAutoSelectInterval(this.value)">
-                                <span>分钟</span>
+
+                            <!-- Section 3: Site Check -->
+                            <div class="auto-select-section">
+                                <div class="auto-select-section-header">
+                                    <div class="auto-select-section-icon icon-site">🌐</div>
+                                    <div class="auto-select-section-title">
+                                        网站可用性验证
+                                        <small>要求选中的节点能访问指定网站</small>
+                                    </div>
+                                </div>
+                                <div class="auto-select-site-rule">
+                                    <select id="autoSelectSiteMode" onchange="setAutoSelectSiteMode(this.value)">
+                                        <option value="none">不要求网站测试</option>
+                                        <option value="any">所选网站任一可用</option>
+                                        <option value="all">所选网站全部可用</option>
+                                    </select>
+                                    <div id="autoSelectSiteList" class="auto-select-site-list"></div>
+                                </div>
                             </div>
-                            <div class="auto-select-startup-row">
-                                <span>自动启动</span>
-                                <select id="autoSelectStartupMode" onchange="setAutoSelectStartupMode(this.value)">
-                                    <option value="none">不自动启动</option>
-                                    <option value="proxy">系统代理</option>
-                                    <option value="tun">TUN</option>
-                                </select>
+
+                            <!-- Section 4: Filter Rules -->
+                            <div class="auto-select-section">
+                                <div class="auto-select-section-header">
+                                    <div class="auto-select-section-icon icon-filter">🔍</div>
+                                    <div class="auto-select-section-title">
+                                        筛选规则
+                                        <small>添加规则过滤候选节点池</small>
+                                    </div>
+                                </div>
+                                <div class="auto-select-rule-form">
+                                    <select id="autoSelectRuleType" onchange="renderAutoSelectRulePicker()">
+                                        <option value="exclude_keyword">不使用包含</option>
+                                        <option value="include_region">只选择地区</option>
+                                        <option value="include_node">只选择节点</option>
+                                        <option value="include_subscription">只选择订阅组</option>
+                                        <option value="include_aggregate_group">只选择聚合组</option>
+                                        <option value="include_protocol">只使用协议</option>
+                                        <option value="exclude_protocol">不使用协议</option>
+                                    </select>
+                                    <input type="text" id="autoSelectRuleValue" placeholder="多个值用逗号分隔，如 美国,日本">
+                                    <button class="btn-success" onclick="addAutoSelectRule()">添加规则</button>
+                                </div>
+                                <div id="autoSelectRulePicker" class="auto-select-picker"></div>
+                                <div class="auto-select-rule-toolbar">
+                                    <button class="btn-mini btn-mini-danger" onclick="clearAutoSelectRules()">清空规则</button>
+                                </div>
+                                <div id="autoSelectRuleList" class="auto-select-rule-list"></div>
                             </div>
-                            <div class="auto-select-site-rule">
-                                <select id="autoSelectSiteMode" onchange="setAutoSelectSiteMode(this.value)">
-                                    <option value="none">不要求网站测试</option>
-                                    <option value="any">所选网站任一可用</option>
-                                    <option value="all">所选网站全部可用</option>
-                                </select>
-                                <div id="autoSelectSiteList" class="auto-select-site-list"></div>
-                            </div>
-                            <div class="auto-select-rule-form">
-                                <select id="autoSelectRuleType" onchange="renderAutoSelectRulePicker()">
-                                    <option value="exclude_keyword">不使用包含</option>
-                                    <option value="include_region">只选择地区</option>
-                                    <option value="include_node">只选择节点</option>
-                                    <option value="include_subscription">只选择订阅组</option>
-                                    <option value="include_aggregate_group">只选择聚合组</option>
-                                    <option value="include_protocol">只使用协议</option>
-                                    <option value="exclude_protocol">不使用协议</option>
-                                </select>
-                                <input type="text" id="autoSelectRuleValue" placeholder="多个值用逗号分隔，如 美国,日本">
-                                <button class="btn-success" onclick="addAutoSelectRule()">添加规则</button>
-                            </div>
-                            <div id="autoSelectRulePicker" class="auto-select-picker"></div>
-                            <div class="auto-select-rule-toolbar">
-                                <button class="btn-mini btn-mini-danger" onclick="clearAutoSelectRules()">清空规则</button>
-                            </div>
-                            <div id="autoSelectRuleList" class="auto-select-rule-list"></div>
                         </div>
                     </div>
                     

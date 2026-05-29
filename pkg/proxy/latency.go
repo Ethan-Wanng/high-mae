@@ -70,7 +70,12 @@ func ResolveDirectWithStrategy(host string, strategy string) string {
 					Timeout:   2 * time.Second,
 					LocalAddr: localAddr,
 				}
-				return d.DialContext(ctx, "udp", "223.5.5.5:53")
+				// 优先阿里 DNS，失败后尝试 Cloudflare
+				conn, err := d.DialContext(ctx, "udp", "223.5.5.5:53")
+				if err != nil {
+					return d.DialContext(ctx, "udp", "1.1.1.1:53")
+				}
+				return conn, nil
 			},
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -431,7 +436,7 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 	}
 
 	dialer := &net.Dialer{
-		Timeout:   3 * time.Second,
+		Timeout:   5 * time.Second,
 		LocalAddr: localAddr,
 	}
 
@@ -497,13 +502,13 @@ func fastQUICPing(dialer *net.Dialer, network, addr string) (int64, error) {
 	start := time.Now()
 
 	// 写出探测包
-	conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if _, err := conn.Write(packet); err != nil {
 		return 0, fmt.Errorf("UDP 发送失败: %w", err)
 	}
 
 	// 等待服务器回复 Version Negotiation 包
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	buf := make([]byte, 1500)
 	_, err = conn.Read(buf)
 	if err != nil {

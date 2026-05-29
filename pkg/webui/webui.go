@@ -915,7 +915,7 @@ func runBandwidthSample(client *http.Client, targetURL string, timeout time.Dura
 	}
 
 	var written atomic.Int64
-	buf := make([]byte, 128*1024)
+	buf := make([]byte, 256*1024)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -1314,7 +1314,7 @@ func isPresetSiteTarget(id string) bool {
 
 func runSiteTests(client *http.Client, targets []SiteTestTarget) []SiteTestResult {
 	results := make([]SiteTestResult, len(targets))
-	sem := make(chan struct{}, 6)
+	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
 	for i, target := range targets {
 		wg.Add(1)

@@ -61,7 +61,7 @@ function showTab(tabId) {
 
 
 function setNodeGroupMode(mode) {
-    nodeGroupMode = ["subscription", "aggregate", "auto"].includes(mode) ? mode : "subscription";
+    nodeGroupMode = ["subscription", "aggregate", "auto", "auto_nodes"].includes(mode) ? mode : "subscription";
     if (nodeGroupMode !== "auto") selectedNodeGroupFile = "";
     document.querySelectorAll('.node-source-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === nodeGroupMode);
@@ -73,11 +73,15 @@ function renderNodes() {
     const grid = document.getElementById('nodeGrid');
     const autoPane = document.getElementById('autoSelectNodePane');
     if (!grid) return;
-    if (nodeGroupMode === "auto") {
+    if (nodeGroupMode === "auto" || nodeGroupMode === "auto_nodes") {
         grid.style.display = "none";
         if (autoPane) {
-            autoPane.style.display = "block";
-            renderAutoSelectConfig();
+            autoPane.style.display = nodeGroupMode === "auto" ? "block" : "none";
+            if (nodeGroupMode === "auto") renderAutoSelectConfig();
+        }
+        if (nodeGroupMode === "auto_nodes") {
+            grid.style.display = "";
+            renderAutoNodes();
         }
         return;
     }
@@ -143,11 +147,12 @@ function renderNodes() {
     groupList.forEach(group => {
         const item = document.createElement('button');
         const isSelected = selectedGroup && group.fileName === selectedGroup.fileName;
-        item.className = `node-group-item ${isSelected ? 'selected' : ''} ${group.active ? 'active' : ''}`;
+        const showActive = !autoSelectConfig?.enabled && group.active;
+        item.className = `node-group-item ${isSelected ? 'selected' : ''} ${showActive ? 'active' : ''}`;
         item.onclick = () => selectNodeGroup(group.fileName);
         item.innerHTML = `
             <span class="node-group-name">${escapeHTML(group.name)}</span>
-            <span class="node-group-meta">${group.active ? '当前' : ''}${group.count ? ` · ${group.count}` : ''}</span>
+            <span class="node-group-meta">${showActive ? '当前' : ''}${group.count ? ` · ${group.count}` : ''}</span>
         `;
         list.appendChild(item);
     });
@@ -164,8 +169,42 @@ function renderNodes() {
     body.appendChild(renderNodeTable(selectedNodes));
 }
 
+function renderAutoNodes() {
+    const grid = document.getElementById('nodeGrid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    
+    let candidates = autoSelectCandidates();
+    const keyword = document.getElementById('nodeSearch')?.value.trim().toLowerCase() || "";
+    candidates = filterNodeRows(candidates, keyword);
+
+    grid.innerHTML = `
+        <section class="node-detail-pane" style="width: 100%; border-left: none;">
+            <div class="node-detail-header">
+                <div>
+                    <div class="node-detail-title">自动选择节点范围</div>
+                    <div class="node-detail-subtitle">${candidates.length} 个候选节点${keyword ? "匹配当前搜索" : ""}</div>
+                </div>
+            </div>
+            <div class="node-detail-body"></div>
+        </section>
+    `;
+
+    const body = grid.querySelector('.node-detail-body');
+    if (!candidates.length) {
+        body.innerHTML = '<div class="empty-state">没有符合自动选择规则的候选节点。</div>';
+        return;
+    }
+    body.appendChild(renderNodeTable(candidates));
+}
+
+let filterNodesTimeout = null;
 function filterNodes() {
-    renderNodes();
+    if (filterNodesTimeout) clearTimeout(filterNodesTimeout);
+    filterNodesTimeout = setTimeout(() => {
+        if (nodeGroupMode === "auto_nodes") renderAutoNodes();
+        else renderNodes();
+    }, 200);
 }
 
 function filterNodeRows(nodes, keyword) {
@@ -946,8 +985,8 @@ function defaultAutoSelectConfig() {
     return {
         enabled: false,
         scope: 'subscription',
-        subscriptionFile: '',
-        aggregateFile: '',
+        subscriptionFiles: [],
+        aggregateFiles: [],
         intervalMinutes: 5,
         startupMode: 'none',
         siteCheck: {
@@ -971,8 +1010,16 @@ function loadAutoSelectConfig() {
         autoSelectConfig = defaultAutoSelectConfig();
     }
     if (!autoSelectConfig.scope) autoSelectConfig.scope = 'subscription';
-    if (!autoSelectConfig.subscriptionFile) autoSelectConfig.subscriptionFile = '';
-    if (!autoSelectConfig.aggregateFile) autoSelectConfig.aggregateFile = '';
+    if (autoSelectConfig.subscriptionFile) {
+        autoSelectConfig.subscriptionFiles = [autoSelectConfig.subscriptionFile];
+        delete autoSelectConfig.subscriptionFile;
+    }
+    if (!Array.isArray(autoSelectConfig.subscriptionFiles)) autoSelectConfig.subscriptionFiles = [];
+    if (autoSelectConfig.aggregateFile) {
+        autoSelectConfig.aggregateFiles = [autoSelectConfig.aggregateFile];
+        delete autoSelectConfig.aggregateFile;
+    }
+    if (!Array.isArray(autoSelectConfig.aggregateFiles)) autoSelectConfig.aggregateFiles = [];
     autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
     if (!['none', 'proxy', 'tun'].includes(autoSelectConfig.startupMode)) autoSelectConfig.startupMode = 'none';
     if (!autoSelectConfig.siteCheck || typeof autoSelectConfig.siteCheck !== 'object') {
@@ -991,8 +1038,8 @@ function saveAutoSelectConfig() {
 function renderAutoSelectConfig() {
     const enabledEl = document.getElementById('autoSelectEnabled');
     const scopeEl = document.getElementById('autoSelectScope');
-    const subscriptionEl = document.getElementById('autoSelectSubscription');
-    const aggregateEl = document.getElementById('autoSelectAggregate');
+    const subscriptionEl = document.getElementById('autoSelectSubscriptions');
+    const aggregateEl = document.getElementById('autoSelectAggregates');
     const intervalEl = document.getElementById('autoSelectIntervalMinutes');
     const startupEl = document.getElementById('autoSelectStartupMode');
     const siteModeEl = document.getElementById('autoSelectSiteMode');
@@ -1000,34 +1047,54 @@ function renderAutoSelectConfig() {
     const listEl = document.getElementById('autoSelectRuleList');
     if (!enabledEl || !scopeEl || !listEl || !autoSelectConfig) return;
 
+    const autoNodesTab = document.getElementById('autoNodesTab');
+    if (autoNodesTab) autoNodesTab.style.display = autoSelectConfig.enabled ? 'inline-block' : 'none';
+    if (!autoSelectConfig.enabled && nodeGroupMode === 'auto_nodes') {
+        setNodeGroupMode('subscription');
+    }
+
     enabledEl.checked = !!autoSelectConfig.enabled;
     scopeEl.value = autoSelectConfig.scope || 'subscription';
     if (intervalEl) intervalEl.value = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
     if (startupEl) startupEl.value = autoSelectConfig.startupMode || 'none';
     if (subscriptionEl) {
         subscriptionEl.style.display = autoSelectConfig.scope === 'subscription' ? '' : 'none';
-        subscriptionEl.innerHTML = suppliersCache.length
-            ? suppliersCache.map(s => `<option value="${escapeHTML(s.fileName)}">${escapeHTML(s.name)}</option>`).join('')
-            : '<option value="">暂无订阅组</option>';
-        if (autoSelectConfig.subscriptionFile && suppliersCache.some(s => s.fileName === autoSelectConfig.subscriptionFile)) {
-            subscriptionEl.value = autoSelectConfig.subscriptionFile;
-        } else if (suppliersCache.length) {
-            autoSelectConfig.subscriptionFile = suppliersCache[0].fileName;
-            subscriptionEl.value = autoSelectConfig.subscriptionFile;
-            saveAutoSelectConfig();
+        if (!suppliersCache.length) {
+            subscriptionEl.innerHTML = '<div class="auto-select-empty">暂无订阅组</div>';
+        } else {
+            const selected = new Set(autoSelectConfig.subscriptionFiles || []);
+            subscriptionEl.innerHTML = suppliersCache.map(s => `
+                <label class="auto-select-check">
+                    <input type="checkbox" ${selected.has(s.fileName) ? 'checked' : ''} onchange="toggleAutoSelectSubscription('${encodeURIComponent(s.fileName)}', this.checked)">
+                    <span>${escapeHTML(s.name)}</span>
+                </label>
+            `).join('');
+            if (autoSelectConfig.subscriptionFiles.length === 0 && suppliersCache.length > 0) {
+                autoSelectConfig.subscriptionFiles = [suppliersCache[0].fileName];
+                saveAutoSelectConfig();
+                renderAutoSelectConfig();
+                return;
+            }
         }
     }
     if (aggregateEl) {
         aggregateEl.style.display = autoSelectConfig.scope === 'aggregate' ? '' : 'none';
-        aggregateEl.innerHTML = aggregateGroupsCache.length
-            ? aggregateGroupsCache.map(g => `<option value="${escapeHTML(g.fileName)}">${escapeHTML(g.name)}</option>`).join('')
-            : '<option value="">暂无聚合组</option>';
-        if (autoSelectConfig.aggregateFile && aggregateGroupsCache.some(g => g.fileName === autoSelectConfig.aggregateFile)) {
-            aggregateEl.value = autoSelectConfig.aggregateFile;
-        } else if (aggregateGroupsCache.length) {
-            autoSelectConfig.aggregateFile = aggregateGroupsCache[0].fileName;
-            aggregateEl.value = autoSelectConfig.aggregateFile;
-            saveAutoSelectConfig();
+        if (!aggregateGroupsCache.length) {
+            aggregateEl.innerHTML = '<div class="auto-select-empty">暂无聚合组</div>';
+        } else {
+            const selected = new Set(autoSelectConfig.aggregateFiles || []);
+            aggregateEl.innerHTML = aggregateGroupsCache.map(g => `
+                <label class="auto-select-check">
+                    <input type="checkbox" ${selected.has(g.fileName) ? 'checked' : ''} onchange="toggleAutoSelectAggregate('${encodeURIComponent(g.fileName)}', this.checked)">
+                    <span>${escapeHTML(g.name)}</span>
+                </label>
+            `).join('');
+            if (autoSelectConfig.aggregateFiles.length === 0 && aggregateGroupsCache.length > 0) {
+                autoSelectConfig.aggregateFiles = [aggregateGroupsCache[0].fileName];
+                saveAutoSelectConfig();
+                renderAutoSelectConfig();
+                return;
+            }
         }
     }
     if (siteModeEl) siteModeEl.value = autoSelectConfig.siteCheck?.mode || 'none';
@@ -1068,6 +1135,13 @@ function setAutoSelectEnabled(checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.enabled = !!checked;
     saveAutoSelectConfig();
+    
+    const autoNodesTab = document.getElementById('autoNodesTab');
+    if (autoNodesTab) autoNodesTab.style.display = autoSelectConfig.enabled ? 'inline-block' : 'none';
+    if (!autoSelectConfig.enabled && nodeGroupMode === 'auto_nodes') {
+        setNodeGroupMode('subscription');
+    }
+
     renderAutoSelectConfig();
     scheduleAutoSelectTimer();
     if (autoSelectConfig.enabled) ensureAutoSelectNetworkMode();
@@ -1080,15 +1154,21 @@ function setAutoSelectScope(scope) {
     renderAutoSelectConfig();
 }
 
-function setAutoSelectSubscription(fileName) {
+function toggleAutoSelectSubscription(fileName, checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
-    autoSelectConfig.subscriptionFile = fileName || '';
+    const set = new Set(autoSelectConfig.subscriptionFiles || []);
+    if (checked) set.add(fileName);
+    else set.delete(fileName);
+    autoSelectConfig.subscriptionFiles = Array.from(set);
     saveAutoSelectConfig();
 }
 
-function setAutoSelectAggregate(fileName) {
+function toggleAutoSelectAggregate(fileName, checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
-    autoSelectConfig.aggregateFile = fileName || '';
+    const set = new Set(autoSelectConfig.aggregateFiles || []);
+    if (checked) set.add(fileName);
+    else set.delete(fileName);
+    autoSelectConfig.aggregateFiles = Array.from(set);
     saveAutoSelectConfig();
 }
 
@@ -1348,12 +1428,18 @@ function aggregateNameByFile(fileName) {
     return aggregateGroupsCache.find(g => g.fileName === fileName)?.name || '';
 }
 
-function selectedSubscriptionFile() {
-    return autoSelectConfig?.subscriptionFile || suppliersCache.find(s => s.active)?.fileName || suppliersCache[0]?.fileName || '';
+function selectedSubscriptionFiles() {
+    if (autoSelectConfig?.subscriptionFiles?.length > 0) return autoSelectConfig.subscriptionFiles;
+    const active = suppliersCache.find(s => s.active);
+    if (active) return [active.fileName];
+    return suppliersCache[0] ? [suppliersCache[0].fileName] : [];
 }
 
-function selectedAggregateFile() {
-    return autoSelectConfig?.aggregateFile || aggregateGroupsCache.find(g => g.active)?.fileName || aggregateGroupsCache[0]?.fileName || '';
+function selectedAggregateFiles() {
+    if (autoSelectConfig?.aggregateFiles?.length > 0) return autoSelectConfig.aggregateFiles;
+    const active = aggregateGroupsCache.find(g => g.active);
+    if (active) return [active.fileName];
+    return aggregateGroupsCache[0] ? [aggregateGroupsCache[0].fileName] : [];
 }
 
 function nodeSearchText(node) {
@@ -1409,14 +1495,14 @@ function autoSelectCandidates(fileName = '') {
     const scope = autoSelectConfig?.scope || 'subscription';
     if (scope === 'all') return allNodesList || [];
     if (scope === 'subscription') {
-        const targetFile = fileName || selectedSubscriptionFile();
-        if (!targetFile) return [];
-        return (allNodesList || []).filter(n => n.fileName === targetFile);
+        const targets = fileName ? [fileName] : selectedSubscriptionFiles();
+        if (!targets.length) return [];
+        return (allNodesList || []).filter(n => targets.includes(n.fileName));
     }
     if (scope === 'aggregate') {
-        const targetFile = fileName || selectedAggregateFile();
-        if (!targetFile) return [];
-        return (allNodesList || []).filter(n => n.fileName === targetFile);
+        const targets = fileName ? [fileName] : selectedAggregateFiles();
+        if (!targets.length) return [];
+        return (allNodesList || []).filter(n => targets.includes(n.fileName));
     }
     return [];
 }
