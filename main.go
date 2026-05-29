@@ -82,6 +82,8 @@ func onReady() {
 
 	routing.LoadUserRules()
 	proxy.LoadDNSConfig()
+	proxy.LoadNetworkShareConfig()
+	proxy.LoadSystemConfig()
 
 	// 4. 激活上次选择的节点，如果不存在或第一次，则默认激活第一个节点
 	if len(common.AllNodes) > 0 {
@@ -100,7 +102,12 @@ func onReady() {
 	common.MToggleProxy = systray.AddMenuItem("⚪ 系统代理: [已关闭]", "点击切换系统浏览器代理")
 	common.MToggleMode = systray.AddMenuItem("🔄 路由模式: [规则分流]", "点击切换全局/分流")
 	systray.AddSeparator()
-	common.MToggleTun = systray.AddMenuItem("🔌 虚拟网卡 (TUN): [已关闭]", "接管所有流量")
+	shareTitle := "⚪ 网络共享: [已关闭]"
+	if common.IsNetworkShareOn {
+		shareTitle = "🟢 网络共享: [已开启]"
+	}
+	common.MToggleShare = systray.AddMenuItem(shareTitle, "允许局域网设备使用本机 HTTP 代理")
+	common.MToggleTun = systray.AddMenuItem("🔌 隧道连接: [已关闭]", "通过 TUN 隧道接管所有流量")
 	systray.AddSeparator()
 	mAbout := systray.AddMenuItem("ℹ️ 关于", "查看项目信息与技术栈")
 	common.MQuit = systray.AddMenuItem("❌ 安全退出", "退出程序")
@@ -141,14 +148,20 @@ func onReady() {
 						common.MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
 					}
 				})
+			case <-common.MToggleShare.ClickedCh:
+				if msg := proxy.ToggleNetworkShare(); msg != "" {
+					utils.ShowWindowsMsgBox("网络共享", msg)
+				} else if common.IsNetworkShareOn {
+					utils.ShowWindowsMsgBox("网络共享", "局域网设备可使用代理地址: "+proxy.NetworkShareAddress()+"\n\n如无法连接，请检查 Windows 防火墙是否允许 wing 访问专用网络。")
+				}
 			case <-common.MToggleTun.ClickedCh:
 				if msg := proxy.ToggleTunMode(); msg != "" {
-					utils.ShowWindowsMsgBox("TUN 模式", msg)
+					utils.ShowWindowsMsgBox("隧道连接", msg)
 				}
 				stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
 			case <-mAbout.ClickedCh:
 				aboutMsg := "wing v1.2.0 - Windows 桌面代理客户端\n\n" +
-					"wing 集成 sing-box、Mieru Client 与本地 Web 控制面板，支持节点订阅、测速、规则分流、TUN 接管、DNS 分流与 WebRTC 防泄漏。\n\n" +
+					"wing 集成 sing-box、Mieru Client 与本地 Web 控制面板，支持节点订阅、测速、规则分流、网络共享、隧道连接、DNS 分流与 WebRTC 防泄漏。\n\n" +
 					"协议支持：Hysteria2、TUIC、VLESS、VMess、Trojan、Shadowsocks、AnyTLS、Naive、Mieru、HTTP/SOCKS 等。\n\n" +
 					"命令行进程规则可按完整命令或命令前缀选择直连/代理，默认预设 go test 直连。该规则作用于进入本地 HTTP 代理的 TCP 请求；ping 等 ICMP 流量需使用 TUN 模式接管。\n\n" +
 					"核心技术栈：\n" +

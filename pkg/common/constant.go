@@ -15,7 +15,7 @@ type GenericClient interface {
 	CreateProxy(ctx context.Context, destination metadata.Socksaddr) (net.Conn, error)
 }
 
-const LocalHttpPort = "10808"
+var LocalHttpPort = "10808"
 const LocalSocksPort = "10810"
 const TunHttpPort = "10811"
 const TunIP = "10.0.0.2"
@@ -24,6 +24,7 @@ var (
 	IsSystemProxyOn     = false
 	ProxyMode           = "Rule"
 	IsTunModeOn         = false
+	IsNetworkShareOn    = false
 	IsSystemDNSHijacked = false // 是否已经覆写了系统 DNS
 	IsWebRTCPolicyOn    = false
 	PrivacyMode         = false
@@ -48,6 +49,7 @@ var (
 	MToggleProxy *systray.MenuItem
 	MToggleMode  *systray.MenuItem
 	MToggleTun   *systray.MenuItem
+	MToggleShare *systray.MenuItem
 	MQuit        *systray.MenuItem
 
 	NodeMenuItems      []*systray.MenuItem // 保存所有的节点子菜单项，用于动态刷新

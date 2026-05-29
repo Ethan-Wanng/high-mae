@@ -304,6 +304,22 @@
                         </div>
                     </div>
 
+                    <!-- Basic Settings -->
+                    <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg);">
+                        <h4 style="margin: 0 0 16px 0; font-size: 14px; color: var(--accent); display: flex; align-items: center; gap: 6px;">⚙️ 基础设置</h4>
+                        <div class="controls" style="margin: 0; padding: 0; background: transparent; border: none; box-shadow: none; display: flex; flex-direction: column; gap: 12px;">
+                            <div class="control-row" style="display: grid; grid-template-columns: 1fr; gap: 12px; margin: 0;">
+                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;">
+                                    <span>🌐 HTTP代理端口</span>
+                                    <div style="display: flex; gap: 8px;">
+                                        <input type="number" id="txtProxyPort" style="width: 80px; padding: 6px 10px; border-radius: var(--radius); border: 1px solid rgba(148,163,184,0.18); background: rgba(255,255,255,0.05); color: var(--text-main); outline: none;" />
+                                        <button class="btn-primary" onclick="saveProxyPort()" style="padding: 6px 12px; font-size: 12px;">保存</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Active Subscription Traffic Info -->
                     <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg);">
                         <h4 style="margin: 0 0 12px 0; font-size: 14px; color: var(--accent-2); display: flex; align-items: center; gap: 6px;">📦 订阅流量状态</h4>

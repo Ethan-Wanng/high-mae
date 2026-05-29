@@ -135,6 +135,7 @@ func buildWebUIMux() *http.ServeMux {
 	mux.HandleFunc("/api/history", historyHandler)
 	mux.HandleFunc("/api/clear_logs", clearLogsHandler)
 	mux.HandleFunc("/api/privacy", privacyToggleHandler)
+	mux.HandleFunc("/api/system_config", systemConfigHandler)
 
 	return mux
 }
@@ -1045,13 +1046,16 @@ func getStatusHandler(w http.ResponseWriter, r *http.Request) {
 		tunState = tunPendingState.Load()
 	}
 	status := map[string]interface{}{
-		"proxy":       common.IsSystemProxyOn,
-		"mode":        common.ProxyMode,
-		"tun":         tunState,
-		"webrtc":      common.IsWebRTCPolicyOn,
-		"speedIn":     stats.CurrentSpeedIn,
-		"speedOut":    stats.CurrentSpeedOut,
-		"freeTraffic": freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
+		"proxy":               common.IsSystemProxyOn,
+		"mode":                common.ProxyMode,
+		"tun":                 tunState,
+		"tunnel":              tunState,
+		"networkShare":        common.IsNetworkShareOn,
+		"networkShareAddress": proxy.NetworkShareAddress(),
+		"webrtc":              common.IsWebRTCPolicyOn,
+		"speedIn":             stats.CurrentSpeedIn,
+		"speedOut":            stats.CurrentSpeedOut,
+		"freeTraffic":         freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
@@ -1560,9 +1564,26 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		})
-	case "tun":
+	case "network_share":
+		if msg := proxy.ToggleNetworkShare(); msg != "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": msg})
+			return
+		}
+		resp := map[string]interface{}{
+			"ok":      true,
+			"enabled": common.IsNetworkShareOn,
+			"address": proxy.NetworkShareAddress(),
+		}
+		if common.IsNetworkShareOn {
+			resp["msg"] = "网络共享已开启，局域网设备可使用代理地址: " + proxy.NetworkShareAddress()
+		} else {
+			resp["msg"] = "网络共享已关闭。"
+		}
+		json.NewEncoder(w).Encode(resp)
+		return
+	case "tun", "tunnel":
 		if !utils.IsAdmin() {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "开启虚拟网卡(TUN)需要管理员权限！请以管理员身份运行。"})
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "开启隧道连接需要管理员权限！请以管理员身份运行。"})
 			return
 		}
 		// 标记 TUN 正在切换中，防止轮询期间把 checkbox 闪回旧状态

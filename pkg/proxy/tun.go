@@ -48,7 +48,7 @@ func ToggleTunMode() string {
 		common.IsTunModeOn = false
 		common.RealLocalIPBeforeTun = "" // 清除缓存，下次开启时重新获取
 		if common.MToggleTun != nil {
-			common.MToggleTun.SetTitle("🔌 虚拟网卡 (TUN): [已关闭]")
+			common.MToggleTun.SetTitle("🔌 隧道连接: [已关闭]")
 		}
 		log.Println("TUN 模式已关闭（销毁虚拟网卡，删除路由）")
 		return ""
@@ -66,7 +66,7 @@ func ToggleTunMode() string {
 	common.IsTunModeOn = true
 	startTunWatchdogLocked()
 	if common.MToggleTun != nil {
-		common.MToggleTun.SetTitle("🟢 虚拟网卡 (TUN): [已开启]")
+		common.MToggleTun.SetTitle("🟢 隧道连接: [已开启]")
 	}
 	log.Println("TUN 模式已开启（创建虚拟网卡，添加路由）")
 	return ""

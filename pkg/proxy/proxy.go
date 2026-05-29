@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,8 @@ var (
 	globalRegistryContext context.Context
 	globalRegistryOnce    sync.Once
 	networkTransitionMu   sync.Mutex
+	localHTTPServerMu     sync.Mutex
+	localHTTPServer       *http.Server
 )
 
 func getRegistryContext() context.Context {
@@ -108,7 +111,7 @@ func restartTunAfterNodeSwitch() {
 		log.Printf("重启 TUN 失败: %v", err)
 		common.IsTunModeOn = false
 		if common.MToggleTun != nil {
-			common.MToggleTun.SetTitle("🔌 虚拟网卡 (TUN): [已关闭]")
+			common.MToggleTun.SetTitle("🔌 隧道连接: [已关闭]")
 		}
 	}
 }
@@ -418,13 +421,122 @@ func normalizeNaiveQUICCongestion(value string) string {
 }
 
 func StartAnyTLSHttpServer() {
+	LoadNetworkShareConfig()
+	if err := launchLocalHTTPProxyServer(); err != nil {
+		log.Printf("本地 HTTP 代理启动失败: %v", err)
+	}
+}
+
+func LoadNetworkShareConfig() {
+	data, err := storage.Read("network_share_enabled")
+	if err != nil {
+		common.IsNetworkShareOn = false
+		return
+	}
+	value := strings.ToLower(strings.TrimSpace(string(data)))
+	common.IsNetworkShareOn = value == "true" || value == "1" || value == "yes"
+	updateNetworkShareTrayTitle()
+}
+
+func ToggleNetworkShare() string {
+	networkTransitionMu.Lock()
+	defer networkTransitionMu.Unlock()
+
+	previous := common.IsNetworkShareOn
+	common.IsNetworkShareOn = !previous
+	if err := RestartLocalHTTPProxyServer(); err != nil {
+		common.IsNetworkShareOn = previous
+		if rollbackErr := RestartLocalHTTPProxyServer(); rollbackErr != nil {
+			log.Printf("网络共享回滚监听失败: %v", rollbackErr)
+		}
+		return fmt.Sprintf("切换网络共享失败: %v", err)
+	}
+
+	_ = storage.Write("network_share_enabled", []byte(strconv.FormatBool(common.IsNetworkShareOn)))
+	updateNetworkShareTrayTitle()
+	return ""
+}
+
+func NetworkShareAddress() string {
+	host := "127.0.0.1"
+	if common.IsNetworkShareOn {
+		if ip := strings.TrimSpace(utils.GetRealLocalIP()); ip != "" {
+			host = ip
+		} else {
+			host = "本机局域网IP"
+		}
+	}
+	return "http://" + host + ":" + common.LocalHttpPort
+}
+
+func localHTTPProxyListenAddr() string {
+	if common.IsNetworkShareOn {
+		return "0.0.0.0:" + common.LocalHttpPort
+	}
+	return "127.0.0.1:" + common.LocalHttpPort
+}
+
+func RestartLocalHTTPProxyServer() error {
+	shutdownLocalHTTPProxyServer()
+	return launchLocalHTTPProxyServer()
+}
+
+func launchLocalHTTPProxyServer() error {
+	addr := localHTTPProxyListenAddr()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+
 	server := &http.Server{
-		Addr:              "127.0.0.1:" + common.LocalHttpPort,
 		Handler:           &HTTPProxyHandler{},
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
-	server.ListenAndServe()
+
+	localHTTPServerMu.Lock()
+	localHTTPServer = server
+	localHTTPServerMu.Unlock()
+
+	log.Printf("HTTP 代理监听: %s", addr)
+	utils.SafeGo("local http proxy listener", func() {
+		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Printf("HTTP 代理监听异常: %v", err)
+		}
+		localHTTPServerMu.Lock()
+		if localHTTPServer == server {
+			localHTTPServer = nil
+		}
+		localHTTPServerMu.Unlock()
+	})
+	return nil
+}
+
+func shutdownLocalHTTPProxyServer() {
+	localHTTPServerMu.Lock()
+	server := localHTTPServer
+	localHTTPServer = nil
+	localHTTPServerMu.Unlock()
+	if server == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		server.Close()
+	}
+}
+
+func updateNetworkShareTrayTitle() {
+	if common.MToggleShare == nil {
+		return
+	}
+	if common.IsNetworkShareOn {
+		common.MToggleShare.SetTitle("🟢 网络共享: [已开启]")
+	} else {
+		common.MToggleShare.SetTitle("⚪ 网络共享: [已关闭]")
+	}
 }
 
 type SingBoxAdapter struct {

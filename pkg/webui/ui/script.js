@@ -3244,6 +3244,7 @@ async function submitAggAction() {
 }
 
 window.onload = () => {
+    loadSystemConfig();
     loadAutoSelectConfig();
     loadStatus();
     loadSuppliers();
