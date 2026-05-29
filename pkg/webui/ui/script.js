@@ -761,7 +761,7 @@ function renderDashboardTraffic(sessions) {
                 <span>${formatBytes(total)}</span>
             </div>
             <div class="traffic-bar"><span style="width:${Math.max(4, total / max * 100)}%"></span></div>
-            <div class="traffic-row-sub">流入 ${formatBytes(inbound)} · 流出 ${formatBytes(outbound)}</div>
+            <div class="traffic-row-sub">下载 ${formatBytes(inbound)} · 上传 ${formatBytes(outbound)}</div>
         </div>
     `).join('');
 }
@@ -1030,7 +1030,7 @@ function loadAutoSelectConfig() {
     }
     if (!Array.isArray(autoSelectConfig.aggregateFiles)) autoSelectConfig.aggregateFiles = [];
     autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
-    if (!['none', 'proxy', 'tun'].includes(autoSelectConfig.startupMode)) autoSelectConfig.startupMode = 'none';
+    if (!['none', 'proxy', 'tun', 'proxy_tun'].includes(autoSelectConfig.startupMode)) autoSelectConfig.startupMode = 'none';
     if (!autoSelectConfig.siteCheck || typeof autoSelectConfig.siteCheck !== 'object') {
         autoSelectConfig.siteCheck = { mode: 'none', ids: [] };
     }
@@ -1042,6 +1042,10 @@ function loadAutoSelectConfig() {
 function saveAutoSelectConfig() {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     localStorage.setItem('wing_auto_select_config', JSON.stringify(autoSelectConfig));
+    scheduleAutoSelectTimer();
+    if (autoSelectConfig.enabled) {
+        testAutoNodes();
+    }
 }
 
 function renderAutoSelectConfig() {
@@ -1206,7 +1210,7 @@ function setAutoSelectInterval(value) {
 
 function setAutoSelectStartupMode(mode) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
-    autoSelectConfig.startupMode = ['none', 'proxy', 'tun'].includes(mode) ? mode : 'none';
+    autoSelectConfig.startupMode = ['none', 'proxy', 'tun', 'proxy_tun'].includes(mode) ? mode : 'none';
     saveAutoSelectConfig();
     renderAutoSelectConfig();
     if (autoSelectConfig.enabled) ensureAutoSelectNetworkMode();
