@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"wing/pkg/storage"
 )
 
@@ -31,15 +30,12 @@ func GetMachineID() string {
 
 	var id string
 	if runtime.GOOS == "windows" {
-		// Run with hidden window attributes
 		cmd1 := exec.Command("cmd", "/c", "reg", "query", `HKLM\SOFTWARE\Microsoft\Cryptography`, "/v", "MachineGuid")
-		cmd1.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 		if out, err := cmd1.Output(); err == nil {
 			id = parseRegValue(string(out), "MachineGuid")
 		}
 		if id == "" {
 			cmd2 := exec.Command("wmic", "csproduct", "get", "uuid")
-			cmd2.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 			out, err := cmd2.Output()
 			if err == nil {
 				lines := strings.Split(string(out), "\n")

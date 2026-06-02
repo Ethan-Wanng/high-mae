@@ -16,9 +16,6 @@ import (
 	"runtime/debug"
 
 	"github.com/getlantern/systray"
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
 
 func init() {
@@ -42,7 +39,7 @@ func onReady() {
 	common.MCurrentNode.Disable()
 	systray.AddSeparator()
 
-	mShowUI := systray.AddMenuItem("🎛️ 显示控制面板", "显示桌面控制面板窗口")
+	mShowUI := systray.AddMenuItem("🎛️ 显示控制面板", "显示 Flutter 桌面控制面板窗口")
 	mBrowserUI := systray.AddMenuItem("🌐 浏览器打开控制面板", "在浏览器中管理节点并测速")
 	mImportLink := systray.AddMenuItem("📋 导入节点/订阅", "从剪贴板自动解析并添加节点")
 	systray.AddSeparator()
@@ -70,14 +67,15 @@ func onReady() {
 	utils.SafeGo("local http proxy", proxy.StartAnyTLSHttpServer)
 	sub.StartAutoUpdateSubscriptions()
 	utils.SetSystemProxy(common.IsSystemProxyOn)
+	utils.SafeGo("flutter desktop ui", ShowFlutterWindow)
 
 	utils.SafeGo("tray menu loop", func() {
 		for {
 			select {
 			case <-mShowUI.ClickedCh:
-				ShowWailsWindow()
+				ShowFlutterWindow()
 			case <-mBrowserUI.ClickedCh:
-				utils.RunHiddenCommand("cmd", "/c", "start", "http://127.0.0.1:10809/")
+				openExternalURL(webUIURL)
 			case <-mImportLink.ClickedCh:
 				sub.ImportNodeFromClipboard()
 			case <-common.MToggleProxy.ClickedCh:
@@ -107,16 +105,17 @@ func onReady() {
 				}
 				stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
 			case <-mAbout.ClickedCh:
-				aboutMsg := "wing v1.2.0 - Windows 桌面代理客户端\n\n" +
+				aboutMsg := "wing v1.0.0 - 桌面代理客户端\n\n" +
 					"wing 集成 sing-box、Mieru Client 与本地 Web 控制面板，支持节点订阅、测速、规则分流、隧道连接、DNS 分流与 WebRTC 防泄漏。\n\n" +
 					"协议支持：Hysteria2、TUIC、VLESS、VMess、Trojan、Shadowsocks、AnyTLS、Naive、Mieru、HTTP/SOCKS 等。\n\n" +
 					"命令行进程规则可按完整命令或命令前缀选择直连/代理，默认预设 go test 直连。该规则作用于进入本地 HTTP 代理的 TCP 请求；ping 等 ICMP 流量需使用 TUN 模式接管。\n\n" +
 					"核心技术栈：\n" +
-					"• 框架：Wails v2 Desktop\n" +
+					"• 框架：Flutter Desktop + Go 后端\n" +
 					"• 引擎：sing-box (及定制版 mbox) & Mieru Client\n" +
 					"• 托盘：getlantern/systray\n" +
 					"• 控制面板：Go 标准库 (net/http)\n" +
 					"• 网络接管：内置 sing-box TUN + Wintun\n\n" +
+					flutterUIStatus() + "\n\n" +
 					"Created with ❤️ by Ethan-Wanng"
 				utils.ShowWindowsMsgBox("关于 wing", aboutMsg)
 			case <-common.MQuit.ClickedCh:
@@ -142,7 +141,7 @@ func onExit() {
 	common.IsSystemProxyOn = false
 	stats.SyncTrafficSession(false, false)
 	_ = storage.Close()
-	QuitWailsApp()
+	QuitFlutterApp()
 	utils.ReleaseSingleInstanceLock()
 }
 
@@ -167,34 +166,5 @@ func main() {
 		return
 	}
 
-	// 1. Run the system tray in a background thread
-	utils.SafeGo("systray", func() { systray.Run(onReady, onExit) })
-
-	// 2. Initialize and run the Wails Desktop window on the main thread
-	app := NewApp()
-
-	err = wails.Run(&options.App{
-		Title:             "wing",
-		Width:             1280,
-		Height:            800,
-		DisableResize:     false,
-		Fullscreen:        false,
-		Frameless:         false,
-		StartHidden:       false,
-		HideWindowOnClose: true,
-		AssetServer: &assetserver.Options{
-			Assets:  webui.GetEmbeddedAssets(),
-			Handler: webui.GetWebUIMux(),
-		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup:        app.startup,
-		OnBeforeClose:    app.beforeClose,
-		Bind: []interface{}{
-			app,
-		},
-	})
-
-	if err != nil {
-		println("Error:", err.Error())
-	}
+	systray.Run(onReady, onExit)
 }

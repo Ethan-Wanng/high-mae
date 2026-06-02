@@ -8,6 +8,12 @@ $ldflags = "-s -w -H windowsgui"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $goCache = Join-Path $repoRoot ".gocache"
 $legacyGoModCache = Join-Path $repoRoot "gomodcache2"
+$flutterProject = Join-Path $repoRoot "flutter_ui"
+$flutterRelease = Join-Path $flutterProject "build\windows\x64\runner\Release"
+$flutterDist = Join-Path $repoRoot "build\bin\flutter_ui"
+$backendExe = Join-Path $repoRoot "build\bin\wing.exe"
+$portablePackageScript = Join-Path $repoRoot "scripts\package-portable.ps1"
+$innoPackageScript = Join-Path $repoRoot "scripts\package.ps1"
 
 function Protect-LegacyGoModCache {
     if (Test-Path $legacyGoModCache) {
@@ -43,6 +49,7 @@ function Copy-CronetDll {
     Write-Host "🔍 检查并定位 libcronet.dll..." -ForegroundColor Cyan
     $destRoot = Join-Path $repoRoot "libcronet.dll"
     $destBuild = Join-Path $repoRoot "build\bin\libcronet.dll"
+    New-Item -ItemType Directory -Path (Split-Path -Parent $destBuild) -Force | Out-Null
 
     if ((Test-Path $destRoot) -and (Test-Path $destBuild)) {
         Write-Host "✅ libcronet.dll 已存在于合适的位置。" -ForegroundColor Green
@@ -69,46 +76,138 @@ function Copy-CronetDll {
     }
 }
 
+function Reset-ProjectDirectory {
+    param([string]$Path)
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $fullRoot = [System.IO.Path]::GetFullPath($repoRoot)
+    if (-not $fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "拒绝清理项目目录之外的路径: $fullPath"
+    }
+
+    if (Test-Path $fullPath) {
+        Remove-Item -LiteralPath $fullPath -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $fullPath -Force | Out-Null
+}
+
+function Build-FlutterUI {
+    if (-not (Test-Path $flutterProject)) {
+        throw "未找到 Flutter 项目目录: $flutterProject"
+    }
+
+    Write-Host "🦋 正在构建 Flutter 桌面控制面板..." -ForegroundColor Cyan
+    Push-Location $flutterProject
+    try {
+        flutter pub get
+        if ($LASTEXITCODE -ne 0) {
+            throw "Flutter 依赖安装失败，退出码: $LASTEXITCODE"
+        }
+
+        flutter build windows --release
+        if ($LASTEXITCODE -ne 0) {
+            throw "Flutter Windows 构建失败，退出码: $LASTEXITCODE。请确认已安装 Visual Studio 2022 Build Tools 的 Desktop development with C++ 工作负载。"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
+    $flutterExe = Join-Path $flutterRelease "wing_ui.exe"
+    if (-not (Test-Path $flutterExe)) {
+        throw "Flutter 构建失败: 未能找到 $flutterExe"
+    }
+
+    Reset-ProjectDirectory $flutterDist
+    Copy-Item -Path (Join-Path $flutterRelease "*") -Destination $flutterDist -Recurse -Force
+    Write-Host "✅ Flutter 控制面板已输出到 build\bin\flutter_ui" -ForegroundColor Green
+}
+
+function Build-GoBackend {
+    Copy-CronetDll
+    Write-Host "🚀 正在构建 Go 后端与系统托盘..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Path (Split-Path -Parent $backendExe) -Force | Out-Null
+
+    Invoke-WithProjectGoCache {
+        go build -tags $tags -ldflags $ldflags -o $backendExe .
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "Go 后端构建失败，退出码: $LASTEXITCODE"
+    }
+
+    Copy-Item $backendExe -Destination (Join-Path $repoRoot "wing.exe") -Force
+    Write-Host "✅ Go 后端构建完成: wing.exe" -ForegroundColor Green
+}
+
 switch ($args[0]) {
     "build" {
-        Copy-CronetDll
-        Write-Host "🚀 正在进行 Wails 桌面应用隐私保护构建..." -ForegroundColor Cyan
-        $outputExe = Join-Path $repoRoot "build\bin\wing.exe"
-
-        Invoke-WithProjectGoCache {
-            wails build -tags $tags -ldflags "-s -w"
-        }
+        Build-FlutterUI
+        Build-GoBackend
+        Write-Host "🎉 Flutter + Go 桌面应用构建完成。" -ForegroundColor Green
+    }
+    "package" {
+        Build-FlutterUI
+        Build-GoBackend
+        & $portablePackageScript
         if ($LASTEXITCODE -ne 0) {
-            throw "Wails 构建失败，退出码: $LASTEXITCODE"
+            throw "安装包生成失败，退出码: $LASTEXITCODE"
         }
-        if (Test-Path $outputExe) {
-            Copy-Item $outputExe -Destination (Join-Path $repoRoot "wing.exe") -Force
-            Write-Host "✅ Wails 桌面应用构建完成: wing.exe" -ForegroundColor Green
-        } else {
-            throw "编译失败: 未能在 build\bin 中找到 wing.exe"
+    }
+    "installer" {
+        Build-FlutterUI
+        Build-GoBackend
+        & $portablePackageScript
+        if ($LASTEXITCODE -ne 0) {
+            throw "安装包生成失败，退出码: $LASTEXITCODE"
         }
+    }
+    "inno" {
+        Build-FlutterUI
+        Build-GoBackend
+        & $innoPackageScript
+        if ($LASTEXITCODE -ne 0) {
+            throw "安装包生成失败，退出码: $LASTEXITCODE"
+        }
+    }
+    "backend" {
+        Build-GoBackend
     }
     "test" {
         Invoke-WithProjectGoCache {
-            go test -tags $tags -v . ./pkg/... ./protocol ./test
+            go test -tags $tags -v . ./pkg/... ./protocol
         }
         if ($LASTEXITCODE -ne 0) {
             throw "测试失败，退出码: $LASTEXITCODE"
         }
     }
     "run" {
+        Build-FlutterUI
         Copy-CronetDll
-        Invoke-WithProjectGoCache {
-            go run -tags $tags .
+        $oldFlutterUIExe = $env:WING_FLUTTER_UI_EXE
+        try {
+            $env:WING_FLUTTER_UI_EXE = Join-Path $flutterRelease "wing_ui.exe"
+            Invoke-WithProjectGoCache {
+                go run -tags $tags .
+            }
+        }
+        finally {
+            $env:WING_FLUTTER_UI_EXE = $oldFlutterUIExe
         }
         if ($LASTEXITCODE -ne 0) {
             throw "运行失败，退出码: $LASTEXITCODE"
         }
     }
+    "ui" {
+        Build-FlutterUI
+    }
     default {
-        Write-Host "用法: .\mk.ps1 [build|test|run]"
-        Write-Host "  build  - 隐私保护 & 隐藏窗口构建"
+        Write-Host "用法: .\mk.ps1 [build|package|backend|test|run|ui|inno]"
+        Write-Host "  build  - 构建 Flutter 控制面板与 Go 后端"
+        Write-Host "  package - 构建并生成 dist\wing-installer.exe 单文件安装包"
+        Write-Host "  backend - 仅构建 Go 后端"
         Write-Host "  test   - 运行测试"
-        Write-Host "  run    - 直接运行"
+        Write-Host "  run    - 构建 Flutter 控制面板后直接运行 Go 后端"
+        Write-Host "  ui     - 仅构建 Flutter 控制面板"
+        Write-Host "  inno   - 使用 Inno Setup 生成 dist\wing-setup.exe"
     }
 }

@@ -190,7 +190,7 @@ func isTrustedWebUIOrigin(raw string) bool {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	switch host {
-	case "127.0.0.1", "localhost", "::1", "wails.localhost":
+	case "127.0.0.1", "localhost", "::1":
 		return true
 	default:
 		return false

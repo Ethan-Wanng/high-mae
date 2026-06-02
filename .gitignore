@@ -26,6 +26,9 @@ traffic_sessions.json
 test_reg.go
 bin/*.exe
 bin/
+build/bin/
+dist/
+installer/stub/wing-payload.zip
 build/bin/wing.exe
 wing.exe
 libcronet.dll
