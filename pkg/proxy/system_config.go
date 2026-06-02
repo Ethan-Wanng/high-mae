@@ -7,7 +7,8 @@ import (
 )
 
 type SystemConfig struct {
-	ProxyPort string `json:"proxyPort"`
+	ProxyPort             string `json:"proxyPort"`
+	PreventBingCNRedirect bool   `json:"preventBingCNRedirect"`
 }
 
 var GlobalSystemConfig SystemConfig
@@ -23,10 +24,12 @@ func LoadSystemConfig() {
 		GlobalSystemConfig.ProxyPort = "10808"
 	}
 	common.LocalHttpPort = GlobalSystemConfig.ProxyPort
+	common.PreventBingCNRedirect = GlobalSystemConfig.PreventBingCNRedirect
 }
 
 func SaveSystemConfig() error {
 	GlobalSystemConfig.ProxyPort = common.LocalHttpPort
+	GlobalSystemConfig.PreventBingCNRedirect = common.PreventBingCNRedirect
 	data, err := json.MarshalIndent(GlobalSystemConfig, "", "  ")
 	if err != nil {
 		return err

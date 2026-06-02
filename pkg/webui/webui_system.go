@@ -3,10 +3,12 @@ package webui
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
+
 	"wing/pkg/common"
 	"wing/pkg/proxy"
 	"wing/pkg/utils"
-	"strconv"
 )
 
 func systemConfigHandler(w http.ResponseWriter, r *http.Request) {
@@ -17,13 +19,25 @@ func systemConfigHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
-		var req proxy.SystemConfig
+		var req struct {
+			ProxyPort             string `json:"proxyPort"`
+			PreventBingCNRedirect *bool  `json:"preventBingCNRedirect"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
 
-		portStr := req.ProxyPort
+		portStr := strings.TrimSpace(req.ProxyPort)
+		if portStr == "" {
+			portStr = common.LocalHttpPort
+		}
+		if portStr == "" {
+			portStr = proxy.GlobalSystemConfig.ProxyPort
+		}
+		if portStr == "" {
+			portStr = "10808"
+		}
 		port, err := strconv.Atoi(portStr)
 		if err != nil || port <= 0 || port > 65535 {
 			http.Error(w, "Invalid port number", http.StatusBadRequest)
@@ -36,6 +50,10 @@ func systemConfigHandler(w http.ResponseWriter, r *http.Request) {
 		// Update global config
 		proxy.GlobalSystemConfig.ProxyPort = portStr
 		common.LocalHttpPort = portStr
+		if req.PreventBingCNRedirect != nil {
+			proxy.GlobalSystemConfig.PreventBingCNRedirect = *req.PreventBingCNRedirect
+			common.PreventBingCNRedirect = *req.PreventBingCNRedirect
+		}
 		if err := proxy.SaveSystemConfig(); err != nil {
 			http.Error(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return

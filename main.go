@@ -116,7 +116,7 @@ func onReady() {
 					"• 引擎：sing-box (及定制版 mbox) & Mieru Client\n" +
 					"• 托盘：getlantern/systray\n" +
 					"• 控制面板：Go 标准库 (net/http)\n" +
-					"• 网络接管：Wintun + tun2socks\n\n" +
+					"• 网络接管：内置 sing-box TUN + Wintun\n\n" +
 					"Created with ❤️ by Ethan-Wanng"
 				utils.ShowWindowsMsgBox("关于 wing", aboutMsg)
 			case <-common.MQuit.ClickedCh:

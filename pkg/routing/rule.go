@@ -30,6 +30,12 @@ var RuleGroups []RuleGroup
 
 const RuleGroupsFile = "rule_groups.json"
 
+var bingRedirectProtectedSuffixes = []string{
+	"bing.com",
+	"bing.net",
+	"bingapis.com",
+}
+
 type CmdRule struct {
 	Pattern string `json:"pattern"`
 	Type    string `json:"type"`   // "prefix" or "exact"
@@ -225,7 +231,9 @@ func LoadUserRules() {
 		groups = DefaultRuleGroups()
 		_ = SaveRuleGroups(groups)
 	}
+	groups = removeLegacyBingDirectDefaults(groups)
 	RuleGroups = normalizeRuleGroups(groups)
+	_ = SaveRuleGroups(RuleGroups)
 	LoadCmdRules()
 }
 
@@ -273,15 +281,51 @@ func SaveRuleGroups(groups []RuleGroup) error {
 func DefaultRuleGroups() []RuleGroup {
 	rules := make([]CustomRule, 0, len(exactDomains)+len(suffixDomains)+len(keywordDomains))
 	for _, d := range exactDomains {
-		rules = append(rules, CustomRule{Type: "domain", Value: d})
+		rule := CustomRule{Type: "domain", Value: d}
+		if isLegacyBingDirectDefaultRule(rule) {
+			continue
+		}
+		rules = append(rules, rule)
 	}
 	for _, d := range suffixDomains {
-		rules = append(rules, CustomRule{Type: "domain_suffix", Value: d})
+		rule := CustomRule{Type: "domain_suffix", Value: d}
+		if isLegacyBingDirectDefaultRule(rule) {
+			continue
+		}
+		rules = append(rules, rule)
 	}
 	for _, d := range keywordDomains {
 		rules = append(rules, CustomRule{Type: "domain_keyword", Value: d})
 	}
 	return []RuleGroup{{ID: "direct", Name: "直连组", Action: "direct", Rules: rules}}
+}
+
+func removeLegacyBingDirectDefaults(groups []RuleGroup) []RuleGroup {
+	groups = normalizeRuleGroups(groups)
+	for i := range groups {
+		if normalizeRuleAction(groups[i].Action) != "direct" {
+			continue
+		}
+		filtered := groups[i].Rules[:0]
+		for _, rule := range groups[i].Rules {
+			if isLegacyBingDirectDefaultRule(rule) {
+				continue
+			}
+			filtered = append(filtered, rule)
+		}
+		groups[i].Rules = filtered
+	}
+	return groups
+}
+
+func isLegacyBingDirectDefaultRule(rule CustomRule) bool {
+	if strings.TrimSpace(rule.Action) != "" {
+		return false
+	}
+	ruleType := normalizeRuleType(rule.Type)
+	value := strings.ToLower(strings.TrimSpace(rule.Value))
+	return (ruleType == "domain" && value == "cn.bing.com") ||
+		(ruleType == "domain_suffix" && value == "bing.com")
 }
 
 func normalizeRuleGroups(groups []RuleGroup) []RuleGroup {
@@ -374,10 +418,23 @@ func EvaluateRouting(hostPort string) string {
 			if r.Action != "" {
 				action = normalizeRuleAction(r.Action)
 			}
+			if common.PreventBingCNRedirect && action == "direct" && isBingRedirectProtectedHost(host) {
+				return "proxy"
+			}
 			return action
 		}
 	}
 	return "proxy"
+}
+
+func isBingRedirectProtectedHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	for _, suffix := range bingRedirectProtectedSuffixes {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func ShouldDirect(hostPort string) bool {

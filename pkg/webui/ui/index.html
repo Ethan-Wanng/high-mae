@@ -308,6 +308,10 @@
                                         <button class="btn-primary" onclick="saveProxyPort()" style="padding: 6px 12px; font-size: 12px;">保存</button>
                                     </div>
                                 </div>
+                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;" title="开启后 Bing 相关域名会优先走代理，减少 bing.com 跳转到 cn.bing.com">
+                                    <span>防 Bing CN 跳转</span>
+                                    <label class="toggle"><input type="checkbox" id="chkBingRedirectGuard" onchange="saveBingRedirectGuard(this.checked)"><span class="slider"></span></label>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -440,6 +444,7 @@
                 <div id="cmdRuleList" style="max-height:180px;overflow-y:auto;"></div>
             </div>
             <div class="action-bar">
+                <button class="btn-ghost" onclick="resetRulesToDefault()">恢复默认规则组</button>
                 <button class="btn-ghost" onclick="closeRuleModal()">关闭</button>
                 <button class="btn-primary" onclick="saveRules()">保存并应用</button>
             </div>
@@ -449,6 +454,32 @@
     <div class="modal-overlay" id="dnsModal">
         <div class="modal" style="width: min(860px, 100%);">
             <h2>DNS 规则管理</h2>
+
+            <div
+                style="margin-bottom: 16px; border: 1px solid rgba(59,130,246,0.22); border-radius: 14px; padding: 14px; background: rgba(59,130,246,0.06);">
+                <div style="font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 10px;">DNS 规则怎么用</div>
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; font-size: 12px; color: var(--text-sub); line-height: 1.55;">
+                    <div>
+                        <strong style="color: var(--text-main);">它决定解析服务器</strong>
+                        <div>DNS 规则只决定某个域名交给哪台 DNS 服务器解析，不直接决定流量走直连还是代理；流量路径仍由规则分流决定。</div>
+                    </div>
+                    <div>
+                        <strong style="color: var(--text-main);">匹配顺序</strong>
+                        <div>查询域名会从上到下匹配 DNS 分流规则；没有命中时使用“默认服务器”。</div>
+                    </div>
+                    <div>
+                        <strong style="color: var(--text-main);">三种匹配</strong>
+                        <div>完整域名匹配单个域名；域名后缀匹配整个站点；关键字匹配包含该词的域名。</div>
+                    </div>
+                    <div>
+                        <strong style="color: var(--text-main);">常见配置</strong>
+                        <div>国内域名后缀 cn 可用 Aliyun；baidu、alicdn 可用国内 DNS；默认服务器可选 Google 或 Cloudflare。</div>
+                    </div>
+                </div>
+                <div style="margin-top: 10px; font-size: 12px; color: var(--text-sub); line-height: 1.5;">
+                    自动覆写系统 DNS 会把物理网卡 DNS 指向本程序的 127.0.0.2；TUN 模式开启时程序会跳过物理网卡覆写，由内置 TUN/DNS 接管。
+                </div>
+            </div>
 
             <div
                 style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">

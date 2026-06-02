@@ -121,7 +121,7 @@ func handleSOCKS5(conn net.Conn) {
 	if cmd == 0x03 {
 		// UDP ASSOCIATE
 		// 拒绝 UDP 并返回 0x07 (Command not supported)
-		// 这会让 tun2socks 立即给应用返回 ICMP Port Unreachable，促使微信等应用快速回退到 TCP
+		// 这会让 TUN 栈立即给应用返回不可达，促使微信等应用快速回退到 TCP
 		_, _ = conn.Write([]byte{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
@@ -159,7 +159,7 @@ func handleSOCKS5(conn net.Conn) {
 		return
 	}
 	// 不把 200 OK 发给 client，因为 SOCKS5 已经握手成功了，直接开始双向传输
-	
+
 	// 双向复制
 	go func() {
 		_, _ = io.Copy(proxyConn, conn)

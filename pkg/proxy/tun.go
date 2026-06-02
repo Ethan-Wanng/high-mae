@@ -1,43 +1,48 @@
 package proxy
 
 import (
-	"crypto/sha256"
-	_ "embed"
 	"fmt"
 	"log"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"net/netip"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	box "github.com/sagernet/sing-box"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
+	N "github.com/sagernet/sing/common/network"
 
 	"wing/pkg/common"
 	"wing/pkg/utils"
 )
 
-//go:embed tun2socks.exe
-var tun2socksBytes []byte
-
-//go:embed wintun.dll
-var wintunBytes []byte
+const (
+	TunIP               = common.TunIP
+	tunInterfaceName    = "AnyTLS-TUN"
+	tunInboundTag       = "wing-tun"
+	tunLocalSocksTag    = "wing-local-socks"
+	tunLocalDNSTag      = "wing-local-dns"
+	tunMTU              = 1400
+	tunStack            = "system"
+	tunUDPTimeout       = 30 * time.Second
+	legacyTunGateway    = "10.0.0.1"
+	internalTunGateway  = "10.0.0.3"
+	tunInterfaceAddress = TunIP + "/24"
+)
 
 var (
-	tun2socksDigest = sha256.Sum256(tun2socksBytes)
-	wintunDigest    = sha256.Sum256(wintunBytes)
 	tunMu           sync.Mutex
-	tunCmd          *exec.Cmd
+	tunBox          *box.Box
 	tunWatchStop    chan struct{}
 	tunWatchDone    chan struct{}
 	tunGateway      string
 	tunRealLocalIP  string
 	tunRoutedNodeIP string
 )
-
-const TunIP = "10.0.0.2"
 
 // ToggleTunMode 切换 TUN 模式的开/关状态，返回需要展示给用户的消息（空串表示成功）
 func ToggleTunMode() string {
@@ -73,7 +78,7 @@ func ToggleTunMode() string {
 	if common.MToggleTun != nil {
 		common.MToggleTun.SetTitle("🟢 隧道连接: [已开启]")
 	}
-	log.Println("TUN 模式已开启（创建虚拟网卡，添加路由）")
+	log.Println("TUN 模式已开启（内置 sing-box TUN，自动路由）")
 	return ""
 }
 
@@ -105,16 +110,16 @@ func StopTun() {
 // 内部实现
 // =====================================================
 
-// stopTunLocked 关闭正在运行的 tun2socks 实例（调用者必须持有 tunMu）
+// stopTunLocked 关闭正在运行的内置 TUN 实例（调用者必须持有 tunMu）
 func stopTunLocked() {
-	if tunCmd != nil && tunCmd.Process != nil {
-		_ = tunCmd.Process.Kill()
-		_ = tunCmd.Wait()
-		tunCmd = nil
+	if tunBox != nil {
+		if err := tunBox.Close(); err != nil {
+			log.Printf("关闭 TUN 实例失败: %v", err)
+		}
+		tunBox = nil
 	}
-	utils.RunHiddenCommand("taskkill", "/F", "/IM", "tun2socks.exe")
-	utils.RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", TunIP)
 
+	cleanupLegacyTunRoutesLocked()
 	routedNodeIP := tunRoutedNodeIP
 	if routedNodeIP != "" {
 		utils.RunHiddenCommand("route", "delete", routedNodeIP, "mask", "255.255.255.255")
@@ -127,7 +132,8 @@ func stopTunLocked() {
 }
 
 func prepareNodeBypassRouteForSwitch(nodeIP string) func() {
-	if nodeIP == "" {
+	nodeIP = strings.TrimSpace(nodeIP)
+	if _, ok := tunNodeRoutePrefix(nodeIP); !ok {
 		return func() {}
 	}
 
@@ -148,116 +154,199 @@ func prepareNodeBypassRouteForSwitch(nodeIP string) func() {
 	}
 }
 
-// startTunLocked 启动一个全新的 tun2socks 实例（调用者必须持有 tunMu）
+// startTunLocked 启动一个全新的内置 TUN 实例（调用者必须持有 tunMu）
 func startTunLocked(nodeIP string) error {
 	realGateway := utils.GetDefaultGateway()
 	if realGateway == "" {
 		return fmt.Errorf("无法识别系统的默认网关")
 	}
 
-	// 记录原始网卡IP
 	common.RealLocalIPBeforeTun = utils.GetRealLocalIP()
 	tunGateway = realGateway
 	tunRealLocalIP = common.RealLocalIPBeforeTun
 
-	// 增强健壮性：启动前确保没有僵尸进程和残留路由
-	utils.RunHiddenCommand("taskkill", "/F", "/IM", "tun2socks.exe")
-	utils.RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", TunIP)
+	cleanupLegacyTunRoutesLocked()
 	if tunRoutedNodeIP != "" {
 		utils.RunHiddenCommand("route", "delete", tunRoutedNodeIP, "mask", "255.255.255.255")
 		tunRoutedNodeIP = ""
 	}
-	if nodeIP != "" {
+
+	nodeIP = strings.TrimSpace(nodeIP)
+	if _, ok := tunNodeRoutePrefix(nodeIP); ok {
 		utils.RunHiddenCommand("route", "delete", nodeIP, "mask", "255.255.255.255")
-	}
-
-	tun2socksPath, err := ensureTunAssetsLocked()
-	if err != nil {
-		return err
-	}
-
-	tunCmd = exec.Command(
-		tun2socksPath,
-		"-device", "tun://AnyTLS-TUN",
-		"-proxy", "socks5://127.0.0.1:"+common.LocalSocksPort,
-		"-loglevel", "silent",
-		"-mtu", "1400",
-		"-tcp-auto-tuning",
-		"-udp-timeout", "30s",
-	)
-	tunCmd.Dir = filepath.Dir(tun2socksPath)
-	tunCmd.Env = append(os.Environ(), "GOGC=20", "GOMEMLIMIT=96MiB")
-	tunCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if err := tunCmd.Start(); err != nil {
-		return fmt.Errorf("无法启动底层引擎: %v", err)
-	}
-	releaseRuntimeMemory()
-	time.Sleep(3 * time.Second) // 增加到 3 秒，防止 wintun 还没初始化完毕导致 netsh 失败
-
-	utils.RunHiddenCommand("netsh", "interface", "ip", "set", "address", "AnyTLS-TUN", "static", TunIP, "255.255.255.0", "10.0.0.1")
-
-	if nodeIP != "" {
 		utils.RunHiddenCommand("route", "add", nodeIP, "mask", "255.255.255.255", realGateway, "metric", "1")
 		tunRoutedNodeIP = nodeIP
 	}
 
-	utils.RunHiddenCommand("route", "add", "0.0.0.0", "mask", "0.0.0.0", TunIP, "metric", "1")
-	utils.RunHiddenCommand("netsh", "interface", "ip", "set", "dns", "AnyTLS-TUN", "static", "127.0.0.2")
-
-	return nil
-}
-
-func ensureTunAssetsLocked() (string, error) {
-	dir, err := tunAssetsDir()
+	opts, err := buildTunBoxOptions(nodeIP)
 	if err != nil {
-		return "", err
+		cleanupStartedTunNodeRouteLocked()
+		return err
 	}
-	tun2socksPath := filepath.Join(dir, "tun2socks.exe")
-	if err := ensureEmbeddedAsset(tun2socksPath, "tun2socks.exe", tun2socksBytes, tun2socksDigest, 0755); err != nil {
-		return "", err
+	b, err := box.New(box.Options{
+		Options: opts,
+		Context: getRegistryContext(),
+	})
+	if err != nil {
+		cleanupStartedTunNodeRouteLocked()
+		return fmt.Errorf("创建内置 TUN 引擎失败: %w", err)
 	}
-	if err := ensureEmbeddedAsset(filepath.Join(dir, "wintun.dll"), "wintun.dll", wintunBytes, wintunDigest, 0644); err != nil {
-		return "", err
+	if err := b.Start(); err != nil {
+		b.Close()
+		cleanupStartedTunNodeRouteLocked()
+		return fmt.Errorf("启动内置 TUN 引擎失败: %w", err)
 	}
+
+	tunBox = b
 	releaseRuntimeMemory()
-	return tun2socksPath, nil
-}
-
-func tunAssetsDir() (string, error) {
-	if dir := strings.TrimSpace(os.Getenv("WING_TUN_ASSET_DIR")); dir != "" {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return "", fmt.Errorf("创建 TUN 资源目录失败: %w", err)
-		}
-		return dir, nil
-	}
-	base, err := os.UserCacheDir()
-	if err != nil || strings.TrimSpace(base) == "" {
-		base = os.TempDir()
-	}
-	dir := filepath.Join(base, "wing", "tun")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", fmt.Errorf("创建 TUN 资源目录失败: %w", err)
-	}
-	return dir, nil
-}
-
-func ensureEmbeddedAsset(path, name string, embedded []byte, expected [32]byte, perm os.FileMode) error {
-	data, err := os.ReadFile(path)
-	if err == nil {
-		if sha256.Sum256(data) == expected {
-			return nil
-		}
-		log.Printf("%s 校验失败，使用内置资源覆盖", name)
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("读取 %s 失败: %w", name, err)
-	}
-	if len(embedded) == 0 {
-		return fmt.Errorf("%s 内置资源为空", name)
-	}
-	if err := os.WriteFile(path, embedded, perm); err != nil {
-		return fmt.Errorf("写入 %s 失败: %w", name, err)
-	}
 	return nil
+}
+
+func buildTunBoxOptions(nodeIP string) (option.Options, error) {
+	localSocksPort, err := parseTunLocalSocksPort(common.LocalSocksPort)
+	if err != nil {
+		return option.Options{}, err
+	}
+	tunAddress, err := netip.ParsePrefix(tunInterfaceAddress)
+	if err != nil {
+		return option.Options{}, fmt.Errorf("解析 TUN 地址失败: %w", err)
+	}
+
+	routeExcludeAddress := make([]netip.Prefix, 0, 1)
+	if prefix, ok := tunNodeRoutePrefix(nodeIP); ok {
+		routeExcludeAddress = append(routeExcludeAddress, prefix)
+	}
+
+	return option.Options{
+		Log: &option.LogOptions{
+			Disabled: true,
+			Level:    "error",
+		},
+		DNS: &option.DNSOptions{
+			RawDNSOptions: option.RawDNSOptions{
+				Servers: []option.DNSServerOptions{
+					{
+						Type: C.DNSTypeUDP,
+						Tag:  tunLocalDNSTag,
+						Options: &option.RemoteDNSServerOptions{
+							DNSServerAddressOptions: option.DNSServerAddressOptions{
+								Server:     "127.0.0.2",
+								ServerPort: 53,
+							},
+						},
+					},
+				},
+				Final: tunLocalDNSTag,
+				DNSClientOptions: option.DNSClientOptions{
+					Strategy: option.DomainStrategy(C.DomainStrategyIPv4Only),
+				},
+			},
+		},
+		Inbounds: []option.Inbound{
+			{
+				Type: C.TypeTun,
+				Tag:  tunInboundTag,
+				Options: &option.TunInboundOptions{
+					InterfaceName:       tunInterfaceName,
+					MTU:                 tunMTU,
+					Address:             []netip.Prefix{tunAddress},
+					AutoRoute:           true,
+					StrictRoute:         true,
+					RouteExcludeAddress: routeExcludeAddress,
+					UDPTimeout:          option.UDPTimeoutCompat(tunUDPTimeout),
+					Stack:               tunStack,
+				},
+			},
+		},
+		Outbounds: []option.Outbound{
+			{
+				Type: C.TypeSOCKS,
+				Tag:  tunLocalSocksTag,
+				Options: &option.SOCKSOutboundOptions{
+					ServerOptions: option.ServerOptions{
+						Server:     "127.0.0.1",
+						ServerPort: localSocksPort,
+					},
+					Version: "5",
+				},
+			},
+		},
+		Route: &option.RouteOptions{
+			Rules: []option.Rule{
+				{
+					Type: C.RuleTypeDefault,
+					DefaultOptions: option.DefaultRule{
+						RawDefaultRule: option.RawDefaultRule{
+							Inbound: []string{tunInboundTag},
+							Port:    []uint16{53},
+						},
+						RuleAction: option.RuleAction{
+							Action: C.RuleActionTypeHijackDNS,
+						},
+					},
+				},
+				{
+					Type: C.RuleTypeDefault,
+					DefaultOptions: option.DefaultRule{
+						RawDefaultRule: option.RawDefaultRule{
+							Inbound: []string{tunInboundTag},
+							Network: []string{N.NetworkICMP},
+						},
+						RuleAction: option.RuleAction{
+							Action: C.RuleActionTypeReject,
+						},
+					},
+				},
+				{
+					Type: C.RuleTypeDefault,
+					DefaultOptions: option.DefaultRule{
+						RawDefaultRule: option.RawDefaultRule{
+							Inbound: []string{tunInboundTag},
+							Network: []string{N.NetworkTCP, N.NetworkUDP},
+						},
+						RuleAction: option.RuleAction{
+							Action: C.RuleActionTypeRoute,
+							RouteOptions: option.RouteActionOptions{
+								Outbound: tunLocalSocksTag,
+							},
+						},
+					},
+				},
+			},
+			Final:               tunLocalSocksTag,
+			AutoDetectInterface: true,
+		},
+	}, nil
+}
+
+func parseTunLocalSocksPort(value string) (uint16, error) {
+	port, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, fmt.Errorf("本地 SOCKS 端口无效: %q", value)
+	}
+	return uint16(port), nil
+}
+
+func tunNodeRoutePrefix(nodeIP string) (netip.Prefix, bool) {
+	addr, err := netip.ParseAddr(strings.TrimSpace(nodeIP))
+	if err != nil || !addr.Is4() {
+		return netip.Prefix{}, false
+	}
+	return netip.PrefixFrom(addr, addr.BitLen()), true
+}
+
+func cleanupStartedTunNodeRouteLocked() {
+	if tunRoutedNodeIP == "" {
+		return
+	}
+	utils.RunHiddenCommand("route", "delete", tunRoutedNodeIP, "mask", "255.255.255.255")
+	tunRoutedNodeIP = ""
+}
+
+func cleanupLegacyTunRoutesLocked() {
+	utils.RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", TunIP)
+	utils.RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", legacyTunGateway)
+	utils.RunHiddenCommand("route", "delete", "0.0.0.0", "mask", "0.0.0.0", internalTunGateway)
 }
 
 func startTunWatchdogLocked() {

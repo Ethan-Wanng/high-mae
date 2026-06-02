@@ -22,20 +22,21 @@ const TunHttpPort = "10811"
 const TunIP = "10.0.0.2"
 
 var (
-	IsSystemProxyOn     = false
-	ProxyMode           = "Rule"
-	IsTunModeOn         = false
-	IsSystemDNSHijacked = false // 是否已经覆写了系统 DNS
-	IsWebRTCPolicyOn    = false
-	PrivacyMode         = true
-	GlobalNodeServer    string
-	GlobalNodeIP        string
-	ActiveNode          protocol.Node
-	ActiveNodeName      string // 当前激活的节点名称（用于精准匹配）
-	GlobalProxyIn       uint64
-	GlobalProxyOut      uint64
-	ActiveDNSQueries    int32
-	ActiveSpeedtests    int32
+	IsSystemProxyOn       = false
+	ProxyMode             = "Rule"
+	IsTunModeOn           = false
+	IsSystemDNSHijacked   = false // 是否已经覆写了系统 DNS
+	IsWebRTCPolicyOn      = false
+	PrivacyMode           = true
+	PreventBingCNRedirect = false
+	GlobalNodeServer      string
+	GlobalNodeIP          string
+	ActiveNode            protocol.Node
+	ActiveNodeName        string // 当前激活的节点名称（用于精准匹配）
+	GlobalProxyIn         uint64
+	GlobalProxyOut        uint64
+	ActiveDNSQueries      int32
+	ActiveSpeedtests      int32
 
 	RealLocalIPBeforeTun string
 	BlockUDP443          = false // 默认关闭：封锁 UDP 443 (QUIC) 强制浏览器回退 TCP。这是内部实验开关，暂不暴露 WebUI。

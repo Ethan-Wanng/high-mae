@@ -130,6 +130,7 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/update_supplier", updateSupplierHandler)
 	api("/api/delete_supplier", deleteSupplierHandler)
 	api("/api/rules", rulesHandler)
+	api("/api/rules/reset_default", resetRulesHandler)
 	api("/api/cmd_rules", cmdRulesHandler)
 	api("/api/set_node_group", setNodeGroupHandler)
 	api("/api/all_nodes_all_subs", getAllNodesAllSubsHandler)
@@ -433,6 +434,20 @@ func rulesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+func resetRulesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	groups := routing.DefaultRuleGroups()
+	if err := routing.SaveRuleGroups(groups); err != nil {
+		http.Error(w, "Save failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "groups": routing.RuleGroups})
 }
 
 func cmdRulesHandler(w http.ResponseWriter, r *http.Request) {

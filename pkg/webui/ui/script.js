@@ -597,30 +597,73 @@ async function loadSystemConfig() {
         const config = await res.json();
         const portEl = document.getElementById('txtProxyPort');
         if (portEl) portEl.value = config.proxyPort || '10808';
+        const bingGuardEl = document.getElementById('chkBingRedirectGuard');
+        if (bingGuardEl) bingGuardEl.checked = !!config.preventBingCNRedirect;
     } catch(e) {
         showToast('系统设置加载失败', 'warning', 2200);
     }
 }
 
-async function saveProxyPort() {
+function buildSystemConfigPayload() {
     const portEl = document.getElementById('txtProxyPort');
     const port = (portEl?.value || '').trim();
     const portNum = Number.parseInt(port, 10);
     if (!Number.isFinite(portNum) || portNum <= 0 || portNum > 65535) {
         showToast('请输入有效端口号', 'warning');
+        return null;
+    }
+    const bingGuardEl = document.getElementById('chkBingRedirectGuard');
+    return {
+        proxyPort: String(portNum),
+        preventBingCNRedirect: !!bingGuardEl?.checked
+    };
+}
+
+async function saveProxyPort() {
+    const payload = buildSystemConfigPayload();
+    if (!payload) {
         return;
     }
     try {
         const res = await fetch('/api/system_config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ proxyPort: String(portNum) })
+            body: JSON.stringify(payload)
         });
         const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            data.ok = false;
+            data.msg = data.msg || '保存失败';
+        }
         showToast(data.msg || (data.ok === false ? '保存失败' : '系统设置已保存'), data.ok === false ? 'error' : 'success');
         await loadStatus();
     } catch(e) {
         showToast('保存系统设置失败', 'error');
+    }
+}
+
+async function saveBingRedirectGuard() {
+    const payload = buildSystemConfigPayload();
+    if (!payload) {
+        await loadSystemConfig();
+        return;
+    }
+    try {
+        const res = await fetch('/api/system_config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            data.ok = false;
+            data.msg = data.msg || '保存失败';
+        }
+        showToast(data.msg || (data.ok === false ? '保存失败' : 'Bing 跳转保护已更新'), data.ok === false ? 'error' : 'success');
+        await loadSystemConfig();
+    } catch(e) {
+        showToast('保存 Bing 跳转保护失败', 'error');
+        await loadSystemConfig();
     }
 }
 
@@ -2930,6 +2973,7 @@ function renderRules() {
                                     ${actionName(effectiveAction)} ▾
                                 </span>
                             </div>
+                            <button class="btn-ghost" style="padding:4px 8px;font-size:12px;border-color:rgba(239,68,68,0.3);color:var(--danger);" onclick="deleteSearchRule(${gIdx}, ${rIdx})">删除</button>
                         </div>
                         <div id="rule-action-selector-search-${gIdx}-${rIdx}" class="rule-action-selector-drawer" style="display:none;margin:10px 10px 5px 10px;padding:12px;border:1px solid rgba(148,163,184,0.15);border-radius:14px;background:rgba(255,255,255,0.015);box-shadow:inset 0 2px 8px rgba(0,0,0,0.2);">
                         </div>
@@ -3075,6 +3119,15 @@ function deleteRule(idx) {
     if (!group || !group.rules) return;
     group.rules.splice(idx, 1);
     renderRuleGroups();
+    showToast('规则已删除，保存后生效', 'success', 1800);
+}
+
+function deleteSearchRule(gIdx, rIdx) {
+    const group = ruleGroups[gIdx];
+    if (!group || !group.rules || rIdx < 0 || rIdx >= group.rules.length) return;
+    group.rules.splice(rIdx, 1);
+    renderRuleGroups();
+    showToast('搜索结果中的规则已删除，保存后生效', 'success', 1800);
 }
 
 async function saveRules() {
@@ -3095,6 +3148,25 @@ async function saveRules() {
         closeRuleModal();
     } catch(e) {
         alert('保存失败');
+    }
+}
+
+async function resetRulesToDefault() {
+    if (!confirm('确定恢复默认规则组吗？当前规则分流组会被默认规则覆盖，命令行进程规则不会变更。')) return;
+    try {
+        const res = await fetch('/api/rules/reset_default', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+            throw new Error(data.msg || 'reset failed');
+        }
+        ruleGroups = data.groups || [];
+        currentRuleGroupIndex = 0;
+        const searchEl = document.getElementById('ruleSearch');
+        if (searchEl) searchEl.value = '';
+        renderRuleGroups();
+        showToast('规则组已恢复默认', 'success');
+    } catch(e) {
+        showToast('恢复默认规则失败', 'error');
     }
 }
 

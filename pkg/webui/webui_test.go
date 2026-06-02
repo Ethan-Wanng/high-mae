@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"wing/pkg/common"
+	"wing/pkg/proxy"
+	"wing/pkg/routing"
 	"wing/pkg/storage"
 )
 
@@ -64,6 +67,94 @@ func TestAutoSelectConfigHandlerPersistsJSON(t *testing.T) {
 	}
 	if !strings.Contains(string(resp.Config), "sub_a.yml") {
 		t.Fatalf("persisted config = %s, want subscription file", resp.Config)
+	}
+}
+
+func TestSystemConfigHandlerPersistsBingRedirectGuard(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	oldPort := common.LocalHttpPort
+	oldGuard := common.PreventBingCNRedirect
+	oldConfig := proxy.GlobalSystemConfig
+	defer func() {
+		common.LocalHttpPort = oldPort
+		common.PreventBingCNRedirect = oldGuard
+		proxy.GlobalSystemConfig = oldConfig
+	}()
+
+	common.LocalHttpPort = "10808"
+	common.PreventBingCNRedirect = false
+	proxy.GlobalSystemConfig = proxy.SystemConfig{ProxyPort: "10808"}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/system_config", strings.NewReader(`{"proxyPort":"10808","preventBingCNRedirect":true}`))
+	rr := httptest.NewRecorder()
+	systemConfigHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	if !common.PreventBingCNRedirect {
+		t.Fatal("expected runtime Bing redirect guard to be enabled")
+	}
+
+	common.PreventBingCNRedirect = false
+	proxy.GlobalSystemConfig = proxy.SystemConfig{}
+	proxy.LoadSystemConfig()
+
+	if !common.PreventBingCNRedirect {
+		t.Fatal("expected persisted Bing redirect guard to reload as enabled")
+	}
+	if !proxy.GlobalSystemConfig.PreventBingCNRedirect {
+		t.Fatal("expected global system config to reload Bing redirect guard as enabled")
+	}
+}
+
+func TestResetRulesHandlerRestoresDefaultRulesWithoutBingDirect(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	oldGroups := routing.RuleGroups
+	defer func() { routing.RuleGroups = oldGroups }()
+
+	routing.RuleGroups = []routing.RuleGroup{
+		{
+			ID:     "direct",
+			Name:   "Direct",
+			Action: "direct",
+			Rules: []routing.CustomRule{
+				{Type: "domain_suffix", Value: "bing.com"},
+				{Type: "domain", Value: "cn.bing.com"},
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/reset_default", nil)
+	rr := httptest.NewRecorder()
+	resetRulesHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var resp struct {
+		OK     bool                `json:"ok"`
+		Groups []routing.RuleGroup `json:"groups"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response JSON error: %v", err)
+	}
+	if !resp.OK {
+		t.Fatal("expected ok response")
+	}
+	for _, group := range resp.Groups {
+		for _, rule := range group.Rules {
+			if (rule.Type == "domain_suffix" && rule.Value == "bing.com") || (rule.Type == "domain" && rule.Value == "cn.bing.com") {
+				t.Fatalf("reset default response still includes legacy Bing direct rule: %+v", rule)
+			}
+		}
 	}
 }
 
