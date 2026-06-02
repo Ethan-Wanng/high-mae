@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -183,6 +183,9 @@ func LoadInputWithUserAgentInfoContext(ctx context.Context, input string, userAg
 	s = strings.Trim(s, "“”\"'")
 
 	isSingleLine := !strings.Contains(s, "\n")
+	if isPlainHTTPRemoteInput(s, isSingleLine) && !allowInsecureSubscriptionInput() {
+		return LoadInputResult{}, fmt.Errorf("出于安全原因，默认拒绝明文 HTTP 订阅；请改用 HTTPS")
+	}
 	if (strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")) && isSingleLine && !strings.Contains(s, "@") {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s, nil)
 		if err != nil {
@@ -203,25 +206,32 @@ func LoadInputWithUserAgentInfoContext(ctx context.Context, input string, userAg
 	return LoadInputResult{Body: []byte(s), Headers: http.Header{}}, nil
 }
 
+func isPlainHTTPRemoteInput(input string, isSingleLine bool) bool {
+	return isSingleLine && !strings.Contains(input, "@") && strings.HasPrefix(input, "http://")
+}
+
+func allowInsecureSubscriptionInput() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("WING_ALLOW_INSECURE_SUBSCRIPTIONS")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
 func doSubscriptionRequest(req *http.Request) (LoadInputResult, error) {
 	var lastErr error
 	attempts := []struct {
-		name     string
-		proxy    func(*http.Request) (*url.URL, error)
-		http2    bool
-		insecure bool
+		name  string
+		proxy func(*http.Request) (*url.URL, error)
+		http2 bool
 	}{
 		{name: "env_proxy", proxy: http.ProxyFromEnvironment, http2: true},
 		{name: "direct", http2: true},
 		{name: "direct_http1", http2: false},
-		{name: "direct_insecure", http2: false, insecure: true},
 	}
 
 	for _, attempt := range attempts {
 		clone := req.Clone(req.Context())
 		client := &http.Client{
 			Timeout:   20 * time.Second,
-			Transport: subscriptionTransport(attempt.proxy, attempt.http2, attempt.insecure),
+			Transport: subscriptionTransport(attempt.proxy, attempt.http2),
 		}
 		resp, err := client.Do(clone)
 		if err != nil {
@@ -248,8 +258,8 @@ func doSubscriptionRequest(req *http.Request) (LoadInputResult, error) {
 	return LoadInputResult{}, fmt.Errorf("HTTP 请求失败: %w", lastErr)
 }
 
-func subscriptionTransport(proxy func(*http.Request) (*url.URL, error), http2 bool, insecure bool) *http.Transport {
-	transport := &http.Transport{
+func subscriptionTransport(proxy func(*http.Request) (*url.URL, error), http2 bool) *http.Transport {
+	return &http.Transport{
 		Proxy: proxy,
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
@@ -262,10 +272,6 @@ func subscriptionTransport(proxy func(*http.Request) (*url.URL, error), http2 bo
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
 	}
-	if insecure {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	return transport
 }
 
 func NormalizeSubscription(raw []byte) (string, error) {

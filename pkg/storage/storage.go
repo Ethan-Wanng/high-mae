@@ -12,6 +12,7 @@ import (
 )
 
 const DBFile = "wing.db"
+const AppDirName = "wing"
 
 var (
 	dataBucket = []byte("data")
@@ -23,7 +24,28 @@ func databasePath() string {
 	if path := strings.TrimSpace(os.Getenv("WING_DB_PATH")); path != "" {
 		return path
 	}
+	return defaultDatabasePath()
+}
+
+func defaultDatabasePath() string {
+	if _, err := os.Stat(DBFile); err == nil {
+		return DBFile
+	}
+	if exe, err := os.Executable(); err == nil {
+		exeDB := filepath.Join(filepath.Dir(exe), DBFile)
+		if _, statErr := os.Stat(exeDB); statErr == nil {
+			return exeDB
+		}
+	}
+	if dir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(dir) != "" {
+		return filepath.Join(dir, AppDirName, DBFile)
+	}
 	return DBFile
+}
+
+func Init() error {
+	_, err := getDB()
+	return err
 }
 
 func getDB() (*bolt.DB, error) {
@@ -37,6 +59,11 @@ func getDB() (*bolt.DB, error) {
 	path, err := filepath.Abs(databasePath())
 	if err != nil {
 		return nil, err
+	}
+	if dir := filepath.Dir(path); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return nil, err
+		}
 	}
 
 	opened, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 5 * time.Second})

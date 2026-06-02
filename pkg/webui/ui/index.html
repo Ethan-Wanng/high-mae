@@ -16,7 +16,7 @@
                 <div class="brand-badge">W</div>
                 <div>
                     <h1>wing</h1>
-                    <div class="subtitle">Windows 桌面代理客户端 v1.2.0 · 规则分流 / 网络共享 / 隧道连接 / Mieru / Naive / AnyTLS</div>
+                    <div class="subtitle">Windows 桌面代理客户端 v1.2.0 · 规则分流 / 隧道连接 / Mieru / Naive / AnyTLS</div>
                 </div>
             </div>
 
@@ -293,15 +293,6 @@
                                     <label class="toggle"><input type="checkbox" id="chkWebRTC" onchange="doAction('webrtc')"><span class="slider"></span></label>
                                 </div>
                             </div>
-                            <div class="control-row" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 0;">
-                                <div class="control-card" style="padding: 12px 16px; align-items: flex-start;" title="允许同一局域网内的设备连接本机 HTTP 代理">
-                                    <span style="display:flex;flex-direction:column;gap:3px;min-width:0;">
-                                        <span>📡 网络共享</span>
-                                        <small id="networkShareAddress" style="color:var(--text-sub);font-size:11px;font-weight:500;white-space:normal;">仅本机可用</small>
-                                    </span>
-                                    <label class="toggle"><input type="checkbox" id="chkNetworkShare" onchange="doAction('network_share')"><span class="slider"></span></label>
-                                </div>
-                            </div>
                         </div>
                     </div>
 
@@ -350,7 +341,7 @@
 
         <div class="footer">
             <div class="footer-brand">wing v1.2.0</div>
-            <p>面向 Windows 的桌面代理客户端，集成 sing-box、Mieru Client 与本地控制面板，支持订阅管理、节点测速、规则分流、网络共享、隧道连接、DNS 分流与命令行进程规则。</p>
+            <p>面向 Windows 的桌面代理客户端，集成 sing-box、Mieru Client 与本地控制面板，支持订阅管理、节点测速、规则分流、隧道连接、DNS 分流与命令行进程规则。</p>
             <div class="tech-tags">
                 <span class="tech-tag">sing-box Core</span>
                 <span class="tech-tag">Mieru Engine</span>
@@ -378,6 +369,21 @@
             <div class="action-bar">
                 <button class="btn-ghost" onclick="closeAddModal()">取消</button>
                 <button class="btn-success" onclick="submitAddNode()" id="btnAddSubmit">确定添加</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="shareModal">
+        <div class="modal share-modal">
+            <h2 id="shareModalTitle">分享</h2>
+            <div class="qr-frame">
+                <img id="shareQRCode" alt="分享二维码">
+                <div id="shareQRStatus" class="qr-status">正在生成二维码...</div>
+            </div>
+            <textarea id="shareText" readonly></textarea>
+            <div class="action-bar">
+                <button class="btn-ghost" onclick="closeShareModal()">关闭</button>
+                <button class="btn-primary" onclick="copyShareModalText()">复制链接</button>
             </div>
         </div>
     </div>

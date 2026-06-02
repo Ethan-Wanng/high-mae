@@ -1,13 +1,16 @@
 package proxy
 
 import (
+	"crypto/sha256"
 	_ "embed"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -23,6 +26,8 @@ var tun2socksBytes []byte
 var wintunBytes []byte
 
 var (
+	tun2socksDigest = sha256.Sum256(tun2socksBytes)
+	wintunDigest    = sha256.Sum256(wintunBytes)
 	tunMu           sync.Mutex
 	tunCmd          *exec.Cmd
 	tunWatchStop    chan struct{}
@@ -166,12 +171,13 @@ func startTunLocked(nodeIP string) error {
 		utils.RunHiddenCommand("route", "delete", nodeIP, "mask", "255.255.255.255")
 	}
 
-	if err := ensureTunAssetsLocked(); err != nil {
+	tun2socksPath, err := ensureTunAssetsLocked()
+	if err != nil {
 		return err
 	}
 
 	tunCmd = exec.Command(
-		"./tun2socks.exe",
+		tun2socksPath,
 		"-device", "tun://AnyTLS-TUN",
 		"-proxy", "socks5://127.0.0.1:"+common.LocalSocksPort,
 		"-loglevel", "silent",
@@ -179,6 +185,7 @@ func startTunLocked(nodeIP string) error {
 		"-tcp-auto-tuning",
 		"-udp-timeout", "30s",
 	)
+	tunCmd.Dir = filepath.Dir(tun2socksPath)
 	tunCmd.Env = append(os.Environ(), "GOGC=20", "GOMEMLIMIT=96MiB")
 	tunCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if err := tunCmd.Start(); err != nil {
@@ -200,27 +207,56 @@ func startTunLocked(nodeIP string) error {
 	return nil
 }
 
-func ensureTunAssetsLocked() error {
-	if _, err := os.Stat("tun2socks.exe"); os.IsNotExist(err) {
-		if len(tun2socksBytes) == 0 {
-			return fmt.Errorf("tun2socks.exe 不存在，且内置资源已释放")
-		}
-		if err := os.WriteFile("tun2socks.exe", tun2socksBytes, 0755); err != nil {
-			return fmt.Errorf("写入 tun2socks.exe 失败: %w", err)
-		}
+func ensureTunAssetsLocked() (string, error) {
+	dir, err := tunAssetsDir()
+	if err != nil {
+		return "", err
 	}
-	if _, err := os.Stat("wintun.dll"); os.IsNotExist(err) {
-		if len(wintunBytes) == 0 {
-			return fmt.Errorf("wintun.dll 不存在，且内置资源已释放")
-		}
-		if err := os.WriteFile("wintun.dll", wintunBytes, 0644); err != nil {
-			return fmt.Errorf("写入 wintun.dll 失败: %w", err)
-		}
+	tun2socksPath := filepath.Join(dir, "tun2socks.exe")
+	if err := ensureEmbeddedAsset(tun2socksPath, "tun2socks.exe", tun2socksBytes, tun2socksDigest, 0755); err != nil {
+		return "", err
 	}
-
-	tun2socksBytes = nil
-	wintunBytes = nil
+	if err := ensureEmbeddedAsset(filepath.Join(dir, "wintun.dll"), "wintun.dll", wintunBytes, wintunDigest, 0644); err != nil {
+		return "", err
+	}
 	releaseRuntimeMemory()
+	return tun2socksPath, nil
+}
+
+func tunAssetsDir() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv("WING_TUN_ASSET_DIR")); dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return "", fmt.Errorf("创建 TUN 资源目录失败: %w", err)
+		}
+		return dir, nil
+	}
+	base, err := os.UserCacheDir()
+	if err != nil || strings.TrimSpace(base) == "" {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, "wing", "tun")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", fmt.Errorf("创建 TUN 资源目录失败: %w", err)
+	}
+	return dir, nil
+}
+
+func ensureEmbeddedAsset(path, name string, embedded []byte, expected [32]byte, perm os.FileMode) error {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if sha256.Sum256(data) == expected {
+			return nil
+		}
+		log.Printf("%s 校验失败，使用内置资源覆盖", name)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("读取 %s 失败: %w", name, err)
+	}
+	if len(embedded) == 0 {
+		return fmt.Errorf("%s 内置资源为空", name)
+	}
+	if err := os.WriteFile(path, embedded, perm); err != nil {
+		return fmt.Errorf("写入 %s 失败: %w", name, err)
+	}
 	return nil
 }
 

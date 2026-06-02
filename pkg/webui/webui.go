@@ -26,6 +26,8 @@ import (
 	"wing/pkg/sub"
 	"wing/pkg/utils"
 	"wing/protocol"
+
+	"github.com/skip2/go-qrcode"
 )
 
 var (
@@ -34,9 +36,11 @@ var (
 	latencyCache sync.Map
 	speedCache   sync.Map
 	// TUN 切换中标记，防止轮询期间闪烁
-	tunPending      atomic.Bool
-	tunPendingState atomic.Bool
-	nodeSwitching   atomic.Bool
+	tunPending       atomic.Bool
+	tunPendingState  atomic.Bool
+	nodeSwitching    atomic.Bool
+	startupStateMu   sync.Mutex
+	startupStateDone bool
 )
 
 type AggregateGroup struct {
@@ -47,6 +51,7 @@ type AggregateGroup struct {
 
 const AggregateGroupsFile = "aggregate_groups.json"
 const SiteTestTargetsFile = "site_test_targets.json"
+const AutoSelectConfigFile = "auto_select_config.json"
 const siteTestTimeout = 25 * time.Second
 
 type SiteTestTarget struct {
@@ -84,63 +89,117 @@ func init() {
 	sub.OnSubscriptionDeleted = removeSubscriptionNodesFromAggregateGroups
 }
 
-var globalMux *http.ServeMux
+var (
+	globalMux     *http.ServeMux
+	globalMuxOnce sync.Once
+)
 
 func GetWebUIMux() *http.ServeMux {
-	if globalMux == nil {
+	globalMuxOnce.Do(func() {
 		globalMux = buildWebUIMux()
-	}
+	})
 	return globalMux
 }
 
 func buildWebUIMux() *http.ServeMux {
 	mux := http.NewServeMux()
+	api := func(pattern string, handler http.HandlerFunc) {
+		mux.HandleFunc(pattern, localAPIHandler(handler))
+	}
 
 	mux.HandleFunc("/", serveHTML)
 	mux.HandleFunc("/style.css", serveCSS)
 	mux.HandleFunc("/script.js", serveJS)
-	mux.HandleFunc("/api/nodes", getNodes)
-	mux.HandleFunc("/api/switch", switchNodeHandler)
-	mux.HandleFunc("/api/direct", directNodeHandler)
-	mux.HandleFunc("/api/node_link", nodeLinkHandler)
-	mux.HandleFunc("/api/delete_node", deleteNodeHandler)
-	mux.HandleFunc("/api/test_single", testSingleHandler)
-	mux.HandleFunc("/api/test_all", testAllHandler)
-	mux.HandleFunc("/api/speedtest", speedtestHandler)
-	mux.HandleFunc("/api/add_node", addNodeHandler)
-	mux.HandleFunc("/api/status", getStatusHandler)
-	mux.HandleFunc("/api/action", actionHandler)
-	mux.HandleFunc("/api/site_targets", siteTargetsHandler)
-	mux.HandleFunc("/api/site_test", siteTestHandler)
-	mux.HandleFunc("/api/suppliers", getSuppliersHandler)
-	mux.HandleFunc("/api/switch_supplier", switchSupplierHandler)
-	mux.HandleFunc("/api/update_supplier", updateSupplierHandler)
-	mux.HandleFunc("/api/delete_supplier", deleteSupplierHandler)
-	mux.HandleFunc("/api/rules", rulesHandler)
-	mux.HandleFunc("/api/cmd_rules", cmdRulesHandler)
-	mux.HandleFunc("/api/set_node_group", setNodeGroupHandler)
-	mux.HandleFunc("/api/all_nodes_all_subs", getAllNodesAllSubsHandler)
-	mux.HandleFunc("/api/create_aggregated_group", createAggregatedGroupHandler)
-	mux.HandleFunc("/api/aggregate_groups", aggregateGroupsHandler)
-	mux.HandleFunc("/api/switch_aggregate_group", switchAggregateGroupHandler)
-	mux.HandleFunc("/api/delete_aggregate_group", deleteAggregateGroupHandler)
-	mux.HandleFunc("/api/import_subscription", importSubscriptionHandler)
-	mux.HandleFunc("/api/free_traffic", freeTrafficHandler)
-	mux.HandleFunc("/api/set_supplier_update_interval", setSupplierUpdateIntervalHandler)
-	mux.HandleFunc("/api/aggregate_group_nodes", aggGroupNodesHandler)
-	mux.HandleFunc("/api/aggregate_group_add_nodes", aggGroupAddNodesHandler)
-	mux.HandleFunc("/api/aggregate_group_remove_node", aggGroupRemoveNodeHandler)
-	mux.HandleFunc("/api/dns", dnsHandler)
-	mux.HandleFunc("/api/stats", getStatsHandler)
-	mux.HandleFunc("/api/history", historyHandler)
-	mux.HandleFunc("/api/clear_logs", clearLogsHandler)
-	mux.HandleFunc("/api/privacy", privacyToggleHandler)
-	mux.HandleFunc("/api/system_config", systemConfigHandler)
+	api("/api/nodes", getNodes)
+	api("/api/switch", switchNodeHandler)
+	api("/api/direct", directNodeHandler)
+	api("/api/node_link", nodeLinkHandler)
+	api("/api/qrcode", qrCodeHandler)
+	api("/api/delete_node", deleteNodeHandler)
+	api("/api/test_single", testSingleHandler)
+	api("/api/test_all", testAllHandler)
+	api("/api/speedtest", speedtestHandler)
+	api("/api/add_node", addNodeHandler)
+	api("/api/status", getStatusHandler)
+	api("/api/action", actionHandler)
+	api("/api/site_targets", siteTargetsHandler)
+	api("/api/site_test", siteTestHandler)
+	api("/api/auto_select_config", autoSelectConfigHandler)
+	api("/api/suppliers", getSuppliersHandler)
+	api("/api/switch_supplier", switchSupplierHandler)
+	api("/api/update_supplier", updateSupplierHandler)
+	api("/api/delete_supplier", deleteSupplierHandler)
+	api("/api/rules", rulesHandler)
+	api("/api/cmd_rules", cmdRulesHandler)
+	api("/api/set_node_group", setNodeGroupHandler)
+	api("/api/all_nodes_all_subs", getAllNodesAllSubsHandler)
+	api("/api/create_aggregated_group", createAggregatedGroupHandler)
+	api("/api/aggregate_groups", aggregateGroupsHandler)
+	api("/api/switch_aggregate_group", switchAggregateGroupHandler)
+	api("/api/delete_aggregate_group", deleteAggregateGroupHandler)
+	api("/api/import_subscription", importSubscriptionHandler)
+	api("/api/free_traffic", freeTrafficHandler)
+	api("/api/set_supplier_update_interval", setSupplierUpdateIntervalHandler)
+	api("/api/aggregate_group_nodes", aggGroupNodesHandler)
+	api("/api/aggregate_group_add_nodes", aggGroupAddNodesHandler)
+	api("/api/aggregate_group_remove_node", aggGroupRemoveNodeHandler)
+	api("/api/dns", dnsHandler)
+	api("/api/stats", getStatsHandler)
+	api("/api/history", historyHandler)
+	api("/api/clear_logs", clearLogsHandler)
+	api("/api/privacy", privacyToggleHandler)
+	api("/api/system_config", systemConfigHandler)
 
 	return mux
 }
 
+const (
+	apiRequestHeader      = "X-Wing-Request"
+	apiRequestHeaderValue = "webui"
+)
+
+func localAPIHandler(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setWebUISecurityHeaders(w)
+		if !isTrustedLocalAPIRequest(r) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func isTrustedLocalAPIRequest(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+		return false
+	}
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" && !isTrustedWebUIOrigin(origin) {
+		return false
+	}
+	if referer := strings.TrimSpace(r.Header.Get("Referer")); referer != "" && !isTrustedWebUIOrigin(referer) {
+		return false
+	}
+	return r.Header.Get(apiRequestHeader) == apiRequestHeaderValue
+}
+
+func isTrustedWebUIOrigin(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	switch host {
+	case "127.0.0.1", "localhost", "::1", "wails.localhost":
+		return true
+	default:
+		return false
+	}
+}
+
 func StartWebUI() {
+	if err := EnsureStartupState(); err != nil {
+		fmt.Printf("⚠️ 启动状态加载失败: %v\n", err)
+	}
 	mux := GetWebUIMux()
 
 	// 默认开启 WebRTC 防泄漏
@@ -156,6 +215,100 @@ func StartWebUI() {
 	}
 
 	uiServer.ListenAndServe()
+}
+
+func EnsureStartupState() error {
+	startupStateMu.Lock()
+	defer startupStateMu.Unlock()
+	if startupStateDone {
+		return nil
+	}
+	if err := loadStartupStateLocked(); err != nil {
+		return err
+	}
+	startupStateDone = true
+	return nil
+}
+
+func loadStartupStateLocked() error {
+	lastConfigFile, err := readOptionalStorageString("last_active_config_file")
+	if err != nil {
+		return fmt.Errorf("读取上次配置失败: %w", err)
+	}
+	lastNodeName, err := readOptionalStorageString("last_active_node_name")
+	if err != nil {
+		return fmt.Errorf("读取上次节点失败: %w", err)
+	}
+
+	links, err := sub.ReadSubscriptions()
+	if err != nil {
+		return fmt.Errorf("读取订阅列表失败: %w", err)
+	}
+	candidates := startupConfigCandidates(lastConfigFile, links)
+	for _, fileName := range candidates {
+		nodes, err := protocol.ParseNodes(fileName)
+		if err != nil || len(nodes) == 0 {
+			continue
+		}
+		sub.SetActiveConfigFile(fileName)
+		common.AllNodes = nodes
+		break
+	}
+
+	if len(common.AllNodes) == 0 {
+		return nil
+	}
+
+	targetNode := common.AllNodes[0]
+	if lastNodeName != "" {
+		for _, node := range common.AllNodes {
+			if node.Name == lastNodeName {
+				targetNode = node
+				break
+			}
+		}
+	}
+
+	common.ClientMu.RLock()
+	activeName := common.ActiveNodeName
+	activeClient := common.ActiveClient
+	common.ClientMu.RUnlock()
+	if activeClient == nil || activeName == "" {
+		proxy.SwitchNode(targetNode)
+	}
+	return nil
+}
+
+func readOptionalStorageString(key string) (string, error) {
+	data, err := storage.Read(key)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+func startupConfigCandidates(lastConfigFile string, links []sub.SubInfo) []string {
+	seen := make(map[string]struct{}, len(links)+1)
+	var candidates []string
+	add := func(fileName string) {
+		fileName = strings.TrimSpace(fileName)
+		if fileName == "" {
+			return
+		}
+		if _, ok := seen[fileName]; ok {
+			return
+		}
+		seen[fileName] = struct{}{}
+		candidates = append(candidates, fileName)
+	}
+	add(lastConfigFile)
+	for _, link := range links {
+		add(link.FileName)
+	}
+	return candidates
 }
 
 type GlobalNodeInfo struct {
@@ -178,6 +331,8 @@ var (
 )
 
 func getNodes(w http.ResponseWriter, r *http.Request) {
+	EnsureStartupState()
+
 	globalNodesMu.Lock()
 	defer globalNodesMu.Unlock()
 
@@ -597,6 +752,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 func aggregateGroupsHandler(w http.ResponseWriter, r *http.Request) {
+	EnsureStartupState()
 	groups, _ := ReadAggregateGroups()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(groups)
@@ -723,6 +879,32 @@ func nodeLinkHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "link": link})
+}
+
+func qrCodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		http.Error(w, "Empty QR content", http.StatusBadRequest)
+		return
+	}
+	png, err := qrcode.Encode(text, qrcode.Medium, 256)
+	if err != nil {
+		http.Error(w, "Generate QR failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	_, _ = w.Write(png)
 }
 
 func deleteNodeHandler(w http.ResponseWriter, r *http.Request) {
@@ -1041,21 +1223,21 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getStatusHandler(w http.ResponseWriter, r *http.Request) {
+	EnsureStartupState()
+
 	tunState := common.IsTunModeOn
 	if tunPending.Load() {
 		tunState = tunPendingState.Load()
 	}
 	status := map[string]interface{}{
-		"proxy":               common.IsSystemProxyOn,
-		"mode":                common.ProxyMode,
-		"tun":                 tunState,
-		"tunnel":              tunState,
-		"networkShare":        common.IsNetworkShareOn,
-		"networkShareAddress": proxy.NetworkShareAddress(),
-		"webrtc":              common.IsWebRTCPolicyOn,
-		"speedIn":             stats.CurrentSpeedIn,
-		"speedOut":            stats.CurrentSpeedOut,
-		"freeTraffic":         freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
+		"proxy":       common.IsSystemProxyOn,
+		"mode":        common.ProxyMode,
+		"tun":         tunState,
+		"tunnel":      tunState,
+		"webrtc":      common.IsWebRTCPolicyOn,
+		"speedIn":     stats.CurrentSpeedIn,
+		"speedOut":    stats.CurrentSpeedOut,
+		"freeTraffic": freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
@@ -1104,6 +1286,47 @@ func freeTrafficHandler(w http.ResponseWriter, r *http.Request) {
 		"msg":     "免费流量已启用。",
 		"traffic": freeflow.Snapshot(true),
 	})
+}
+
+func autoSelectConfigHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch r.Method {
+	case http.MethodGet:
+		data, err := storage.ReadOrMigrateFile(AutoSelectConfigFile)
+		if err != nil || len(strings.TrimSpace(string(data))) == 0 {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "config": nil})
+			return
+		}
+		var raw json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil || !json.Valid(raw) {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "config": nil})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "config": raw})
+	case http.MethodPost:
+		body, err := io.ReadAll(io.LimitReader(r.Body, 128*1024))
+		if err != nil || len(body) == 0 || !json.Valid(body) {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "自动选择配置格式错误"})
+			return
+		}
+		var obj map[string]interface{}
+		if err := json.Unmarshal(body, &obj); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "自动选择配置必须是 JSON 对象"})
+			return
+		}
+		pretty, err := json.MarshalIndent(obj, "", "  ")
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "自动选择配置序列化失败"})
+			return
+		}
+		if err := storage.Write(AutoSelectConfigFile, pretty); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "自动选择配置保存失败"})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func siteTargetsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1318,18 +1541,9 @@ func isPresetSiteTarget(id string) bool {
 
 func runSiteTests(client *http.Client, targets []SiteTestTarget) []SiteTestResult {
 	results := make([]SiteTestResult, len(targets))
-	sem := make(chan struct{}, 8)
-	var wg sync.WaitGroup
 	for i, target := range targets {
-		wg.Add(1)
-		go func(idx int, t SiteTestTarget) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			results[idx] = testSiteTarget(client, t)
-		}(i, target)
+		results[i] = testSiteTarget(client, target)
 	}
-	wg.Wait()
 	return results
 }
 
@@ -1564,23 +1778,6 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		})
-	case "network_share":
-		if msg := proxy.ToggleNetworkShare(); msg != "" {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": msg})
-			return
-		}
-		resp := map[string]interface{}{
-			"ok":      true,
-			"enabled": common.IsNetworkShareOn,
-			"address": proxy.NetworkShareAddress(),
-		}
-		if common.IsNetworkShareOn {
-			resp["msg"] = "网络共享已开启，局域网设备可使用代理地址: " + proxy.NetworkShareAddress()
-		} else {
-			resp["msg"] = "网络共享已关闭。"
-		}
-		json.NewEncoder(w).Encode(resp)
-		return
 	case "tun", "tunnel":
 		if !utils.IsAdmin() {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "开启隧道连接需要管理员权限！请以管理员身份运行。"})
@@ -1617,6 +1814,8 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
+	EnsureStartupState()
+
 	links, _ := sub.ReadSubscriptions()
 	type SupplierInfo struct {
 		Name                  string                   `json:"name"`

@@ -20,6 +20,21 @@ let autoSelectConfig = null;
 let groupLatencyTesting = new Set();
 let autoSelectTimer = null;
 let autoSelectRunning = false;
+let autoSelectSaveTimer = null;
+let autoSelectRunTimer = null;
+let shareQRCodeURL = "";
+
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    const target = new URL(url, window.location.href);
+    if (!target.pathname.startsWith('/api/')) {
+        return nativeFetch(input, init);
+    }
+    const headers = new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined));
+    headers.set('X-Wing-Request', 'webui');
+    return nativeFetch(input, { ...init, headers });
+};
 
 function escapeHTML(value) {
     return String(value ?? '').replace(/[&<>"']/g, ch => ({
@@ -31,6 +46,10 @@ function escapeHTML(value) {
     }[ch]));
 }
 
+function jsArg(value) {
+    return JSON.stringify(String(value ?? ''));
+}
+
 async function loadStatus() {
     try {
         const res = await fetch('/api/status');
@@ -38,14 +57,6 @@ async function loadStatus() {
         document.getElementById('chkProxy').checked = st.proxy;
         document.getElementById('chkMode').checked = (st.mode === 'Global');
         document.getElementById('chkTun').checked = st.tun;
-        const shareToggle = document.getElementById('chkNetworkShare');
-        if (shareToggle) shareToggle.checked = !!st.networkShare;
-        const shareAddr = document.getElementById('networkShareAddress');
-        if (shareAddr) {
-            shareAddr.textContent = st.networkShare
-                ? ('代理地址: ' + (st.networkShareAddress || '--'))
-                : '仅本机可用';
-        }
         document.getElementById('chkWebRTC').checked = st.webrtc;
         document.getElementById('speedMonitor').innerHTML = '↑ ' + st.speedOut + ' &nbsp; ↓ ' + st.speedIn;
         renderFreeTrafficState(st.freeTraffic);
@@ -580,6 +591,39 @@ async function doAction(type) {
     }
 }
 
+async function loadSystemConfig() {
+    try {
+        const res = await fetch('/api/system_config');
+        const config = await res.json();
+        const portEl = document.getElementById('txtProxyPort');
+        if (portEl) portEl.value = config.proxyPort || '10808';
+    } catch(e) {
+        showToast('系统设置加载失败', 'warning', 2200);
+    }
+}
+
+async function saveProxyPort() {
+    const portEl = document.getElementById('txtProxyPort');
+    const port = (portEl?.value || '').trim();
+    const portNum = Number.parseInt(port, 10);
+    if (!Number.isFinite(portNum) || portNum <= 0 || portNum > 65535) {
+        showToast('请输入有效端口号', 'warning');
+        return;
+    }
+    try {
+        const res = await fetch('/api/system_config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proxyPort: String(portNum) })
+        });
+        const data = await res.json().catch(() => ({}));
+        showToast(data.msg || (data.ok === false ? '保存失败' : '系统设置已保存'), data.ok === false ? 'error' : 'success');
+        await loadStatus();
+    } catch(e) {
+        showToast('保存系统设置失败', 'error');
+    }
+}
+
 async function loadNodes() {
     try {
         const res = await fetch('/api/nodes');
@@ -885,7 +929,7 @@ async function runSiteTests() {
         btn.disabled = true;
         btn.textContent = '测试中';
     }
-    if (summary) summary.textContent = '正在通过当前节点访问测试网站...';
+    if (summary) summary.textContent = '正在通过当前节点逐个访问测试网站...';
     siteResultsCache = [];
     renderSiteResults(true);
     try {
@@ -964,7 +1008,7 @@ function renderSiteResults(loading = false) {
     const el = document.getElementById('siteCheckResults');
     if (!el) return;
     if (loading) {
-        el.innerHTML = '<div class="empty-state">正在测试，请稍候...</div>';
+        el.innerHTML = '<div class="empty-state">正在逐个测试，请稍候...</div>';
         return;
     }
     if (!siteResultsCache.length) {
@@ -1008,27 +1052,50 @@ function defaultAutoSelectConfig() {
     };
 }
 
-function loadAutoSelectConfig() {
+async function loadAutoSelectConfig() {
+    let loadedFromServer = false;
     try {
-        const raw = localStorage.getItem('wing_auto_select_config');
-        autoSelectConfig = raw ? JSON.parse(raw) : defaultAutoSelectConfig();
+        const res = await fetch('/api/auto_select_config');
+        const data = await res.json();
+        if (data.ok && data.config) {
+            autoSelectConfig = data.config;
+            loadedFromServer = true;
+        }
     } catch(e) {
+    }
+    if (!autoSelectConfig) {
+        try {
+            const raw = localStorage.getItem('wing_auto_select_config');
+            autoSelectConfig = raw ? JSON.parse(raw) : defaultAutoSelectConfig();
+        } catch(e) {
+            autoSelectConfig = defaultAutoSelectConfig();
+        }
+    }
+    normalizeAutoSelectConfig();
+    localStorage.setItem('wing_auto_select_config', JSON.stringify(autoSelectConfig));
+    if (!loadedFromServer) persistAutoSelectConfigToServer();
+    renderAutoSelectConfig();
+}
+
+function normalizeAutoSelectConfig() {
+    if (!autoSelectConfig || typeof autoSelectConfig !== 'object' || Array.isArray(autoSelectConfig)) {
         autoSelectConfig = defaultAutoSelectConfig();
     }
-    if (!autoSelectConfig || !Array.isArray(autoSelectConfig.rules)) {
-        autoSelectConfig = defaultAutoSelectConfig();
-    }
-    if (!autoSelectConfig.scope) autoSelectConfig.scope = 'subscription';
+    const defaults = defaultAutoSelectConfig();
+    autoSelectConfig.enabled = !!autoSelectConfig.enabled;
+    if (!['all', 'subscription', 'aggregate'].includes(autoSelectConfig.scope)) autoSelectConfig.scope = defaults.scope;
     if (autoSelectConfig.subscriptionFile) {
         autoSelectConfig.subscriptionFiles = [autoSelectConfig.subscriptionFile];
         delete autoSelectConfig.subscriptionFile;
     }
     if (!Array.isArray(autoSelectConfig.subscriptionFiles)) autoSelectConfig.subscriptionFiles = [];
+    autoSelectConfig.subscriptionFiles = normalizedFileList(autoSelectConfig.subscriptionFiles);
     if (autoSelectConfig.aggregateFile) {
         autoSelectConfig.aggregateFiles = [autoSelectConfig.aggregateFile];
         delete autoSelectConfig.aggregateFile;
     }
     if (!Array.isArray(autoSelectConfig.aggregateFiles)) autoSelectConfig.aggregateFiles = [];
+    autoSelectConfig.aggregateFiles = normalizedFileList(autoSelectConfig.aggregateFiles);
     autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
     if (!['none', 'proxy', 'tun', 'proxy_tun'].includes(autoSelectConfig.startupMode)) autoSelectConfig.startupMode = 'none';
     if (!autoSelectConfig.siteCheck || typeof autoSelectConfig.siteCheck !== 'object') {
@@ -1036,16 +1103,58 @@ function loadAutoSelectConfig() {
     }
     if (!Array.isArray(autoSelectConfig.siteCheck.ids)) autoSelectConfig.siteCheck.ids = [];
     if (!['none', 'any', 'all'].includes(autoSelectConfig.siteCheck.mode)) autoSelectConfig.siteCheck.mode = 'none';
-    renderAutoSelectConfig();
+    autoSelectConfig.ignoreTimeout = !!autoSelectConfig.ignoreTimeout;
+    if (!Array.isArray(autoSelectConfig.rules)) autoSelectConfig.rules = [];
 }
 
-function saveAutoSelectConfig() {
+function normalizedFileList(values) {
+    const out = [];
+    const seen = new Set();
+    (values || []).forEach(value => {
+        let file = String(value || '').trim();
+        try { file = decodeURIComponent(file); } catch(e) {}
+        if (!file || seen.has(file)) return;
+        seen.add(file);
+        out.push(file);
+    });
+    return out;
+}
+
+function saveAutoSelectConfig(options = {}) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    normalizeAutoSelectConfig();
     localStorage.setItem('wing_auto_select_config', JSON.stringify(autoSelectConfig));
+    scheduleAutoSelectConfigSave();
     scheduleAutoSelectTimer();
-    if (autoSelectConfig.enabled) {
-        testAutoNodes();
-    }
+    refreshAutoSelectViews();
+    if (autoSelectConfig.enabled && options.run !== false) scheduleAutoSelectRun(700);
+}
+
+function scheduleAutoSelectConfigSave() {
+    if (autoSelectSaveTimer) clearTimeout(autoSelectSaveTimer);
+    autoSelectSaveTimer = setTimeout(persistAutoSelectConfigToServer, 180);
+}
+
+async function persistAutoSelectConfigToServer() {
+    if (!autoSelectConfig) return;
+    try {
+        await fetch('/api/auto_select_config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(autoSelectConfig)
+        });
+    } catch(e) {}
+}
+
+function refreshAutoSelectViews() {
+    if (nodeGroupMode === 'auto') renderAutoSelectConfig();
+    if (nodeGroupMode === 'auto_nodes') renderAutoNodes();
+    if (nodeGroupMode === 'subscription' || nodeGroupMode === 'aggregate') renderNodes();
+}
+
+function scheduleAutoSelectRun(delay = 700) {
+    if (autoSelectRunTimer) clearTimeout(autoSelectRunTimer);
+    autoSelectRunTimer = setTimeout(() => runAutoSelectCycle({ silent: true }), delay);
 }
 
 function renderAutoSelectConfig() {
@@ -1149,7 +1258,7 @@ function renderAutoSelectConfig() {
 function setAutoSelectEnabled(checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.enabled = !!checked;
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ run: false });
     
     const autoNodesTab = document.getElementById('autoNodesTab');
     if (autoNodesTab) autoNodesTab.style.display = autoSelectConfig.enabled ? 'inline-block' : 'none';
@@ -1159,7 +1268,7 @@ function setAutoSelectEnabled(checked) {
 
     renderAutoSelectConfig();
     scheduleAutoSelectTimer();
-    if (autoSelectConfig.enabled) ensureAutoSelectNetworkMode();
+    if (autoSelectConfig.enabled) runAutoSelectCycle({ silent: false, force: true });
 }
 
 function setAutoSelectIgnoreTimeout(checked) {
@@ -1176,8 +1285,9 @@ function setAutoSelectScope(scope) {
     renderAutoSelectConfig();
 }
 
-function toggleAutoSelectSubscription(fileName, checked) {
+function toggleAutoSelectSubscription(encodedFileName, checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    const fileName = decodeURIComponent(encodedFileName);
     const set = new Set(autoSelectConfig.subscriptionFiles || []);
     if (checked) set.add(fileName);
     else set.delete(fileName);
@@ -1185,8 +1295,9 @@ function toggleAutoSelectSubscription(fileName, checked) {
     saveAutoSelectConfig();
 }
 
-function toggleAutoSelectAggregate(fileName, checked) {
+function toggleAutoSelectAggregate(encodedFileName, checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    const fileName = decodeURIComponent(encodedFileName);
     const set = new Set(autoSelectConfig.aggregateFiles || []);
     if (checked) set.add(fileName);
     else set.delete(fileName);
@@ -1639,13 +1750,18 @@ async function pickAutoSelectNodeWithSiteRules(candidates) {
 }
 
 async function runAutoSelectCycle(options = {}) {
-    if (!autoSelectConfig?.enabled) {
+    if (!autoSelectConfig?.enabled && !options.force) {
         if (!options.silent) showToast('请先开启自动选择节点', 'warning');
         return;
     }
-    if (autoSelectRunning || switchingNodeIndex !== null) return;
+    if (autoSelectRunning || switchingNodeIndex !== null) {
+        if (!options.silent) showToast('自动选择正在运行，请稍候。', 'info');
+        return;
+    }
     autoSelectRunning = true;
     try {
+        await loadSuppliers();
+        await loadNodes();
         await ensureAutoSelectNetworkMode();
         const candidates = autoSelectCandidates(options.fileName)
             .filter(nodePassesAutoSelectRules);
@@ -1686,18 +1802,31 @@ async function ensureAutoSelectNetworkMode() {
     await loadStatus();
     const proxyOn = !!document.getElementById('chkProxy')?.checked;
     const tunOn = !!document.getElementById('chkTun')?.checked;
-    if (mode === 'proxy' && !proxyOn) {
+    if ((mode === 'proxy' || mode === 'proxy_tun') && !proxyOn) {
         showToast('自动选择已开启，正在启动系统代理', 'info', 1800);
         await doAction('proxy');
     }
-    if (mode === 'tun' && !tunOn) {
+    if ((mode === 'tun' || mode === 'proxy_tun') && !tunOn) {
         showToast('自动选择已开启，正在启动 TUN', 'info', 1800);
         await doAction('tun');
     }
 }
 
-function runAutoSelectNow() {
-    runAutoSelectCycle({ silent: false });
+async function runAutoSelectNow() {
+    const btn = document.querySelector('.auto-select-section-actions .btn-primary');
+    const oldText = btn?.textContent || '';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '选择中';
+    }
+    try {
+        await runAutoSelectCycle({ silent: false, force: true });
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = oldText || '立即选择';
+        }
+    }
 }
 
 function scheduleAutoSelectTimer() {
@@ -1908,11 +2037,73 @@ async function shareSupplierFile(encodedFile, event) {
         showToast('该订阅没有可分享的原始链接', 'warning');
         return;
     }
+    let copied = false;
     try {
         await copyText(supplier.url);
-        showToast('订阅链接已复制到剪贴板', 'success');
+        copied = true;
+    } catch(e) {}
+    await showShareModal('订阅组：' + (supplier.name || file), supplier.url);
+    showToast(copied ? '订阅链接已复制到剪贴板' : '已生成订阅二维码，复制链接失败', copied ? 'success' : 'warning');
+}
+
+async function createQRCodeURL(text) {
+    const res = await fetch('/api/qrcode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+    });
+    if (!res.ok) throw new Error('QR request failed');
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+}
+
+function releaseShareQRCodeURL() {
+    if (shareQRCodeURL) {
+        URL.revokeObjectURL(shareQRCodeURL);
+        shareQRCodeURL = "";
+    }
+}
+
+async function showShareModal(title, text) {
+    const modal = document.getElementById('shareModal');
+    const titleEl = document.getElementById('shareModalTitle');
+    const textEl = document.getElementById('shareText');
+    const img = document.getElementById('shareQRCode');
+    const status = document.getElementById('shareQRStatus');
+    if (!modal || !textEl || !img) return;
+
+    releaseShareQRCodeURL();
+    if (titleEl) titleEl.textContent = title || '分享';
+    textEl.value = text || '';
+    img.removeAttribute('src');
+    img.style.display = 'none';
+    if (status) status.textContent = '正在生成二维码...';
+    modal.style.display = 'flex';
+
+    try {
+        shareQRCodeURL = await createQRCodeURL(text);
+        img.src = shareQRCodeURL;
+        img.style.display = 'block';
+        if (status) status.textContent = '扫码导入或复制链接分享。';
     } catch(e) {
-        showToast('复制订阅链接失败', 'error');
+        if (status) status.textContent = '二维码生成失败，链接仍可复制。';
+    }
+}
+
+function closeShareModal() {
+    const modal = document.getElementById('shareModal');
+    if (modal) modal.style.display = 'none';
+    releaseShareQRCodeURL();
+}
+
+async function copyShareModalText() {
+    const text = document.getElementById('shareText')?.value || '';
+    if (!text) return;
+    try {
+        await copyText(text);
+        showToast('分享内容已复制', 'success');
+    } catch(e) {
+        showToast('复制分享内容失败', 'error');
     }
 }
 
@@ -1939,8 +2130,14 @@ async function shareNode(idx) {
             showToast(data.msg || '该节点暂不支持分享链接', 'warning');
             return;
         }
-        await copyText(data.link);
-        showToast('节点链接已复制到剪贴板', 'success');
+        const node = allNodesList.find(n => n.index === idx);
+        let copied = false;
+        try {
+            await copyText(data.link);
+            copied = true;
+        } catch(e) {}
+        await showShareModal('节点：' + (node?.name || ('节点 ' + idx)), data.link);
+        showToast(copied ? '节点链接已复制到剪贴板' : '已生成节点二维码，复制链接失败', copied ? 'success' : 'warning');
     } catch(e) {
         showToast('获取节点链接失败', 'error');
     }
@@ -1990,14 +2187,7 @@ let jsQRLoader = null;
 function ensureJsQR() {
     if (window.jsQR) return Promise.resolve();
     if (jsQRLoader) return jsQRLoader;
-    jsQRLoader = new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
-        script.async = true;
-        script.onload = resolve;
-        script.onerror = () => reject(new Error('jsQR load failed'));
-        document.head.appendChild(script);
-    });
+    jsQRLoader = Promise.reject(new Error('二维码识别库未内置，已阻止从外部 CDN 加载脚本'));
     return jsQRLoader;
 }
 
@@ -2299,14 +2489,14 @@ function renderIndividualRuleActionSelector(idx) {
             html += `
                 <div style="margin-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.05);padding-bottom:6px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;border-radius:6px;background:${isGroupSelected ? 'rgba(99,102,241,0.1)' : 'transparent'};transition:all 0.2s;">
-                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setIndividualRuleAction(${idx}, '${subGroup.subName}')">
+                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setIndividualRuleAction(${idx}, ${jsArg(subGroup.subName)})">
                             <span style="color:var(--accent);font-size:14px;">🗂️</span>
-                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--accent)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${subGroup.subName}</span>
+                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--accent)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(subGroup.subName)}</span>
                             <span style="font-size:11px;color:var(--text-dim);">[订阅组]</span>
                         </div>
                         <div style="display:flex;align-items:center;gap:8px;">
                             ${isGroupSelected ? '<span style="color:var(--accent);font-size:11px;font-weight:bold;">已选此组</span>' : ''}
-                            <button onclick="toggleRuleSelectorGroupExpand(${idx}, '${groupKey}', event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
+                            <button onclick="toggleRuleSelectorGroupExpand(${idx}, ${jsArg(groupKey)}, event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
                                 ${isExpanded ? '收起 ▴' : `展开(${subGroup.nodes.length}) ▾`}
                             </button>
                         </div>
@@ -2330,10 +2520,10 @@ function renderIndividualRuleActionSelector(idx) {
                     const isNodeSelected = effectiveAction === node.Name;
                     html += `
                         <tr style="border-bottom:1px solid rgba(148,163,184,0.04);background:${isNodeSelected ? 'rgba(99,102,241,0.08)' : 'transparent'};">
-                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${node.Name}">${node.Name}</td>
-                            <td style="padding:6px 8px;color:var(--text-sub);">${node.Type.toUpperCase()}</td>
+                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${escapeAttr(node.Name)}">${escapeHTML(node.Name)}</td>
+                            <td style="padding:6px 8px;color:var(--text-sub);">${escapeHTML(String(node.Type || '').toUpperCase())}</td>
                             <td style="padding:6px 8px;text-align:right;">
-                                <button onclick="setIndividualRuleAction(${idx}, '${node.Name}')" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
+                                <button onclick="setIndividualRuleAction(${idx}, ${jsArg(node.Name)})" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
                                     ${isNodeSelected ? '已选择' : '选择'}
                                 </button>
                             </td>
@@ -2360,14 +2550,14 @@ function renderIndividualRuleActionSelector(idx) {
             html += `
                 <div style="margin-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.05);padding-bottom:6px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;border-radius:6px;background:${isGroupSelected ? 'rgba(99,102,241,0.1)' : 'transparent'};transition:all 0.2s;">
-                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setIndividualRuleAction(${idx}, '${aggGroup.name}')">
+                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setIndividualRuleAction(${idx}, ${jsArg(aggGroup.name)})">
                             <span style="color:var(--success);font-size:14px;">📁</span>
-                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--success)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${aggGroup.name}</span>
+                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--success)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(aggGroup.name)}</span>
                             <span style="font-size:11px;color:var(--text-dim);">[聚合组]</span>
                         </div>
                         <div style="display:flex;align-items:center;gap:8px;">
                             ${isGroupSelected ? '<span style="color:var(--success);font-size:11px;font-weight:bold;">已选此组</span>' : ''}
-                            <button onclick="toggleRuleSelectorGroupExpand(${idx}, '${groupKey}', event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
+                            <button onclick="toggleRuleSelectorGroupExpand(${idx}, ${jsArg(groupKey)}, event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
                                 ${isExpanded ? '收起 ▴' : `展开(${aggGroup.nodes.length}) ▾`}
                             </button>
                         </div>
@@ -2391,10 +2581,10 @@ function renderIndividualRuleActionSelector(idx) {
                     const isNodeSelected = effectiveAction === node.Name;
                     html += `
                         <tr style="border-bottom:1px solid rgba(148,163,184,0.04);background:${isNodeSelected ? 'rgba(99,102,241,0.08)' : 'transparent'};">
-                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${node.Name}">${node.Name}</td>
-                            <td style="padding:6px 8px;color:var(--text-sub);">${node.Type.toUpperCase()}</td>
+                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${escapeAttr(node.Name)}">${escapeHTML(node.Name)}</td>
+                            <td style="padding:6px 8px;color:var(--text-sub);">${escapeHTML(String(node.Type || '').toUpperCase())}</td>
                             <td style="padding:6px 8px;text-align:right;">
-                                <button onclick="setIndividualRuleAction(${idx}, '${node.Name}')" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
+                                <button onclick="setIndividualRuleAction(${idx}, ${jsArg(node.Name)})" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
                                     ${isNodeSelected ? '已选择' : '选择'}
                                 </button>
                             </td>
@@ -2457,14 +2647,14 @@ function renderSearchRuleActionSelector(gIdx, rIdx) {
             html += `
                 <div style="margin-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.05);padding-bottom:6px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;border-radius:6px;background:${isGroupSelected ? 'rgba(99,102,241,0.1)' : 'transparent'};transition:all 0.2s;">
-                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setSearchRuleAction(${gIdx}, ${rIdx}, '${subGroup.subName}')">
+                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setSearchRuleAction(${gIdx}, ${rIdx}, ${jsArg(subGroup.subName)})">
                             <span style="color:var(--accent);font-size:14px;">🗂️</span>
-                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--accent)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${subGroup.subName}</span>
+                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--accent)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(subGroup.subName)}</span>
                             <span style="font-size:11px;color:var(--text-dim);">[订阅组]</span>
                         </div>
                         <div style="display:flex;align-items:center;gap:8px;">
                             ${isGroupSelected ? '<span style="color:var(--accent);font-size:11px;font-weight:bold;">已选此组</span>' : ''}
-                            <button onclick="toggleSearchRuleSelectorGroupExpand(${gIdx}, ${rIdx}, '${groupKey}', event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
+                            <button onclick="toggleSearchRuleSelectorGroupExpand(${gIdx}, ${rIdx}, ${jsArg(groupKey)}, event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
                                 ${isExpanded ? '收起 ▴' : `展开(${subGroup.nodes.length}) ▾`}
                             </button>
                         </div>
@@ -2488,10 +2678,10 @@ function renderSearchRuleActionSelector(gIdx, rIdx) {
                     const isNodeSelected = effectiveAction === node.Name;
                     html += `
                         <tr style="border-bottom:1px solid rgba(148,163,184,0.04);background:${isNodeSelected ? 'rgba(99,102,241,0.08)' : 'transparent'};">
-                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${node.Name}">${node.Name}</td>
-                            <td style="padding:6px 8px;color:var(--text-sub);">${node.Type.toUpperCase()}</td>
+                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${escapeAttr(node.Name)}">${escapeHTML(node.Name)}</td>
+                            <td style="padding:6px 8px;color:var(--text-sub);">${escapeHTML(String(node.Type || '').toUpperCase())}</td>
                             <td style="padding:6px 8px;text-align:right;">
-                                <button onclick="setSearchRuleAction(${gIdx}, ${rIdx}, '${node.Name}')" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
+                                <button onclick="setSearchRuleAction(${gIdx}, ${rIdx}, ${jsArg(node.Name)})" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
                                     ${isNodeSelected ? '已选择' : '选择'}
                                 </button>
                             </td>
@@ -2518,14 +2708,14 @@ function renderSearchRuleActionSelector(gIdx, rIdx) {
             html += `
                 <div style="margin-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.05);padding-bottom:6px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;border-radius:6px;background:${isGroupSelected ? 'rgba(99,102,241,0.1)' : 'transparent'};transition:all 0.2s;">
-                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setSearchRuleAction(${gIdx}, ${rIdx}, '${aggGroup.name}')">
+                        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;" onclick="setSearchRuleAction(${gIdx}, ${rIdx}, ${jsArg(aggGroup.name)})">
                             <span style="color:var(--success);font-size:14px;">📁</span>
-                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--success)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${aggGroup.name}</span>
+                            <span style="font-size:13px;font-weight:${isGroupSelected ? 'bold' : 'normal'};color:${isGroupSelected ? 'var(--success)' : 'white'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(aggGroup.name)}</span>
                             <span style="font-size:11px;color:var(--text-dim);">[聚合组]</span>
                         </div>
                         <div style="display:flex;align-items:center;gap:8px;">
                             ${isGroupSelected ? '<span style="color:var(--success);font-size:11px;font-weight:bold;">已选此组</span>' : ''}
-                            <button onclick="toggleSearchRuleSelectorGroupExpand(${gIdx}, ${rIdx}, '${groupKey}', event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
+                            <button onclick="toggleSearchRuleSelectorGroupExpand(${gIdx}, ${rIdx}, ${jsArg(groupKey)}, event)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.15);color:var(--text-sub);padding:2px 8px;border-radius:6px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;">
                                 ${isExpanded ? '收起 ▴' : `展开(${aggGroup.nodes.length}) ▾`}
                             </button>
                         </div>
@@ -2549,10 +2739,10 @@ function renderSearchRuleActionSelector(gIdx, rIdx) {
                     const isNodeSelected = effectiveAction === node.Name;
                     html += `
                         <tr style="border-bottom:1px solid rgba(148,163,184,0.04);background:${isNodeSelected ? 'rgba(99,102,241,0.08)' : 'transparent'};">
-                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${node.Name}">${node.Name}</td>
-                            <td style="padding:6px 8px;color:var(--text-sub);">${node.Type.toUpperCase()}</td>
+                            <td style="padding:6px 8px;color:${isNodeSelected ? 'var(--accent)' : 'var(--text)'};font-weight:${isNodeSelected ? 'bold' : 'normal'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;" title="${escapeAttr(node.Name)}">${escapeHTML(node.Name)}</td>
+                            <td style="padding:6px 8px;color:var(--text-sub);">${escapeHTML(String(node.Type || '').toUpperCase())}</td>
                             <td style="padding:6px 8px;text-align:right;">
-                                <button onclick="setSearchRuleAction(${gIdx}, ${rIdx}, '${node.Name}')" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
+                                <button onclick="setSearchRuleAction(${gIdx}, ${rIdx}, ${jsArg(node.Name)})" style="background:${isNodeSelected ? 'var(--accent)' : 'rgba(255,255,255,0.05)'};color:${isNodeSelected ? 'white' : 'var(--text-sub)'};border:1px solid ${isNodeSelected ? 'var(--accent)' : 'rgba(148,163,184,0.15)'};padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">
                                     ${isNodeSelected ? '已选择' : '选择'}
                                 </button>
                             </td>
@@ -2944,7 +3134,7 @@ function renderDNSConfig() {
     dnsConfig.servers.forEach((s, idx) => {
         serverList.innerHTML += `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid rgba(148,163,184,0.08);">
-                <span style="font-size:13px;"><strong>${s.name}</strong> (${s.address})</span>
+                <span style="font-size:13px;"><strong>${escapeHTML(s.name)}</strong> (${escapeHTML(s.address)})</span>
                 <button class="btn-ghost" style="padding:2px 6px; font-size:11px; color:var(--danger);" onclick="deleteDNSServer(${idx})">删除</button>
             </div>
         `;
@@ -2967,7 +3157,7 @@ function renderDNSConfig() {
         const server = dnsConfig.servers.find(s => s.id === r.serverId);
         ruleList.innerHTML += `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid rgba(148,163,184,0.08);">
-                <span style="font-size:13px;"><span style="background:rgba(255,255,255,0.05); padding:2px 4px; border-radius:4px; font-size:11px; margin-right:6px;">${typeName(r.type)}</span> ${r.value} -> <strong>${server ? server.name : 'Unknown'}</strong></span>
+                <span style="font-size:13px;"><span style="background:rgba(255,255,255,0.05); padding:2px 4px; border-radius:4px; font-size:11px; margin-right:6px;">${escapeHTML(typeName(r.type))}</span> ${escapeHTML(r.value)} -> <strong>${escapeHTML(server ? server.name : 'Unknown')}</strong></span>
                 <button class="btn-ghost" style="padding:2px 6px; font-size:11px; color:var(--danger);" onclick="deleteDNSRule(${idx})">删除</button>
             </div>
         `;
@@ -3247,17 +3437,18 @@ async function submitAggAction() {
     }
 }
 
-window.onload = () => {
-    loadSystemConfig();
-    loadAutoSelectConfig();
-    loadStatus();
-    loadSuppliers();
-    loadNodes();
-    ensureSiteTargetsLoaded().then(renderAutoSelectConfig);
+window.onload = async () => {
+    await loadSystemConfig();
+    await loadAutoSelectConfig();
+    await loadStatus();
+    await loadSuppliers();
+    await loadNodes();
+    await ensureSiteTargetsLoaded();
+    renderAutoSelectConfig();
     scheduleAutoSelectTimer();
-    
+
     showTab('nodes');
-    
+
     pollTimer = setInterval(() => {
         loadStatus();
         if (activeTab === 'dashboard' && Date.now() - lastDashboardPoll > 4000) {

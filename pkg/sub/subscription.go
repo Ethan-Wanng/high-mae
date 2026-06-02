@@ -3,6 +3,7 @@ package sub
 import (
 	"wing/pkg/common"
 	"wing/pkg/proxy"
+	"wing/pkg/secure"
 	"wing/pkg/storage"
 	"wing/pkg/utils"
 
@@ -59,7 +60,7 @@ type SubscriptionTraffic struct {
 
 // ReadSubscriptions 读取保存的订阅信息
 func ReadSubscriptions() ([]SubInfo, error) {
-	data, err := storage.ReadOrMigrateFile(SubscriptionsFile)
+	data, err := secure.SecureReadFile(SubscriptionsFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []SubInfo{}, nil
@@ -73,6 +74,14 @@ func ReadSubscriptions() ([]SubInfo, error) {
 	}
 	normalizeSubscriptions(links)
 	return links, nil
+}
+
+func saveSubscriptions(links []SubInfo) error {
+	data, err := json.MarshalIndent(links, "", "  ")
+	if err != nil {
+		return err
+	}
+	return secure.SecureWriteFile(SubscriptionsFile, data)
 }
 
 // AppendSubscription 追加新链接到 JSON，并返回其文件名以及是否已存在
@@ -112,12 +121,7 @@ func AppendSubscriptionWithTraffic(newLink string, traffic *SubscriptionTraffic)
 		LastUpdatedAt:         time.Now().Unix(),
 	})
 
-	data, err := json.MarshalIndent(links, "", "  ")
-	if err != nil {
-		return "", false, err
-	}
-
-	return fileName, false, storage.Write(SubscriptionsFile, data)
+	return fileName, false, saveSubscriptions(links)
 }
 
 func normalizeSubscriptions(links []SubInfo) {
@@ -150,11 +154,7 @@ func UpdateSubscriptionTraffic(url string, traffic *SubscriptionTraffic) error {
 	if !changed {
 		return nil
 	}
-	data, err := json.MarshalIndent(links, "", "  ")
-	if err != nil {
-		return err
-	}
-	return storage.Write(SubscriptionsFile, data)
+	return saveSubscriptions(links)
 }
 
 func MarkSubscriptionUpdated(url string, traffic *SubscriptionTraffic) error {
@@ -177,11 +177,7 @@ func MarkSubscriptionUpdated(url string, traffic *SubscriptionTraffic) error {
 	if !changed {
 		return nil
 	}
-	data, err := json.MarshalIndent(links, "", "  ")
-	if err != nil {
-		return err
-	}
-	return storage.Write(SubscriptionsFile, data)
+	return saveSubscriptions(links)
 }
 
 func SetSubscriptionUpdateInterval(fileName string, minutes int64) error {
@@ -203,11 +199,7 @@ func SetSubscriptionUpdateInterval(fileName string, minutes int64) error {
 	if !changed {
 		return fmt.Errorf("订阅不存在")
 	}
-	data, err := json.MarshalIndent(links, "", "  ")
-	if err != nil {
-		return err
-	}
-	return storage.Write(SubscriptionsFile, data)
+	return saveSubscriptions(links)
 }
 
 func SaveNodesToYAML(path string, nodes []protocol.Node) error {
@@ -230,7 +222,7 @@ func SaveNodesToYAML(path string, nodes []protocol.Node) error {
 		}
 	}
 
-	return storage.Write(path, []byte(sb.String()))
+	return secure.SecureWriteFile(path, []byte(sb.String()))
 }
 
 func NotifySubscriptionNodesUpdated(fileName string, oldNodes []protocol.Node, newNodes []protocol.Node) {
@@ -542,8 +534,7 @@ func DeleteSubscription(url string) {
 			_ = os.Remove(l.FileName)
 		}
 	}
-	data, _ := json.MarshalIndent(newLinks, "", "  ")
-	_ = storage.Write(SubscriptionsFile, data)
+	_ = saveSubscriptions(newLinks)
 }
 
 func ParseSubscriptionTraffic(headers http.Header) *SubscriptionTraffic {
@@ -613,6 +604,9 @@ func ParseSubscription(input string) ([]protocol.Node, error) {
 
 func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraffic, error) {
 	var traffic *SubscriptionTraffic
+	if isPlainHTTPRemoteSubscription(input) && !allowInsecureSubscriptions() {
+		return nil, nil, fmt.Errorf("出于安全原因，默认拒绝明文 HTTP 订阅；请改用 HTTPS")
+	}
 	if isRemoteSubscription(input) {
 		userAgents := []string{
 			"wing/1.0",
@@ -710,7 +704,25 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 
 func isRemoteSubscription(input string) bool {
 	input = strings.TrimSpace(strings.Trim(input, "“”\"'"))
-	return strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://")
+	if strings.Contains(input, "\n") || strings.Contains(input, "@") {
+		return false
+	}
+	if strings.HasPrefix(input, "https://") {
+		return true
+	}
+	return isPlainHTTPRemoteSubscription(input) && allowInsecureSubscriptions()
+}
+
+func isPlainHTTPRemoteSubscription(input string) bool {
+	input = strings.TrimSpace(strings.Trim(input, "“”\"'"))
+	return !strings.Contains(input, "\n") &&
+		!strings.Contains(input, "@") &&
+		strings.HasPrefix(input, "http://")
+}
+
+func allowInsecureSubscriptions() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("WING_ALLOW_INSECURE_SUBSCRIPTIONS")))
+	return value == "1" || value == "true" || value == "yes"
 }
 
 func mergeNodes(base []protocol.Node, extra []protocol.Node) []protocol.Node {

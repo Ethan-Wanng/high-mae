@@ -1,6 +1,120 @@
 package webui
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"wing/pkg/storage"
+)
+
+func TestQRCodeHandlerReturnsPNG(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/qrcode", strings.NewReader(`{"text":"vless://example"}`))
+	rr := httptest.NewRecorder()
+
+	qrCodeHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("qrCodeHandler status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if got := rr.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("Content-Type = %q, want image/png", got)
+	}
+	body := rr.Body.Bytes()
+	pngHeader := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	if len(body) < len(pngHeader) || string(body[:len(pngHeader)]) != string(pngHeader) {
+		t.Fatalf("QR response is not a PNG")
+	}
+}
+
+func TestAutoSelectConfigHandlerPersistsJSON(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	payload := `{"enabled":true,"scope":"subscription","subscriptionFiles":["sub_a.yml"],"rules":[]}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/auto_select_config", strings.NewReader(payload))
+	postRR := httptest.NewRecorder()
+
+	autoSelectConfigHandler(postRR, postReq)
+
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, want %d", postRR.Code, http.StatusOK)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/auto_select_config", nil)
+	getRR := httptest.NewRecorder()
+	autoSelectConfigHandler(getRR, getReq)
+
+	var resp struct {
+		OK     bool            `json:"ok"`
+		Config json.RawMessage `json:"config"`
+	}
+	if err := json.Unmarshal(getRR.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("GET response JSON error: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("GET response ok = false")
+	}
+	if !strings.Contains(string(resp.Config), "sub_a.yml") {
+		t.Fatalf("persisted config = %s, want subscription file", resp.Config)
+	}
+}
+
+func TestRunSiteTestsRunsTargetsSequentially(t *testing.T) {
+	var active int32
+	var maxActive int32
+	var mu sync.Mutex
+	var paths []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := atomic.AddInt32(&active, 1)
+		for {
+			max := atomic.LoadInt32(&maxActive)
+			if current <= max || atomic.CompareAndSwapInt32(&maxActive, max, current) {
+				break
+			}
+		}
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		atomic.AddInt32(&active, -1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	targets := []SiteTestTarget{
+		{ID: "one", Name: "One", Category: "test", URL: server.URL + "/one"},
+		{ID: "two", Name: "Two", Category: "test", URL: server.URL + "/two"},
+		{ID: "three", Name: "Three", Category: "test", URL: server.URL + "/three"},
+	}
+
+	results := runSiteTests(server.Client(), targets)
+
+	if len(results) != len(targets) {
+		t.Fatalf("runSiteTests returned %d results, want %d", len(results), len(targets))
+	}
+	if maxActive != 1 {
+		t.Fatalf("runSiteTests ran %d site requests concurrently, want 1", maxActive)
+	}
+	wantPaths := []string{"/one", "/two", "/three"}
+	if len(paths) != len(wantPaths) {
+		t.Fatalf("request count = %d, want %d", len(paths), len(wantPaths))
+	}
+	for i, want := range wantPaths {
+		if paths[i] != want {
+			t.Fatalf("request order[%d] = %q, want %q", i, paths[i], want)
+		}
+	}
+}
 
 func TestEvaluateSiteAccessDetectsGeminiRegionUnsupported(t *testing.T) {
 	target := SiteTestTarget{

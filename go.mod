@@ -11,6 +11,7 @@ require (
 	github.com/sagernet/bbolt v0.0.0-20231014093535-ea5cb2fe9f0a
 	github.com/sagernet/sing v0.8.4
 	github.com/sagernet/sing-box v1.13.6
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/wailsapp/wails/v2 v2.10.1
 	golang.org/x/sys v0.43.0
 	google.golang.org/protobuf v1.36.11

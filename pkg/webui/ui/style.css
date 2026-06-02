@@ -589,6 +589,41 @@ input:checked + .slider:before {
     flex-wrap: wrap;
 }
 
+.share-modal {
+    width: min(520px, 100%);
+}
+
+.qr-frame {
+    min-height: 292px;
+    display: grid;
+    place-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding: 18px;
+    border-radius: var(--radius);
+    background: #ffffff;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.qr-frame img {
+    width: 256px;
+    height: 256px;
+    object-fit: contain;
+    image-rendering: pixelated;
+}
+
+.qr-status {
+    color: #475569;
+    font-size: 12px;
+    text-align: center;
+}
+
+.share-modal textarea {
+    min-height: 96px;
+    font-size: 12px;
+    word-break: break-all;
+}
+
 .empty-state {
     grid-column: 1 / -1;
     border: 1px dashed rgba(148, 163, 184, 0.22);
