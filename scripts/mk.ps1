@@ -76,6 +76,16 @@ function Copy-CronetDll {
     }
 }
 
+function Download-CronetDllModule {
+    Write-Host "⬇️ 正在准备 libcronet.dll 模块..." -ForegroundColor Cyan
+    Invoke-WithProjectGoCache {
+        go mod download github.com/sagernet/cronet-go/lib/windows_amd64
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "下载 libcronet.dll 模块失败，退出码: $LASTEXITCODE"
+    }
+}
+
 function Reset-ProjectDirectory {
     param([string]$Path)
 
@@ -124,6 +134,7 @@ function Build-FlutterUI {
 }
 
 function Build-GoBackend {
+    Download-CronetDllModule
     Copy-CronetDll
     Write-Host "🚀 正在构建 Go 后端与系统托盘..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path (Split-Path -Parent $backendExe) -Force | Out-Null
