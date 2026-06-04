@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -23,8 +22,10 @@ Future<void> main(List<String> args) async {
   runApp(WingApp(initialUrl: _webUIURLFromArgs(args)));
 
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.show();
-    await windowManager.focus();
+    if (!_startupHiddenFromArgs(args)) {
+      await windowManager.show();
+      await windowManager.focus();
+    }
   });
 }
 
@@ -38,6 +39,10 @@ String _webUIURLFromArgs(List<String> args) {
     }
   }
   return _defaultWebUIURL;
+}
+
+bool _startupHiddenFromArgs(List<String> args) {
+  return args.contains('--startup-hidden');
 }
 
 class WingApp extends StatelessWidget {
@@ -99,7 +104,6 @@ class _WingWebViewState extends State<WingWebView> {
     });
 
     try {
-      await _waitForBackend(widget.initialUrl);
       await _controller.initialize();
       _subscriptions.add(
         _controller.containsFullScreenElementChanged.listen((isFullScreen) {
@@ -124,33 +128,6 @@ class _WingWebViewState extends State<WingWebView> {
       _showError(e.message ?? e.code);
     } catch (e) {
       _showError(e.toString());
-    }
-  }
-
-  Future<void> _waitForBackend(String url) async {
-    final uri = Uri.parse(url);
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
-    try {
-      for (var attempt = 1; attempt <= 24; attempt++) {
-        if (!mounted) {
-          return;
-        }
-
-        try {
-          final request = await client.getUrl(uri);
-          request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
-          final response = await request.close();
-          await response.drain<void>();
-          if (response.statusCode < HttpStatus.internalServerError) {
-            return;
-          }
-        } catch (_) {
-          await Future<void>.delayed(const Duration(milliseconds: 120));
-        }
-      }
-      throw TimeoutException('Go 后端暂时没有响应');
-    } finally {
-      client.close(force: true);
     }
   }
 

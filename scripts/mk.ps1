@@ -159,12 +159,20 @@ switch ($args[0]) {
     "package" {
         Build-FlutterUI
         Build-GoBackend
-        & $portablePackageScript
+        & $innoPackageScript
         if ($LASTEXITCODE -ne 0) {
             throw "安装包生成失败，退出码: $LASTEXITCODE"
         }
     }
     "installer" {
+        Build-FlutterUI
+        Build-GoBackend
+        & $innoPackageScript
+        if ($LASTEXITCODE -ne 0) {
+            throw "安装包生成失败，退出码: $LASTEXITCODE"
+        }
+    }
+    "portable" {
         Build-FlutterUI
         Build-GoBackend
         & $portablePackageScript
@@ -212,9 +220,11 @@ switch ($args[0]) {
         Build-FlutterUI
     }
     default {
-        Write-Host "用法: .\mk.ps1 [build|package|backend|test|run|ui|inno]"
+        Write-Host "用法: .\mk.ps1 [build|package|installer|portable|backend|test|run|ui|inno]"
         Write-Host "  build  - 构建 Flutter 控制面板与 Go 后端"
-        Write-Host "  package - 构建并生成 dist\wing-installer.exe 单文件安装包"
+        Write-Host "  package - 构建并生成 dist\wing-1.0.2-windows-x64-setup.exe 标准安装包"
+        Write-Host "  installer - 同 package，生成标准 Windows 安装包"
+        Write-Host "  portable - 生成旧版自解压单文件安装包，可能更容易被安全软件误报"
         Write-Host "  backend - 仅构建 Go 后端"
         Write-Host "  test   - 运行测试"
         Write-Host "  run    - 构建 Flutter 控制面板后直接运行 Go 后端"

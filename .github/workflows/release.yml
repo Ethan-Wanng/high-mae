@@ -36,15 +36,24 @@ jobs:
 
       - name: Build Windows installer
         shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
         run: |
-          .\scripts\mk.ps1 package
+          choco install innosetup --no-progress -y
+          .\scripts\mk.ps1 build
+          .\scripts\sign-windows.ps1 .\build\bin\wing.exe .\build\bin\flutter_ui\wing_ui.exe
+          .\scripts\package.ps1
+          .\scripts\sign-windows.ps1 "dist\wing-$($env:WING_VERSION)-windows-x64-setup.exe"
           New-Item -ItemType Directory -Path artifacts -Force | Out-Null
-          Copy-Item dist\wing-installer.exe "artifacts\wing-$($env:WING_VERSION)-windows-x64-installer.exe" -Force
+          Copy-Item "dist\wing-$($env:WING_VERSION)-windows-x64-setup.exe" "artifacts\wing-$($env:WING_VERSION)-windows-x64-setup.exe" -Force
 
       - uses: actions/upload-artifact@v4
         with:
           name: wing-windows
-          path: artifacts/wing-${{ env.WING_VERSION }}-windows-x64-installer.exe
+          path: artifacts/wing-${{ env.WING_VERSION }}-windows-x64-setup.exe
 
   linux:
     name: Linux installer
@@ -175,7 +184,7 @@ jobs:
             wing v${{ env.WING_VERSION }} release assets.
 
             Assets:
-            - Windows: wing-${{ env.WING_VERSION }}-windows-x64-installer.exe
+            - Windows: wing-${{ env.WING_VERSION }}-windows-x64-setup.exe
             - Linux: wing-${{ env.WING_VERSION }}-linux-x64.run
             - macOS: wing-${{ env.WING_VERSION }}-macos-x64.pkg
             - Android: wing-${{ env.WING_VERSION }}-android-universal.apk
@@ -184,3 +193,4 @@ jobs:
             Notes:
             - The iOS IPA is unsigned and must be signed with an Apple Developer certificate before device distribution.
           files: artifacts/*
+          overwrite_files: true

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"wing/pkg/utils"
 )
@@ -21,49 +22,80 @@ var (
 	flutterUIMu       sync.Mutex
 	flutterUICmd      *exec.Cmd
 	flutterUIStarting bool
+	flutterUIPending  bool
 )
 
 func ShowFlutterWindow() {
+	startFlutterWindow(true)
+}
+
+func PreloadFlutterWindow() {
+	startFlutterWindow(false)
+}
+
+func startFlutterWindow(show bool) {
 	flutterUIMu.Lock()
 	if flutterUICmd != nil && flutterUICmd.Process != nil && flutterUICmd.ProcessState == nil {
 		cmd := flutterUICmd
 		flutterUIMu.Unlock()
-		_ = focusFlutterWindow(cmd)
+		if show {
+			go waitAndFocusFlutterWindow(cmd)
+		}
 		return
 	}
 	if flutterUIStarting {
+		if show {
+			flutterUIPending = true
+		}
 		flutterUIMu.Unlock()
 		return
 	}
 	flutterUIStarting = true
+	flutterUIPending = show
 	flutterUIMu.Unlock()
 
 	exePath, err := findFlutterUIExecutable()
 	if err != nil {
 		flutterUIMu.Lock()
 		flutterUIStarting = false
+		flutterUIPending = false
 		flutterUIMu.Unlock()
-		openExternalURL(webUIURL)
-		utils.ShowWindowsMsgBox("wing", "未找到 Flutter 控制面板，已改用浏览器打开。\n\n"+err.Error())
+		if show {
+			openExternalURL(webUIURL)
+			utils.ShowWindowsMsgBox("wing", "未找到 Flutter 控制面板，已改用浏览器打开。\n\n"+err.Error())
+		}
 		return
 	}
 
-	cmd := exec.Command(exePath, "--wing-url="+webUIURL)
+	args := []string{"--wing-url=" + webUIURL}
+	if !show {
+		args = append(args, "--startup-hidden")
+	}
+	cmd := exec.Command(exePath, args...)
 	cmd.Dir = filepath.Dir(exePath)
 
 	if err := cmd.Start(); err != nil {
 		flutterUIMu.Lock()
 		flutterUIStarting = false
+		flutterUIPending = false
 		flutterUIMu.Unlock()
-		openExternalURL(webUIURL)
-		utils.ShowWindowsMsgBox("wing", "无法启动 Flutter 控制面板，已改用浏览器打开。\n\n"+err.Error())
+		if show {
+			openExternalURL(webUIURL)
+			utils.ShowWindowsMsgBox("wing", "无法启动 Flutter 控制面板，已改用浏览器打开。\n\n"+err.Error())
+		}
 		return
 	}
 
 	flutterUIMu.Lock()
 	flutterUICmd = cmd
+	shouldFocus := flutterUIPending
 	flutterUIStarting = false
+	flutterUIPending = false
 	flutterUIMu.Unlock()
+
+	if shouldFocus {
+		go waitAndFocusFlutterWindow(cmd)
+	}
 
 	go func() {
 		_ = cmd.Wait()
@@ -73,6 +105,15 @@ func ShowFlutterWindow() {
 		}
 		flutterUIMu.Unlock()
 	}()
+}
+
+func waitAndFocusFlutterWindow(cmd *exec.Cmd) {
+	for i := 0; i < 30; i++ {
+		if focusFlutterWindow(cmd) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func QuitFlutterApp() {

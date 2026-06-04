@@ -66,6 +66,9 @@ func onReady() {
 	utils.SafeGo("local dns server", proxy.StartLocalDNS)
 	utils.SafeGo("web ui server", webui.StartWebUI)
 	utils.SafeGo("local http proxy", proxy.StartAnyTLSHttpServer)
+	utils.SafeGo("flutter ui preload", func() {
+		PreloadFlutterWindow()
+	})
 	sub.StartAutoUpdateSubscriptions()
 	utils.SetSystemProxy(common.IsSystemProxyOn)
 

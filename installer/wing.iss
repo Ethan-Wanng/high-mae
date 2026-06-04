@@ -1,6 +1,7 @@
 #define MyAppName "wing"
 #define MyAppVersion "1.0.2"
 #define MyAppPublisher "Ethan-Wanng"
+#define MyAppURL "https://github.com/Ethan-Wanng/high-mae"
 #define MyAppExeName "wing.exe"
 #define SourceRoot "..\build\bin"
 #define OutputRoot "..\dist"
@@ -10,20 +11,28 @@ AppId={{7D7D9ED8-AC02-47E4-9F88-3C0DF53E9C1E}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}/issues
+AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={localappdata}\Programs\wing
 DefaultGroupName=wing
 AllowNoIcons=yes
 DisableProgramGroupPage=no
 OutputDir={#OutputRoot}
-OutputBaseFilename=wing-setup
+OutputBaseFilename=wing-{#MyAppVersion}-windows-x64-setup
 SetupIconFile=..\assets\icon.ico
-Compression=lzma2/ultra64
+Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\{#MyAppExeName}
+VersionInfoVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription=wing Windows installer
+VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion={#MyAppVersion}
 CloseApplications=yes
 RestartApplications=no
 

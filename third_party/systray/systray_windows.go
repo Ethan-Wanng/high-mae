@@ -248,6 +248,7 @@ var wt winTray
 // https://msdn.microsoft.com/en-us/library/windows/desktop/ms633573(v=vs.85).aspx
 func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam uintptr) (lResult uintptr) {
 	const (
+		WM_NULL       = 0x0000
 		WM_RBUTTONUP  = 0x0205
 		WM_LBUTTONUP  = 0x0202
 		WM_COMMAND    = 0x0111
@@ -278,8 +279,11 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		systrayExit()
 	case t.wmSystrayMessage:
 		switch lParam {
-		case WM_LBUTTONUP, WM_RBUTTONUP:
+		case WM_LBUTTONUP:
 			notifySystrayClick()
+		case WM_RBUTTONUP:
+			_ = t.showMenu()
+			pPostMessage.Call(uintptr(t.window), WM_NULL, 0, 0)
 		}
 	case t.wmTaskbarCreated: // on explorer.exe restarts
 		t.muNID.Lock()

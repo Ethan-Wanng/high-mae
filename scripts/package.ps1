@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $issFile = Join-Path $repoRoot "installer\wing.iss"
-$setupExe = Join-Path $repoRoot "dist\wing-setup.exe"
+$setupExe = Join-Path $repoRoot "dist\wing-1.0.2-windows-x64-setup.exe"
 
 function Find-InnoCompiler {
     $cmd = Get-Command iscc -ErrorAction SilentlyContinue
@@ -52,7 +52,7 @@ if (-not $iscc) {
 
 New-Item -ItemType Directory -Path (Join-Path $repoRoot "dist") -Force | Out-Null
 
-Write-Host "📦 正在生成单文件安装包..." -ForegroundColor Cyan
+Write-Host "📦 正在生成标准 Windows 安装包..." -ForegroundColor Cyan
 & $iscc $issFile
 if ($LASTEXITCODE -ne 0) {
     throw "安装包生成失败，退出码: $LASTEXITCODE"
