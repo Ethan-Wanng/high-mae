@@ -1,11 +1,12 @@
 # wing
 
-wing 是一款桌面代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，提供节点订阅、测速、网站可用性测试、自动选点、规则分流、隧道连接、DNS 分流、WebRTC 防泄漏和命令行进程规则等能力。
+wing 是一款基于 Flutter + Go 的代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，提供节点订阅、测速、网站可用性测试、自动选点、规则分流、隧道连接、DNS 分流、WebRTC 防泄漏和命令行进程规则等能力。
 
 ## 核心特性
 
 - 多协议支持：Hysteria2、TUIC、VLESS、VMess、Trojan、Shadowsocks、AnyTLS、Naive、Mieru、HTTP/SOCKS 等。
-- 双入口管理：Flutter 桌面窗口用于日常操作，Go 系统托盘用于快速切换节点、代理模式、隧道连接和退出。
+- 多入口管理：Flutter 桌面窗口用于日常操作，Go 系统托盘用于快速切换节点、代理模式、隧道连接和退出；Android/iOS Flutter 壳用于访问本机、模拟器或局域网控制面板。
+- 托盘交互：左键快速唤起桌面控制面板，右键打开菜单并可安全退出；桌面窗口会后台预热，减少首次点击等待。
 - 本地控制面板：默认运行在 `http://127.0.0.1:10809/`，用于订阅导入、节点管理、测速、网站测试、规则管理、DNS 管理和流量统计。
 - 订阅管理：支持为订阅设置自动更新时间间隔，并优化远程订阅更新速度。
 - 免费流量：内置获取免费流量入口，按周限制可用流量，用完后自动停止使用该入口。
@@ -16,7 +17,8 @@ wing 是一款桌面代理客户端。它集成 sing-box、Mieru Client、本地
 - 规则分流：支持域名、域名后缀、域名关键字规则，也支持按命令行完整命令或前缀选择直连/代理。
 - 隧道连接：基于内置 sing-box TUN + Wintun 接管不遵循系统代理设置的应用流量；需要管理员权限。
 - DNS 分流：支持本地 DNS 服务和按域名规则选择 DNS 服务器。
-- 隐私辅助：提供 WebRTC 防泄漏策略和连接日志隐私模式。
+- 隐私辅助：提供 WebRTC 防泄漏策略和连接日志隐私模式，订阅、DNS、路由、自动选择和聚合组等本地配置会通过项目安全存储层读写。
+- 五平台发布：Release workflow 会生成 Windows、macOS、Linux、Android 和 iOS 产物；Windows 默认使用标准 Inno Setup 安装包，降低安全软件误报概率。
 
 ## 命令行规则说明
 
@@ -33,23 +35,24 @@ go test -> 直连
 ## 技术架构
 
 - 桌面框架：Flutter Desktop + Windows WebView2
+- 移动端壳：Flutter + webview_flutter
 - 后端进程：Go 常驻服务与系统托盘
 - 托盘菜单：getlantern/systray
 - 代理核心：sing-box 与项目内适配层
 - Mieru 支持：Mieru Client API
 - 控制面板：Flutter WebView 承载 Go 标准库 `net/http` 内置静态页面
-- 存储：bbolt 与本地配置文件迁移兼容
+- 存储：bbolt、本地配置迁移兼容与安全存储封装
 - 网络接管：内置 sing-box TUN + Wintun
 
 ## 快速开始
 
 ### 运行环境
 
-- Windows 10/11、macOS 或 Linux
+- Windows 10/11、macOS、Linux、Android 或 iOS
 - Flutter 3.29.2 或兼容版本
 - Go 1.25.0 或兼容版本
 - Visual Studio 2022 Build Tools，需安装 “Desktop development with C++” 工作负载，用于构建 Flutter Windows 桌面应用
-- Inno Setup 6：可选，仅在使用 `./scripts/mk.ps1 inno` 生成传统安装向导时需要
+- Inno Setup 6：使用 `./scripts/mk.ps1 package` 或 `installer` 生成 Windows 标准安装包时需要
 - 管理员权限：仅开启 TUN、系统 DNS 覆写或部分系统策略时需要
 
 ### 使用方式
@@ -73,30 +76,52 @@ go mod download
 
 双击根目录的 `build-wing.bat` 可以一键构建 Flutter 控制面板与 Go 后端。
 
-双击根目录的 `package-wing.bat` 可以构建并生成给最终用户使用的单文件安装包：
+双击根目录的 `package-wing.bat` 可以构建并生成给最终用户使用的 Windows 标准安装包：
 
 ```text
-dist/wing-installer.exe
+dist/wing-1.0.2-windows-x64-setup.exe
 ```
 
 命令行方式如下：
 
 ```powershell
 ./scripts/mk.ps1 build  # 构建 Flutter 控制面板与 Go 后端
-./scripts/mk.ps1 package # 构建并生成 dist/wing-installer.exe 单文件安装包
+./scripts/mk.ps1 package # 构建并生成 dist/wing-1.0.2-windows-x64-setup.exe 标准安装包
+./scripts/mk.ps1 installer # 同 package
+./scripts/mk.ps1 portable # 生成旧版自解压安装包，不建议作为公开 Release 资产
 ./scripts/mk.ps1 backend # 仅构建 Go 后端
 ./scripts/mk.ps1 run    # 构建 Flutter 控制面板后直接运行 Go 后端
 ./scripts/mk.ps1 test   # 运行 Go 测试
 ./scripts/mk.ps1 ui     # 仅构建 Flutter 控制面板
-./scripts/mk.ps1 inno   # 可选：使用 Inno Setup 生成 dist/wing-setup.exe
+./scripts/mk.ps1 inno   # 使用 Inno Setup 生成标准安装包
 ```
 
 构建产物：
 
 - `wing.exe`：Go 后端、系统托盘、本地代理与本地 Web API。
 - `build/bin/flutter_ui/wing_ui.exe`：Flutter 桌面控制面板，会加载 `http://127.0.0.1:10809/`。
-- `dist/wing-installer.exe`：单文件安装器，用户双击后可选择安装目录。
-- `dist/wing-setup.exe`：可选的 Inno Setup 安装包。
+- `dist/wing-1.0.2-windows-x64-setup.exe`：标准 Windows 安装包，用户双击后可选择安装目录。
+- `dist/wing-installer.exe`：旧版自解压安装器，仅通过 `portable` 命令生成，公开分发时不推荐使用。
+
+### Release 资产
+
+GitHub Actions 的 `release.yml` 会为 `v*` 标签生成并上传以下资产：
+
+- `wing-1.0.2-windows-x64-setup.exe`
+- `wing-1.0.2-linux-x64.run`
+- `wing-1.0.2-macos-x64.pkg`
+- `wing-1.0.2-android-universal.apk`
+- `wing-1.0.2-ios-unsigned.ipa`
+
+iOS 产物是未签名 IPA，需要 Apple Developer 证书签名后才能真机分发。Windows 代理软件未签名时仍可能被部分安全软件误报；仓库提供 `scripts/sign-windows.ps1`，在配置代码签名证书后可自动签名 Windows 可执行文件和安装包。
+
+## 安全与隐私
+
+- 控制面板默认只监听 `127.0.0.1:10809`，不会默认暴露到局域网。
+- Web UI API 要求本地可信 Origin 与 `X-Wing-Request` 请求头，降低跨站调用风险。
+- 移动端 WebView 只允许打开 localhost、Android 模拟器地址和私有局域网地址。
+- DNS 泄漏防护、WebRTC 防泄漏、系统 DNS 覆写和 TUN 接管均需要用户显式开启或确认。
+- 节点、订阅和网络配置属于敏感信息，公开 issue 或日志时请先脱敏。
 
 ## 开源协议
 
