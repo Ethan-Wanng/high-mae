@@ -13,7 +13,7 @@ void main() {
       ),
     );
 
-    expect(find.text('正在连接 wing 后端'), findsOneWidget);
+    expect(find.text('正在打开控制面板'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });
 }

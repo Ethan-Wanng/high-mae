@@ -22,7 +22,15 @@ let autoSelectTimer = null;
 let autoSelectRunning = false;
 let autoSelectSaveTimer = null;
 let autoSelectRunTimer = null;
+let autoSelectRenderTimer = null;
+let autoSelectEventsBound = false;
+let autoSelectQueuedRun = null;
+let autoSelectAbortController = null;
+let autoSelectRunSeq = 0;
 let shareQRCodeURL = "";
+
+const statusPollIntervalMs = 5000;
+const dashboardPollIntervalMs = 10000;
 
 const nativeFetch = window.fetch.bind(window);
 window.fetch = (input, init = {}) => {
@@ -48,6 +56,172 @@ function escapeHTML(value) {
 
 function jsArg(value) {
     return JSON.stringify(String(value ?? ''));
+}
+
+let customSelectSyncTimer = null;
+let customSelectMutating = false;
+let customSelectInitialized = false;
+
+function eventElement(event) {
+    return event.target instanceof Element ? event.target : null;
+}
+
+function initCustomSelects() {
+    if (customSelectInitialized) {
+        scheduleCustomSelectSync();
+        return;
+    }
+    customSelectInitialized = true;
+
+    enhanceSelectControls();
+    document.addEventListener('click', event => {
+        const target = eventElement(event);
+        const button = target?.closest('.custom-select-button');
+        if (button) {
+            const wrapper = button.closest('.custom-select');
+            toggleCustomSelect(wrapper);
+            return;
+        }
+
+        const option = target?.closest('.custom-select-option');
+        if (option) {
+            selectCustomOption(option);
+            return;
+        }
+
+        closeCustomSelects();
+    });
+
+    document.addEventListener('keydown', event => {
+        const target = eventElement(event);
+        const button = target?.closest('.custom-select-button');
+        if (!button) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleCustomSelect(button.closest('.custom-select'));
+    } else if (event.key === 'Escape') {
+            closeCustomSelects();
+        }
+    });
+}
+
+function scheduleCustomSelectSync() {
+    if (customSelectSyncTimer) return;
+    const raf = window.requestAnimationFrame || (callback => setTimeout(callback, 16));
+    customSelectSyncTimer = raf(() => {
+        customSelectSyncTimer = null;
+        customSelectMutating = true;
+        enhanceSelectControls();
+        syncCustomSelects();
+        setTimeout(() => {
+            customSelectMutating = false;
+        }, 0);
+    });
+}
+
+function enhanceSelectControls(root = document) {
+    root.querySelectorAll('select:not([data-custom-select-ready])').forEach(select => {
+        if (select.multiple) return;
+        const wrapper = document.createElement('span');
+        wrapper.className = 'custom-select';
+        if (select.style.minWidth) wrapper.style.minWidth = select.style.minWidth;
+        if (select.style.width) wrapper.style.width = select.style.width;
+        if (select.style.maxWidth) wrapper.style.maxWidth = select.style.maxWidth;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'custom-select-button';
+        button.setAttribute('aria-haspopup', 'listbox');
+        button.setAttribute('aria-expanded', 'false');
+
+        const menu = document.createElement('div');
+        menu.className = 'custom-select-menu';
+        menu.setAttribute('role', 'listbox');
+
+        select.parentNode.insertBefore(wrapper, select);
+        wrapper.appendChild(select);
+        wrapper.appendChild(button);
+        wrapper.appendChild(menu);
+        select.dataset.customSelectReady = 'true';
+        select.addEventListener('change', () => syncCustomSelect(select));
+        syncCustomSelect(select);
+    });
+}
+
+function syncCustomSelects() {
+    document.querySelectorAll('select[data-custom-select-ready]').forEach(syncCustomSelect);
+}
+
+function syncCustomSelect(select) {
+    customSelectMutating = true;
+    const wrapper = select.closest('.custom-select');
+    if (!wrapper) {
+        customSelectMutating = false;
+        return;
+    }
+    const button = wrapper.querySelector('.custom-select-button');
+    const menu = wrapper.querySelector('.custom-select-menu');
+    if (!button || !menu) {
+        customSelectMutating = false;
+        return;
+    }
+
+    const isHidden = select.hidden || select.style.display === 'none' || select.closest('[hidden]');
+    wrapper.classList.toggle('custom-select-hidden', !!isHidden);
+    wrapper.classList.toggle('disabled', !!select.disabled);
+    button.disabled = !!select.disabled;
+
+    const selected = select.options[select.selectedIndex] || select.options[0];
+    button.textContent = selected?.textContent?.trim() || '';
+    menu.innerHTML = '';
+    Array.from(select.options).forEach((option, index) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'custom-select-option';
+        item.dataset.value = option.value;
+        item.dataset.index = String(index);
+        item.textContent = option.textContent;
+        item.disabled = option.disabled;
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', option.selected ? 'true' : 'false');
+        if (option.selected) item.classList.add('selected');
+        menu.appendChild(item);
+    });
+    setTimeout(() => {
+        customSelectMutating = false;
+    }, 0);
+}
+
+function toggleCustomSelect(wrapper) {
+    if (!wrapper || wrapper.classList.contains('disabled')) return;
+    const isOpen = wrapper.classList.contains('open');
+    closeCustomSelects();
+    if (!isOpen) {
+        wrapper.classList.add('open');
+        wrapper.querySelector('.custom-select-button')?.setAttribute('aria-expanded', 'true');
+    }
+}
+
+function closeCustomSelects() {
+    document.querySelectorAll('.custom-select.open').forEach(wrapper => {
+        wrapper.classList.remove('open');
+        wrapper.querySelector('.custom-select-button')?.setAttribute('aria-expanded', 'false');
+    });
+}
+
+function selectCustomOption(option) {
+    const wrapper = option.closest('.custom-select');
+    const select = wrapper?.querySelector('select');
+    if (!select || option.disabled) return;
+    const index = Number.parseInt(option.dataset.index || '-1', 10);
+    if (index < 0 || index >= select.options.length) return;
+    const oldValue = select.value;
+    select.selectedIndex = index;
+    syncCustomSelect(select);
+    closeCustomSelects();
+    if (select.value !== oldValue) {
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
 }
 
 async function loadStatus() {
@@ -1168,14 +1342,23 @@ function saveAutoSelectConfig(options = {}) {
     normalizeAutoSelectConfig();
     localStorage.setItem('wing_auto_select_config', JSON.stringify(autoSelectConfig));
     scheduleAutoSelectConfigSave();
-    scheduleAutoSelectTimer();
-    refreshAutoSelectViews();
-    if (autoSelectConfig.enabled && options.run !== false) scheduleAutoSelectRun(700);
+    if (options.timer !== false) scheduleAutoSelectTimer();
+    if (options.render !== false) scheduleAutoSelectConfigRender();
+    if (autoSelectConfig.enabled && options.run === true) scheduleAutoSelectRun(700);
 }
 
 function scheduleAutoSelectConfigSave() {
     if (autoSelectSaveTimer) clearTimeout(autoSelectSaveTimer);
     autoSelectSaveTimer = setTimeout(persistAutoSelectConfigToServer, 180);
+}
+
+function scheduleAutoSelectConfigRender() {
+    if (autoSelectRenderTimer) return;
+    const raf = window.requestAnimationFrame || (callback => setTimeout(callback, 16));
+    autoSelectRenderTimer = raf(() => {
+        autoSelectRenderTimer = null;
+        refreshAutoSelectViews();
+    });
 }
 
 async function persistAutoSelectConfigToServer() {
@@ -1195,12 +1378,137 @@ function refreshAutoSelectViews() {
     if (nodeGroupMode === 'subscription' || nodeGroupMode === 'aggregate') renderNodes();
 }
 
+function decodeAutoSelectParam(value) {
+    try {
+        return decodeURIComponent(value || '');
+    } catch(e) {
+        return value || '';
+    }
+}
+
+function bindAutoSelectConfigEvents() {
+    const pane = document.getElementById('autoSelectNodePane');
+    if (!pane || autoSelectEventsBound) return;
+    autoSelectEventsBound = true;
+
+    pane.addEventListener('change', event => {
+        const target = event.target;
+        if (!target?.dataset) return;
+        const action = target.dataset.autoSelectAction;
+        if (!action) return;
+
+        if (action === 'subscription') {
+            toggleAutoSelectSubscription(target.dataset.fileName || '', target.checked);
+        } else if (action === 'aggregate') {
+            toggleAutoSelectAggregate(target.dataset.fileName || '', target.checked);
+        } else if (action === 'site-target') {
+            setAutoSelectSiteTarget(target.dataset.targetId || '', target.checked);
+        } else if (action === 'scope') {
+            setAutoSelectScope(target.value);
+        } else if (action === 'startup-mode') {
+            setAutoSelectStartupMode(target.value);
+        } else if (action === 'site-mode') {
+            setAutoSelectSiteMode(target.value);
+        } else if (action === 'new-rule-type') {
+            renderAutoSelectRulePicker();
+        } else if (action === 'rule-picker') {
+            syncAutoSelectPickerValue('autoSelectRuleValue', 'autoSelectRulePicker');
+        } else if (action === 'rule-type') {
+            updateAutoSelectRuleType(target.dataset.ruleId || '', target.value);
+        } else if (action === 'rule-picked') {
+            updateAutoSelectRulePickedValue(target.dataset.ruleId || '', target.dataset.value || '', target.checked);
+        }
+    });
+
+    pane.addEventListener('keydown', event => {
+        const target = event.target;
+        if (event.key === 'Enter' && target?.dataset?.autoSelectAction === 'rule-value') {
+            event.preventDefault();
+            target.blur();
+        }
+    });
+
+    pane.addEventListener('focusout', event => {
+        const target = event.target;
+        if (target?.dataset?.autoSelectAction === 'rule-value') {
+            updateAutoSelectRuleValue(target.dataset.ruleId || '', target.value);
+        }
+    });
+
+    pane.addEventListener('click', event => {
+        const source = event.target instanceof Element ? event.target : event.target?.parentElement;
+        const button = source?.closest('button[data-auto-select-action]');
+        if (!button) return;
+        const action = button.dataset.autoSelectAction;
+        if (action === 'delete-rule') {
+            deleteAutoSelectRule(button.dataset.ruleId || '');
+        }
+    });
+}
+
 function scheduleAutoSelectRun(delay = 700) {
     if (autoSelectRunTimer) clearTimeout(autoSelectRunTimer);
-    autoSelectRunTimer = setTimeout(() => runAutoSelectCycle({ silent: true }), delay);
+    autoSelectRunTimer = setTimeout(() => {
+        autoSelectRunTimer = null;
+        runAutoSelectCycle({ silent: true });
+    }, delay);
+}
+
+function queueAutoSelectRun(options = {}) {
+    if (autoSelectRunTimer) {
+        clearTimeout(autoSelectRunTimer);
+        autoSelectRunTimer = null;
+    }
+    autoSelectQueuedRun = { ...options, force: true };
+}
+
+function drainAutoSelectQueuedRun(delay = 0) {
+    if (!autoSelectQueuedRun) return;
+    const queued = autoSelectQueuedRun;
+    autoSelectQueuedRun = null;
+    setTimeout(() => runAutoSelectCycle(queued), delay);
+}
+
+function setAutoSelectNowButtonBusy(isBusy) {
+    const btn = document.querySelector('.auto-select-section-actions .btn-primary');
+    if (!btn) return;
+    if (!btn.dataset.idleText) btn.dataset.idleText = btn.textContent || '立即选择';
+    btn.textContent = isBusy ? '选择中' : (btn.dataset.idleText || '立即选择');
+}
+
+function stopAutoSelectSelection() {
+    if (autoSelectTimer) {
+        clearInterval(autoSelectTimer);
+        autoSelectTimer = null;
+    }
+    if (autoSelectRunTimer) {
+        clearTimeout(autoSelectRunTimer);
+        autoSelectRunTimer = null;
+    }
+    autoSelectQueuedRun = null;
+    autoSelectRunSeq += 1;
+    if (autoSelectAbortController) {
+        autoSelectAbortController.abort();
+        autoSelectAbortController = null;
+    }
+    setAutoSelectNowButtonBusy(false);
+}
+
+function autoSelectStoppedError() {
+    return new Error('auto_select_stopped');
+}
+
+function assertAutoSelectActive(runContext, options = {}) {
+    if (!runContext || runContext.signal.aborted || runContext.seq !== autoSelectRunSeq) {
+        throw autoSelectStoppedError();
+    }
+    if (!options.force && !autoSelectConfig?.enabled) {
+        throw autoSelectStoppedError();
+    }
 }
 
 function renderAutoSelectConfig() {
+    bindAutoSelectConfigEvents();
     const enabledEl = document.getElementById('autoSelectEnabled');
     const scopeEl = document.getElementById('autoSelectScope');
     const subscriptionEl = document.getElementById('autoSelectSubscriptions');
@@ -1232,13 +1540,13 @@ function renderAutoSelectConfig() {
             const selected = new Set(autoSelectConfig.subscriptionFiles || []);
             subscriptionEl.innerHTML = suppliersCache.map(s => `
                 <label class="auto-select-check">
-                    <input type="checkbox" ${selected.has(s.fileName) ? 'checked' : ''} onchange="toggleAutoSelectSubscription('${encodeURIComponent(s.fileName)}', this.checked)">
+                    <input type="checkbox" ${selected.has(s.fileName) ? 'checked' : ''} data-auto-select-action="subscription" data-file-name="${escapeAttr(s.fileName)}">
                     <span>${escapeHTML(s.name)}</span>
                 </label>
             `).join('');
             if (autoSelectConfig.subscriptionFiles.length === 0 && suppliersCache.length > 0) {
                 autoSelectConfig.subscriptionFiles = [suppliersCache[0].fileName];
-                saveAutoSelectConfig();
+                saveAutoSelectConfig({ render: false, run: false, timer: false });
                 renderAutoSelectConfig();
                 return;
             }
@@ -1252,13 +1560,13 @@ function renderAutoSelectConfig() {
             const selected = new Set(autoSelectConfig.aggregateFiles || []);
             aggregateEl.innerHTML = aggregateGroupsCache.map(g => `
                 <label class="auto-select-check">
-                    <input type="checkbox" ${selected.has(g.fileName) ? 'checked' : ''} onchange="toggleAutoSelectAggregate('${encodeURIComponent(g.fileName)}', this.checked)">
+                    <input type="checkbox" ${selected.has(g.fileName) ? 'checked' : ''} data-auto-select-action="aggregate" data-file-name="${escapeAttr(g.fileName)}">
                     <span>${escapeHTML(g.name)}</span>
                 </label>
             `).join('');
             if (autoSelectConfig.aggregateFiles.length === 0 && aggregateGroupsCache.length > 0) {
                 autoSelectConfig.aggregateFiles = [aggregateGroupsCache[0].fileName];
-                saveAutoSelectConfig();
+                saveAutoSelectConfig({ render: false, run: false, timer: false });
                 renderAutoSelectConfig();
                 return;
             }
@@ -1272,7 +1580,7 @@ function renderAutoSelectConfig() {
             const ids = new Set(autoSelectConfig.siteCheck?.ids || []);
             siteListEl.innerHTML = siteTargetsCache.map(target => `
                 <label class="auto-select-check">
-                    <input type="checkbox" ${ids.has(target.id) ? 'checked' : ''} onchange="setAutoSelectSiteTarget('${encodeURIComponent(target.id)}', this.checked)">
+                    <input type="checkbox" ${ids.has(target.id) ? 'checked' : ''} data-auto-select-action="site-target" data-target-id="${escapeAttr(target.id)}">
                     <span>${escapeHTML(target.name)}</span>
                 </label>
             `).join('');
@@ -1281,27 +1589,30 @@ function renderAutoSelectConfig() {
     if (!autoSelectConfig.rules.length) {
         listEl.innerHTML = '<div class="auto-select-empty">暂无筛选规则</div>';
         renderAutoSelectRulePicker();
+        scheduleCustomSelectSync();
         return;
     }
     listEl.innerHTML = autoSelectConfig.rules.map(rule => `
         <div class="auto-select-rule-row">
             <div class="auto-select-rule-editor">
-                <select onchange="updateAutoSelectRuleType('${encodeURIComponent(rule.id)}', this.value)">
+                <select data-auto-select-action="rule-type" data-rule-id="${escapeAttr(rule.id)}">
                     ${autoSelectRuleTypeOptions(rule.type)}
                 </select>
                 ${autoSelectRuleValueEditor(rule)}
                 <span>${escapeHTML(autoSelectRuleDescription(rule))}</span>
             </div>
-            <button class="btn-mini btn-mini-danger" onclick="deleteAutoSelectRule('${encodeURIComponent(rule.id)}')">删除</button>
+            <button class="btn-mini btn-mini-danger" data-auto-select-action="delete-rule" data-rule-id="${escapeAttr(rule.id)}">删除</button>
         </div>
     `).join('');
     renderAutoSelectRulePicker();
+    scheduleCustomSelectSync();
 }
 
 function setAutoSelectEnabled(checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.enabled = !!checked;
-    saveAutoSelectConfig({ run: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    if (!autoSelectConfig.enabled) stopAutoSelectSelection();
     
     const autoNodesTab = document.getElementById('autoNodesTab');
     if (autoNodesTab) autoNodesTab.style.display = autoSelectConfig.enabled ? 'inline-block' : 'none';
@@ -1310,42 +1621,43 @@ function setAutoSelectEnabled(checked) {
     }
 
     renderAutoSelectConfig();
-    scheduleAutoSelectTimer();
-    if (autoSelectConfig.enabled) runAutoSelectCycle({ silent: false, force: true });
+    if (autoSelectConfig.enabled) {
+        scheduleAutoSelectTimer();
+        runAutoSelectCycle({ silent: false, force: true });
+    }
 }
 
 function setAutoSelectIgnoreTimeout(checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.ignoreTimeout = !!checked;
-    saveAutoSelectConfig();
-    renderAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
 }
 
 function setAutoSelectScope(scope) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.scope = ['all', 'subscription', 'aggregate'].includes(scope) ? scope : 'subscription';
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
     renderAutoSelectConfig();
 }
 
 function toggleAutoSelectSubscription(encodedFileName, checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
-    const fileName = decodeURIComponent(encodedFileName);
+    const fileName = decodeAutoSelectParam(encodedFileName);
     const set = new Set(autoSelectConfig.subscriptionFiles || []);
     if (checked) set.add(fileName);
     else set.delete(fileName);
     autoSelectConfig.subscriptionFiles = Array.from(set);
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
 }
 
 function toggleAutoSelectAggregate(encodedFileName, checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
-    const fileName = decodeURIComponent(encodedFileName);
+    const fileName = decodeAutoSelectParam(encodedFileName);
     const set = new Set(autoSelectConfig.aggregateFiles || []);
     if (checked) set.add(fileName);
     else set.delete(fileName);
     autoSelectConfig.aggregateFiles = Array.from(set);
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
 }
 
 function normalizeAutoSelectInterval(value) {
@@ -1357,34 +1669,31 @@ function normalizeAutoSelectInterval(value) {
 function setAutoSelectInterval(value) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(value);
-    saveAutoSelectConfig();
-    renderAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
     scheduleAutoSelectTimer();
 }
 
 function setAutoSelectStartupMode(mode) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.startupMode = ['none', 'proxy', 'tun', 'proxy_tun'].includes(mode) ? mode : 'none';
-    saveAutoSelectConfig();
-    renderAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
     if (autoSelectConfig.enabled) ensureAutoSelectNetworkMode();
 }
 
 function setAutoSelectSiteMode(mode) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.siteCheck.mode = ['none', 'any', 'all'].includes(mode) ? mode : 'none';
-    saveAutoSelectConfig();
-    renderAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
 }
 
 function setAutoSelectSiteTarget(encodedId, checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
-    const id = decodeURIComponent(encodedId);
+    const id = decodeAutoSelectParam(encodedId);
     const ids = new Set(autoSelectConfig.siteCheck.ids || []);
     if (checked) ids.add(id);
     else ids.delete(id);
     autoSelectConfig.siteCheck.ids = Array.from(ids);
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
 }
 
 function addAutoSelectRule() {
@@ -1404,7 +1713,7 @@ function addAutoSelectRule() {
         values: splitAutoSelectValues(value)
     });
     if (input) input.value = '';
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
     renderAutoSelectConfig();
 }
 
@@ -1458,7 +1767,7 @@ function renderAutoSelectRulePicker() {
     const selected = new Set(splitAutoSelectValues(input.value));
     picker.innerHTML = values.map(value => `
         <label class="auto-select-check">
-            <input type="checkbox" ${selected.has(value) ? 'checked' : ''} onchange="syncAutoSelectPickerValue('autoSelectRuleValue', 'autoSelectRulePicker')">
+            <input type="checkbox" ${selected.has(value) ? 'checked' : ''} data-auto-select-action="rule-picker">
             <span>${escapeHTML(value)}</span>
         </label>
     `).join('');
@@ -1475,47 +1784,49 @@ function syncAutoSelectPickerValue(inputId, pickerId) {
 function autoSelectRuleValueEditor(rule) {
     const values = autoSelectRuleValues(rule);
     if (!autoSelectRuleUsesPicker(rule.type)) {
-        return `<input type="text" value="${escapeAttr(values.join(','))}" onblur="updateAutoSelectRuleValue('${encodeURIComponent(rule.id)}', this.value)" onkeydown="if(event.key==='Enter') this.blur()">`;
+        return `<input type="text" value="${escapeAttr(values.join(','))}" data-auto-select-action="rule-value" data-rule-id="${escapeAttr(rule.id)}">`;
     }
     const options = selectableAutoSelectValues(rule.type);
     if (!options.length) {
-        return `<input type="text" value="${escapeAttr(values.join(','))}" onblur="updateAutoSelectRuleValue('${encodeURIComponent(rule.id)}', this.value)" onkeydown="if(event.key==='Enter') this.blur()">`;
+        return `<input type="text" value="${escapeAttr(values.join(','))}" data-auto-select-action="rule-value" data-rule-id="${escapeAttr(rule.id)}">`;
     }
     const selected = new Set(values);
     return `<div class="auto-select-picker compact">${options.map(value => `
         <label class="auto-select-check">
-            <input type="checkbox" ${selected.has(value) ? 'checked' : ''} onchange="updateAutoSelectRulePickedValue('${encodeURIComponent(rule.id)}', '${encodeURIComponent(value)}', this.checked)">
+            <input type="checkbox" ${selected.has(value) ? 'checked' : ''} data-auto-select-action="rule-picked" data-rule-id="${escapeAttr(rule.id)}" data-value="${escapeAttr(value)}">
             <span>${escapeHTML(value)}</span>
         </label>
     `).join('')}</div>`;
 }
 
 function updateAutoSelectRuleType(encodedId, type) {
-    const id = decodeURIComponent(encodedId);
+    const id = decodeAutoSelectParam(encodedId);
     const rule = autoSelectConfig?.rules?.find(r => r.id === id);
     if (!rule) return;
     rule.type = type;
     rule.values = [];
     rule.value = '';
     delete rule.label;
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
     renderAutoSelectConfig();
 }
 
 function updateAutoSelectRuleValue(encodedId, value) {
-    const id = decodeURIComponent(encodedId);
+    const id = decodeAutoSelectParam(encodedId);
     const rule = autoSelectConfig?.rules?.find(r => r.id === id);
     if (!rule) return;
-    rule.value = value.trim();
+    const nextValue = value.trim();
+    if (rule.value === nextValue && JSON.stringify(rule.values || []) === JSON.stringify(splitAutoSelectValues(value))) return;
+    rule.value = nextValue;
     rule.values = splitAutoSelectValues(value);
     delete rule.label;
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
     renderAutoSelectConfig();
 }
 
 function updateAutoSelectRulePickedValue(encodedId, encodedValue, checked) {
-    const id = decodeURIComponent(encodedId);
-    const value = decodeURIComponent(encodedValue);
+    const id = decodeAutoSelectParam(encodedId);
+    const value = decodeAutoSelectParam(encodedValue);
     const rule = autoSelectConfig?.rules?.find(r => r.id === id);
     if (!rule) return;
     const values = new Set(autoSelectRuleValues(rule));
@@ -1524,15 +1835,15 @@ function updateAutoSelectRulePickedValue(encodedId, encodedValue, checked) {
     rule.values = Array.from(values);
     rule.value = rule.values.join(',');
     delete rule.label;
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
     renderAutoSelectConfig();
 }
 
 function deleteAutoSelectRule(encodedId) {
     if (!autoSelectConfig) return;
-    const id = decodeURIComponent(encodedId);
+    const id = decodeAutoSelectParam(encodedId);
     autoSelectConfig.rules = autoSelectConfig.rules.filter(rule => rule.id !== id);
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
     renderAutoSelectConfig();
 }
 
@@ -1540,7 +1851,7 @@ function clearAutoSelectRules() {
     if (!autoSelectConfig?.rules?.length) return;
     if (!confirm('确定清空所有自动选择规则吗？')) return;
     autoSelectConfig.rules = [];
-    saveAutoSelectConfig();
+    saveAutoSelectConfig({ render: false, run: false, timer: false });
     renderAutoSelectConfig();
     showToast('自动选择规则已清空', 'success');
 }
@@ -1706,11 +2017,19 @@ function maybeAutoSelectNode(fileName = selectedNodeGroupFile) {
     switchNode(best.index);
 }
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+function sleep(ms, signal) {
+    if (signal?.aborted) return Promise.reject(autoSelectStoppedError());
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, ms);
+        if (!signal) return;
+        signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(autoSelectStoppedError());
+        }, { once: true });
+    });
 }
 
-async function testAutoSelectCandidateLatencies(candidates) {
+async function testAutoSelectCandidateLatencies(candidates, runContext, options = {}) {
     const unique = Array.from(new Map(candidates.map(n => [n.index, n])).values());
     if (!unique.length) return;
     unique.forEach(n => {
@@ -1724,13 +2043,15 @@ async function testAutoSelectCandidateLatencies(candidates) {
     const workerCount = Math.min(8, queue.length);
     async function worker() {
         while (queue.length) {
+            assertAutoSelectActive(runContext, options);
             const node = queue.shift();
             try {
-                await fetch('/api/test_single?idx=' + node.index, { method: 'POST' });
+                await fetch('/api/test_single?idx=' + node.index, { method: 'POST', signal: runContext.signal });
             } catch(e) {}
         }
     }
     await Promise.all(Array.from({ length: workerCount }, worker));
+    assertAutoSelectActive(runContext, options);
     await loadNodes();
 }
 
@@ -1750,16 +2071,18 @@ async function ensureSiteTargetsLoaded() {
     } catch(e) {}
 }
 
-async function switchNodeAndWait(idx) {
+async function switchNodeAndWait(idx, runContext, options = {}) {
+    assertAutoSelectActive(runContext, options);
     const node = allNodesList.find(n => n.index === idx);
     if (node?.active) return true;
     await switchNode(idx);
-    await sleep(5500);
+    await sleep(5500, runContext.signal);
+    assertAutoSelectActive(runContext, options);
     await loadNodes();
     return !!allNodesList.find(n => n.index === idx && n.active);
 }
 
-async function testActiveNodeSitesForAutoSelect() {
+async function testActiveNodeSitesForAutoSelect(runContext, options = {}) {
     const mode = autoSelectConfig?.siteCheck?.mode || 'none';
     if (mode === 'none') return true;
     await ensureSiteTargetsLoaded();
@@ -1767,8 +2090,9 @@ async function testActiveNodeSitesForAutoSelect() {
     if (!ids.length) return true;
     let passed = 0;
     for (const id of ids) {
+        assertAutoSelectActive(runContext, options);
         try {
-            const res = await fetch('/api/site_test?id=' + encodeURIComponent(id), { method: 'POST' });
+            const res = await fetch('/api/site_test?id=' + encodeURIComponent(id), { method: 'POST', signal: runContext.signal });
             const data = await res.json();
             const result = (data.results || [])[0];
             if (data.ok && result?.ok) passed++;
@@ -1778,16 +2102,17 @@ async function testActiveNodeSitesForAutoSelect() {
     return mode === 'all' ? passed === ids.length : passed > 0;
 }
 
-async function pickAutoSelectNodeWithSiteRules(candidates) {
+async function pickAutoSelectNodeWithSiteRules(candidates, runContext, options = {}) {
     const siteMode = autoSelectConfig?.siteCheck?.mode || 'none';
     if (siteMode === 'none') return candidates[0] || null;
     const original = allNodesList.find(n => n.active);
     for (const candidate of candidates) {
-        if (!(await switchNodeAndWait(candidate.index))) continue;
-        if (await testActiveNodeSitesForAutoSelect()) return candidate;
+        assertAutoSelectActive(runContext, options);
+        if (!(await switchNodeAndWait(candidate.index, runContext, options))) continue;
+        if (await testActiveNodeSitesForAutoSelect(runContext, options)) return candidate;
     }
     if (original && !allNodesList.find(n => n.index === original.index && n.active)) {
-        await switchNodeAndWait(original.index);
+        await switchNodeAndWait(original.index, runContext, options);
     }
     return null;
 }
@@ -1798,14 +2123,29 @@ async function runAutoSelectCycle(options = {}) {
         return;
     }
     if (autoSelectRunning || switchingNodeIndex !== null) {
-        if (!options.silent) showToast('自动选择正在运行，请稍候。', 'info');
+        if (options.force) {
+            queueAutoSelectRun(options);
+            if (!options.silent) showToast('已收到请求，本轮结束后马上重新选择。', 'info', 1400);
+            if (!autoSelectRunning) drainAutoSelectQueuedRun(600);
+        } else if (!options.silent) {
+            showToast('自动选择正在运行，请稍候。', 'info');
+        }
         return;
     }
+    const controller = new AbortController();
+    const runContext = {
+        seq: autoSelectRunSeq,
+        signal: controller.signal
+    };
+    autoSelectAbortController = controller;
     autoSelectRunning = true;
     try {
         await loadSuppliers();
+        assertAutoSelectActive(runContext, options);
         await loadNodes();
+        assertAutoSelectActive(runContext, options);
         await ensureAutoSelectNetworkMode();
+        assertAutoSelectActive(runContext, options);
         const candidates = autoSelectCandidates(options.fileName)
             .filter(nodePassesAutoSelectRules);
         if (!candidates.length) {
@@ -1813,7 +2153,8 @@ async function runAutoSelectCycle(options = {}) {
             return;
         }
         if (!options.silent) showToast('正在重测候选节点延迟...', 'info', 1800);
-        await testAutoSelectCandidateLatencies(candidates);
+        await testAutoSelectCandidateLatencies(candidates, runContext, options);
+        assertAutoSelectActive(runContext, options);
         const ranked = autoSelectCandidates(options.fileName)
             .filter(n => n.latency > 0)
             .filter(nodePassesAutoSelectRules)
@@ -1822,7 +2163,8 @@ async function runAutoSelectCycle(options = {}) {
             if (!options.silent) showToast(`${autoSelectScopeName(autoSelectConfig.scope)}自动选择未找到可用节点`, 'warning');
             return;
         }
-        const best = await pickAutoSelectNodeWithSiteRules(ranked);
+        const best = await pickAutoSelectNodeWithSiteRules(ranked, runContext, options);
+        assertAutoSelectActive(runContext, options);
         if (!best) {
             if (!options.silent) showToast('没有节点满足网站可用性规则', 'warning');
             return;
@@ -1833,9 +2175,23 @@ async function runAutoSelectCycle(options = {}) {
             return;
         }
         showToast(`自动选择 ${best.name} · ${best.latency} ms`, 'success');
-        await switchNodeAndWait(best.index);
+        await switchNodeAndWait(best.index, runContext, options);
+    } catch(e) {
+        if (e?.message !== 'auto_select_stopped') {
+            throw e;
+        }
     } finally {
+        if (autoSelectAbortController === controller) {
+            autoSelectAbortController = null;
+        }
+        const hasQueuedRun = !!autoSelectQueuedRun;
         autoSelectRunning = false;
+        if (autoSelectConfig?.enabled || options.force) {
+            drainAutoSelectQueuedRun();
+        } else {
+            autoSelectQueuedRun = null;
+        }
+        setAutoSelectNowButtonBusy(hasQueuedRun);
     }
 }
 
@@ -1856,19 +2212,11 @@ async function ensureAutoSelectNetworkMode() {
 }
 
 async function runAutoSelectNow() {
-    const btn = document.querySelector('.auto-select-section-actions .btn-primary');
-    const oldText = btn?.textContent || '';
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = '选择中';
-    }
+    setAutoSelectNowButtonBusy(true);
     try {
         await runAutoSelectCycle({ silent: false, force: true });
     } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = oldText || '立即选择';
-        }
+        setAutoSelectNowButtonBusy(autoSelectRunning || !!autoSelectQueuedRun);
     }
 }
 
@@ -2456,6 +2804,7 @@ function populateRuleGroupActionSelect(currentAction) {
         sel.appendChild(opt);
     }
     sel.value = currentAction || 'direct';
+    scheduleCustomSelectSync();
 }
 
 let ruleSelectorNodesCache = {
@@ -3024,6 +3373,7 @@ function renderRules() {
         `;
     });
     list.innerHTML = html;
+    scheduleCustomSelectSync();
 }
 
 function cmdRuleTypeName(type) {
@@ -3035,6 +3385,7 @@ function renderCmdRules() {
     if (!list) return;
     if (!cmdRules || cmdRules.length === 0) {
         list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:14px;">暂无命令行规则</div>';
+        scheduleCustomSelectSync();
         return;
     }
     list.innerHTML = cmdRules.map((rule, idx) => {
@@ -3055,6 +3406,7 @@ function renderCmdRules() {
             </div>
         `;
     }).join('');
+    scheduleCustomSelectSync();
 }
 
 function addCmdRule() {
@@ -3234,6 +3586,7 @@ function renderDNSConfig() {
             </div>
         `;
     });
+    scheduleCustomSelectSync();
 }
 
 function addDNSServer() {
@@ -3323,6 +3676,7 @@ async function openAggGroupModal() {
     if (currentAggFile) {
         sel.value = currentAggFile;
     }
+    scheduleCustomSelectSync();
 
     onAggModeChange(sel.value);
 
@@ -3510,6 +3864,7 @@ async function submitAggAction() {
 }
 
 window.onload = async () => {
+    initCustomSelects();
     await loadSystemConfig();
     await loadAutoSelectConfig();
     await loadStatus();
@@ -3517,21 +3872,23 @@ window.onload = async () => {
     await loadNodes();
     await ensureSiteTargetsLoaded();
     renderAutoSelectConfig();
+    scheduleCustomSelectSync();
     scheduleAutoSelectTimer();
 
     showTab('nodes');
 
     pollTimer = setInterval(() => {
+        if (document.hidden) return;
         loadStatus();
-        if (activeTab === 'dashboard' && Date.now() - lastDashboardPoll > 4000) {
+        if (activeTab === 'dashboard' && Date.now() - lastDashboardPoll > dashboardPollIntervalMs) {
             lastDashboardPoll = Date.now();
             loadDashboard();
         }
-        if (allNodesList && allNodesList.length > 0) {
+        if (activeTab === 'nodes' && allNodesList && allNodesList.length > 0) {
             const activeNode = allNodesList.find(n => n.active);
             if (activeNode) {
                 renderSupplierTraffic(activeNode.fileName);
             }
         }
-    }, 2000);
+    }, statusPollIntervalMs);
 };

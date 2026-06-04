@@ -16,7 +16,7 @@
                 <div class="brand-badge">W</div>
                 <div>
                     <h1>wing</h1>
-                    <div class="subtitle">Windows 桌面代理客户端 v1.2.0 · 规则分流 / 隧道连接 / Mieru / Naive / AnyTLS</div>
+                    <div class="subtitle">Windows 桌面代理客户端 v1.0.2 · 规则分流 / 隧道连接 / Mieru / Naive / AnyTLS</div>
                 </div>
             </div>
 
@@ -38,6 +38,7 @@
             <button class="tab-btn active" onclick="showTab('nodes')">节点选择</button>
             <button class="tab-btn" onclick="showTab('dashboard')">数据看板</button>
             <button class="tab-btn" onclick="showTab('sitecheck')">测试网站</button>
+            <button class="tab-btn" onclick="showTab('help')">帮助中心</button>
             <button class="tab-btn" onclick="showTab('settings')">系统设置</button>
         </div>
 
@@ -85,7 +86,7 @@
                                     </div>
                                 </div>
                                 <div class="auto-select-controls">
-                                    <select id="autoSelectScope" onchange="setAutoSelectScope(this.value)">
+                                    <select id="autoSelectScope" data-auto-select-action="scope">
                                         <option value="all">全部节点</option>
                                         <option value="subscription">指定订阅组</option>
                                         <option value="aggregate">指定聚合组</option>
@@ -111,21 +112,21 @@
                                 </div>
                                 <div class="auto-select-inline-row">
                                     <span class="auto-select-inline-label">自动启动</span>
-                                    <select id="autoSelectStartupMode" onchange="setAutoSelectStartupMode(this.value)" style="min-width:140px;">
+                                    <select id="autoSelectStartupMode" data-auto-select-action="startup-mode" style="min-width:140px;">
                                         <option value="none">不自动启动</option>
                                         <option value="proxy">系统代理</option>
                                         <option value="tun">TUN</option>
                                         <option value="proxy_tun">代理+TUN</option>
                                     </select>
                                 </div>
-                                <div class="auto-select-inline-row" style="margin-top: 10px;">
-                                    <label class="toggle-row" style="display: flex; align-items: center; width: 100%; cursor: pointer;">
+                                <div class="auto-select-inline-row toggle-row" style="margin-top: 10px;">
+                                    <div style="display: flex; align-items: center; width: 100%;">
                                         <span class="auto-select-inline-label">忽略超时节点</span>
                                         <label class="toggle" style="margin-left: auto;">
                                             <input type="checkbox" id="autoSelectIgnoreTimeout" onchange="setAutoSelectIgnoreTimeout(this.checked)">
                                             <span class="slider"></span>
                                         </label>
-                                    </label>
+                                    </div>
                                 </div>
                             </div>
 
@@ -139,7 +140,7 @@
                                     </div>
                                 </div>
                                 <div class="auto-select-site-rule">
-                                    <select id="autoSelectSiteMode" onchange="setAutoSelectSiteMode(this.value)">
+                                    <select id="autoSelectSiteMode" data-auto-select-action="site-mode">
                                         <option value="none">不要求网站测试</option>
                                         <option value="any">所选网站任一可用</option>
                                         <option value="all">所选网站全部可用</option>
@@ -158,7 +159,7 @@
                                     </div>
                                 </div>
                                 <div class="auto-select-rule-form">
-                                    <select id="autoSelectRuleType" onchange="renderAutoSelectRulePicker()">
+                                    <select id="autoSelectRuleType" data-auto-select-action="new-rule-type">
                                         <option value="exclude_keyword">不使用包含</option>
                                         <option value="include_region">只选择地区</option>
                                         <option value="include_node">只选择节点</option>
@@ -263,6 +264,83 @@
             </div>
         </div>
 
+        <div id="tab-help" class="tab-content">
+            <div class="help-layout">
+                <section class="help-hero">
+                    <div>
+                        <h2>帮助中心</h2>
+                        <p>从导入订阅、选择节点、开启系统代理，到防止 DNS / IP 泄露，这里放常用操作和排查要点。</p>
+                    </div>
+                    <div class="help-status">
+                        <span>本地控制面板</span>
+                        <strong>127.0.0.1:10809</strong>
+                    </div>
+                </section>
+
+                <section class="help-grid">
+                    <article class="help-card">
+                        <h3>快速开始</h3>
+                        <ol>
+                            <li>点击顶部“导入订阅”，粘贴订阅链接或节点链接。</li>
+                            <li>在“节点选择”里选择订阅组或聚合组，再点击节点卡片切换。</li>
+                            <li>在“系统设置”开启“代理服务”；需要接管不走系统代理的软件时再开启“TUN”。</li>
+                            <li>使用“极速测速”先测延迟，再用“测试网站”确认当前节点可访问目标服务。</li>
+                        </ol>
+                    </article>
+
+                    <article class="help-card">
+                        <h3>自动选择</h3>
+                        <ul>
+                            <li>自动选择会按候选范围、筛选规则、延迟和网站可用性选择节点。</li>
+                            <li>“立即选择”会立刻重测候选节点；关闭开关后会停止当前自动选择任务。</li>
+                            <li>如果只想从某个订阅或聚合组里选，请把范围改为“指定订阅组”或“指定聚合组”。</li>
+                            <li>网站可用性验证会逐个临时切换候选节点，关闭自动选择可中止后续检查。</li>
+                        </ul>
+                    </article>
+
+                    <article class="help-card">
+                        <h3>防止 DNS / IP 泄露</h3>
+                        <ul>
+                            <li>系统代理只影响遵循系统代理的软件；游戏、命令行或部分应用建议使用 TUN。</li>
+                            <li>TUN 开启后会接管路由，并通过本地 DNS 入口处理 DNS 查询。</li>
+                            <li>DNS 自动覆写会把物理网卡 DNS 指向 127.0.0.2，退出软件时会尝试恢复。</li>
+                            <li>WebRTC 开关会写入 Chrome / Edge 策略，减少浏览器通过 WebRTC 暴露真实 IP。</li>
+                        </ul>
+                    </article>
+
+                    <article class="help-card">
+                        <h3>隐私与本地数据</h3>
+                        <ul>
+                            <li>控制面板仅监听本机地址，不对局域网开放。</li>
+                            <li>节点配置和订阅链接使用本机派生密钥做 AES-GCM 加密存储。</li>
+                            <li>DNS 规则、路由规则和使用统计属于本机配置数据，不会主动上传。</li>
+                            <li>导入订阅、测速、网站测试会访问对应订阅地址或目标网站，这是功能必需的网络请求。</li>
+                        </ul>
+                    </article>
+
+                    <article class="help-card">
+                        <h3>常见排查</h3>
+                        <ul>
+                            <li>网页能打开但软件不走代理：开启 TUN，或检查该软件是否支持系统代理。</li>
+                            <li>DNS 结果异常：打开“DNS 规则管理”，确认默认服务器和分流规则。</li>
+                            <li>浏览器仍泄露 WebRTC：开启 WebRTC 开关后重启浏览器或刷新 chrome://policy / edge://policy。</li>
+                            <li>托盘点击无响应：确认 wing_ui.exe 已随主程序一起构建并放在同目录或 flutter_ui 子目录。</li>
+                        </ul>
+                    </article>
+
+                    <article class="help-card">
+                        <h3>安全建议</h3>
+                        <ul>
+                            <li>不要导入来源不明的订阅链接，订阅服务商能看到订阅拉取请求。</li>
+                            <li>公共 Wi-Fi 下优先使用 TUN，并开启 WebRTC 防泄露。</li>
+                            <li>定期删除不用的节点和订阅，减少本机保存的敏感配置。</li>
+                            <li>需要分享节点时，只分享必要节点，不要把完整订阅链接发给他人。</li>
+                        </ul>
+                    </article>
+                </section>
+            </div>
+        </div>
+
 
         <!-- Tab 4: System Settings -->
         <div id="tab-settings" class="tab-content">
@@ -344,7 +422,7 @@
         </div>
 
         <div class="footer">
-            <div class="footer-brand">wing v1.2.0</div>
+            <div class="footer-brand">wing v1.0.2</div>
             <p>面向 Windows 的桌面代理客户端，集成 sing-box、Mieru Client 与本地控制面板，支持订阅管理、节点测速、规则分流、隧道连接、DNS 分流与命令行进程规则。</p>
             <div class="tech-tags">
                 <span class="tech-tag">sing-box Core</span>

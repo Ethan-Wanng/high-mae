@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${WING_VERSION:-1.0.0}"
+VERSION="${WING_VERSION:-1.0.2}"
 TAGS="with_quic,with_utls,with_gvisor,with_naive_outbound,with_purego"
 DIST="$ROOT/dist"
 WORK="$DIST/macos-package"

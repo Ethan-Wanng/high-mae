@@ -32,6 +32,7 @@ func onReady() {
 	systray.SetIcon(iconBytes)
 	systray.SetTitle("wing")
 	systray.SetTooltip("wing")
+	systray.SetOnClick(ShowFlutterWindow)
 
 	utils.SafeGo("net speed monitor", func() { stats.StartNetSpeedMonitor(nil) })
 
@@ -67,7 +68,6 @@ func onReady() {
 	utils.SafeGo("local http proxy", proxy.StartAnyTLSHttpServer)
 	sub.StartAutoUpdateSubscriptions()
 	utils.SetSystemProxy(common.IsSystemProxyOn)
-	utils.SafeGo("flutter desktop ui", ShowFlutterWindow)
 
 	utils.SafeGo("tray menu loop", func() {
 		for {
@@ -105,7 +105,7 @@ func onReady() {
 				}
 				stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
 			case <-mAbout.ClickedCh:
-				aboutMsg := "wing v1.0.0 - 桌面代理客户端\n\n" +
+				aboutMsg := "wing v1.0.2 - 桌面代理客户端\n\n" +
 					"wing 集成 sing-box、Mieru Client 与本地 Web 控制面板，支持节点订阅、测速、规则分流、隧道连接、DNS 分流与 WebRTC 防泄漏。\n\n" +
 					"协议支持：Hysteria2、TUIC、VLESS、VMess、Trojan、Shadowsocks、AnyTLS、Naive、Mieru、HTTP/SOCKS 等。\n\n" +
 					"命令行进程规则可按完整命令或命令前缀选择直连/代理，默认预设 go test 直连。该规则作用于进入本地 HTTP 代理的 TCP 请求；ping 等 ICMP 流量需使用 TUN 模式接管。\n\n" +

@@ -114,7 +114,7 @@ function Build-FlutterUI {
             throw "Flutter 依赖安装失败，退出码: $LASTEXITCODE"
         }
 
-        flutter build windows --release
+        flutter build windows --release -t lib/main_windows.dart
         if ($LASTEXITCODE -ne 0) {
             throw "Flutter Windows 构建失败，退出码: $LASTEXITCODE。请确认已安装 Visual Studio 2022 Build Tools 的 Desktop development with C++ 工作负载。"
         }

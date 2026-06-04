@@ -56,3 +56,31 @@ func TestLocalAPIHandlerAllowsTrustedWebUIRequests(t *testing.T) {
 		t.Fatalf("expected trusted request through, got %d", rr.Code)
 	}
 }
+
+func TestTrustedWebUIOriginAllowsLocalAndPrivateHosts(t *testing.T) {
+	origins := []string{
+		"http://127.0.0.1:10809",
+		"http://localhost:10809",
+		"http://10.0.2.2:10809",
+		"http://192.168.1.8:10809",
+	}
+
+	for _, origin := range origins {
+		if !isTrustedWebUIOrigin(origin) {
+			t.Fatalf("expected %s to be trusted", origin)
+		}
+	}
+}
+
+func TestTrustedWebUIOriginRejectsPublicHosts(t *testing.T) {
+	origins := []string{
+		"https://evil.example",
+		"http://8.8.8.8:10809",
+	}
+
+	for _, origin := range origins {
+		if isTrustedWebUIOrigin(origin) {
+			t.Fatalf("expected %s to be rejected", origin)
+		}
+	}
+}

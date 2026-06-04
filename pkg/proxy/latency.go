@@ -54,37 +54,9 @@ func ResolveDirectWithStrategy(host string, strategy string) string {
 		}
 	}
 	if err != nil || len(ips) == 0 || isFakeIP {
-		// 🚀 容错方案：如果系统默认 DNS 解析失败（例如本地 DNS 代理挂了），尝试使用公共 DNS 进行紧急解析
-		r := &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				realIP := common.RealLocalIPBeforeTun
-				if realIP == "" {
-					realIP = utils.GetRealLocalIP()
-				}
-				var localAddr net.Addr
-				if ip := net.ParseIP(realIP); ip != nil {
-					localAddr = &net.UDPAddr{IP: ip}
-				}
-				d := net.Dialer{
-					Timeout:   2 * time.Second,
-					LocalAddr: localAddr,
-				}
-				// 优先阿里 DNS，失败后尝试 Cloudflare
-				conn, err := d.DialContext(ctx, "udp", "223.5.5.5:53")
-				if err != nil {
-					return d.DialContext(ctx, "udp", "1.1.1.1:53")
-				}
-				return conn, nil
-			},
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		ips, err = r.LookupHost(ctx, host)
-		cancel()
-		if err != nil || len(ips) == 0 {
-			// 解析失败，返回空字符串
-			return ""
-		}
+		// 隐私优先：不要在系统 DNS 失败时主动向固定公共 DNS 兜底查询节点域名。
+		// 返回空字符串后，上层会按原域名继续处理，避免额外 DNS 泄露面。
+		return ""
 	}
 
 	return selectResolvedIP(ips, strategy)

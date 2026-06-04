@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"wing/pkg/common"
-	"wing/pkg/storage"
+	"wing/pkg/secure"
 )
 
 var cancelAnyTLS interface{}
@@ -47,7 +47,7 @@ var CmdRules []CmdRule
 const CmdRulesFile = "cmd_rules.json"
 
 func LoadCmdRules() {
-	data, err := storage.ReadOrMigrateFile(CmdRulesFile)
+	data, err := secure.SecureReadFile(CmdRulesFile)
 	if err == nil {
 		var rules []CmdRule
 		if err := json.Unmarshal(data, &rules); err == nil {
@@ -65,7 +65,7 @@ func SaveCmdRules(rules []CmdRule) error {
 	if err != nil {
 		return err
 	}
-	if err := storage.Write(CmdRulesFile, data); err != nil {
+	if err := secure.SecureWriteFile(CmdRulesFile, data); err != nil {
 		return err
 	}
 	CmdRules = rules
@@ -243,7 +243,7 @@ func SaveUserRules() error {
 }
 
 func ReadRuleGroups() ([]RuleGroup, error) {
-	data, err := storage.ReadOrMigrateFile(RuleGroupsFile)
+	data, err := secure.SecureReadFile(RuleGroupsFile)
 	if err == nil {
 		var groups []RuleGroup
 		if err := json.Unmarshal(data, &groups); err != nil {
@@ -271,7 +271,7 @@ func SaveRuleGroups(groups []RuleGroup) error {
 	if err != nil {
 		return err
 	}
-	if err := storage.Write(RuleGroupsFile, data); err != nil {
+	if err := secure.SecureWriteFile(RuleGroupsFile, data); err != nil {
 		return err
 	}
 	RuleGroups = groups

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"wing/pkg/freeflow"
 	"wing/pkg/proxy"
 	"wing/pkg/routing"
+	"wing/pkg/secure"
 	"wing/pkg/stats"
 	"wing/pkg/storage"
 	"wing/pkg/sub"
@@ -188,13 +190,31 @@ func isTrustedWebUIOrigin(raw string) bool {
 	if err != nil {
 		return false
 	}
-	host := strings.ToLower(parsed.Hostname())
+	return isTrustedWebUIHost(parsed.Hostname())
+}
+
+func isTrustedWebUIHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
 	switch host {
-	case "127.0.0.1", "localhost", "::1":
+	case "127.0.0.1", "localhost", "::1", "10.0.2.2", "10.0.3.2":
 		return true
-	default:
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
 		return false
 	}
+	if ip4 := ip.To4(); ip4 != nil {
+		return ip4[0] == 10 ||
+			ip4[0] == 127 ||
+			(ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31) ||
+			(ip4[0] == 192 && ip4[1] == 168) ||
+			(ip4[0] == 169 && ip4[1] == 254)
+	}
+	ip16 := ip.To16()
+	return ip16 != nil &&
+		(ip.IsLoopback() ||
+			(ip16[0]&0xfe) == 0xfc ||
+			(ip16[0] == 0xfe && (ip16[1]&0xc0) == 0x80))
 }
 
 func StartWebUI() {
@@ -545,7 +565,7 @@ func createAggregatedGroupHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ReadAggregateGroups() ([]AggregateGroup, error) {
-	data, err := storage.ReadOrMigrateFile(AggregateGroupsFile)
+	data, err := secure.SecureReadFile(AggregateGroupsFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []AggregateGroup{}, nil
@@ -570,7 +590,7 @@ func SaveAggregateGroups(groups []AggregateGroup) error {
 	if err != nil {
 		return err
 	}
-	return storage.Write(AggregateGroupsFile, data)
+	return secure.SecureWriteFile(AggregateGroupsFile, data)
 }
 
 func withAggregateSource(sourceFile string, nodes []protocol.Node) []protocol.Node {
@@ -1307,7 +1327,7 @@ func autoSelectConfigHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch r.Method {
 	case http.MethodGet:
-		data, err := storage.ReadOrMigrateFile(AutoSelectConfigFile)
+		data, err := secure.SecureReadFile(AutoSelectConfigFile)
 		if err != nil || len(strings.TrimSpace(string(data))) == 0 {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "config": nil})
 			return
@@ -1334,7 +1354,7 @@ func autoSelectConfigHandler(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "自动选择配置序列化失败"})
 			return
 		}
-		if err := storage.Write(AutoSelectConfigFile, pretty); err != nil {
+		if err := secure.SecureWriteFile(AutoSelectConfigFile, pretty); err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "自动选择配置保存失败"})
 			return
 		}

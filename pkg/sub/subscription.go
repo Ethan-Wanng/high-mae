@@ -293,7 +293,7 @@ func ImportNodeFromClipboard() {
 	// 更新当前使用的配置文件
 	SetActiveConfigFile(targetFile)
 
-	data, err := storage.ReadOrMigrateFile(targetFile)
+	data, err := secure.SecureReadFile(targetFile)
 	if err == nil {
 		refreshedNodes, err := protocol.ParseNodesData(data)
 		if err == nil {
@@ -909,7 +909,7 @@ func UpdateAllSubscriptions() {
 
 // StartAutoUpdateSubscriptions 启动后台自动更新任务
 func StartAutoUpdateSubscriptions() {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(5 * time.Minute)
 	utils.SafeGo("subscription auto update", func() {
 		for range ticker.C {
 			UpdateDueSubscriptionsSilently()

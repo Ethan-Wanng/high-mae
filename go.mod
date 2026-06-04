@@ -2,6 +2,8 @@ module wing
 
 go 1.25.0
 
+replace github.com/getlantern/systray => ./third_party/systray
+
 require (
 	github.com/anytls/sing-anytls v0.0.11
 	github.com/enfein/mieru/v3 v3.31.0

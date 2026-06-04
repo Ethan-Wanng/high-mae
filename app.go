@@ -18,20 +18,31 @@ const webUIURL = "http://127.0.0.1:10809/"
 var (
 	isQuitting atomic.Bool
 
-	flutterUIMu  sync.Mutex
-	flutterUICmd *exec.Cmd
+	flutterUIMu       sync.Mutex
+	flutterUICmd      *exec.Cmd
+	flutterUIStarting bool
 )
 
 func ShowFlutterWindow() {
 	flutterUIMu.Lock()
-	if flutterUICmd != nil && flutterUICmd.ProcessState == nil {
+	if flutterUICmd != nil && flutterUICmd.Process != nil && flutterUICmd.ProcessState == nil {
+		cmd := flutterUICmd
+		flutterUIMu.Unlock()
+		_ = focusFlutterWindow(cmd)
+		return
+	}
+	if flutterUIStarting {
 		flutterUIMu.Unlock()
 		return
 	}
+	flutterUIStarting = true
 	flutterUIMu.Unlock()
 
 	exePath, err := findFlutterUIExecutable()
 	if err != nil {
+		flutterUIMu.Lock()
+		flutterUIStarting = false
+		flutterUIMu.Unlock()
 		openExternalURL(webUIURL)
 		utils.ShowWindowsMsgBox("wing", "未找到 Flutter 控制面板，已改用浏览器打开。\n\n"+err.Error())
 		return
@@ -41,6 +52,9 @@ func ShowFlutterWindow() {
 	cmd.Dir = filepath.Dir(exePath)
 
 	if err := cmd.Start(); err != nil {
+		flutterUIMu.Lock()
+		flutterUIStarting = false
+		flutterUIMu.Unlock()
 		openExternalURL(webUIURL)
 		utils.ShowWindowsMsgBox("wing", "无法启动 Flutter 控制面板，已改用浏览器打开。\n\n"+err.Error())
 		return
@@ -48,6 +62,7 @@ func ShowFlutterWindow() {
 
 	flutterUIMu.Lock()
 	flutterUICmd = cmd
+	flutterUIStarting = false
 	flutterUIMu.Unlock()
 
 	go func() {
@@ -66,6 +81,7 @@ func QuitFlutterApp() {
 	flutterUIMu.Lock()
 	cmd := flutterUICmd
 	flutterUICmd = nil
+	flutterUIStarting = false
 	flutterUIMu.Unlock()
 
 	if cmd != nil && cmd.Process != nil && cmd.ProcessState == nil {

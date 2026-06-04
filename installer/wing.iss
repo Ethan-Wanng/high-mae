@@ -1,5 +1,5 @@
 #define MyAppName "wing"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "Ethan-Wanng"
 #define MyAppExeName "wing.exe"
 #define SourceRoot "..\build\bin"

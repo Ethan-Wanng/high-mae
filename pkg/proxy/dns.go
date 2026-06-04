@@ -2,7 +2,7 @@ package proxy
 
 import (
 	"wing/pkg/common"
-	"wing/pkg/storage"
+	"wing/pkg/secure"
 	"wing/pkg/utils"
 
 	"context"
@@ -58,7 +58,7 @@ const (
 )
 
 func LoadDNSConfig() {
-	data, err := storage.ReadOrMigrateFile(DNSConfigFile)
+	data, err := secure.SecureReadFile(DNSConfigFile)
 	if err == nil {
 		if err := json.Unmarshal(data, &GlobalDNSConfig); err == nil {
 			return
@@ -93,7 +93,7 @@ func SaveDNSConfig() error {
 	if err != nil {
 		return err
 	}
-	return storage.Write(DNSConfigFile, data)
+	return secure.SecureWriteFile(DNSConfigFile, data)
 }
 
 func GetDNSServerByID(id string) *DNSServer {
