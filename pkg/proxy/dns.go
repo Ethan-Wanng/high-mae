@@ -131,7 +131,7 @@ func MatchDNSRule(domain string) string {
 func StartLocalDNS() {
 	if GlobalDNSConfig.AutoOverwrite {
 		if common.IsTunModeOn {
-			log.Println("TUN 模式已开启，跳过系统 DNS 覆写到 127.0.0.2")
+			log.Println("TUN 模式已开启，跳过 DNS 自动覆写到 127.0.0.2")
 		} else {
 			utils.SetSystemDNS(true, "127.0.0.2")
 			common.IsSystemDNSHijacked = true

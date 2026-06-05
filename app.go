@@ -73,6 +73,7 @@ func startFlutterWindow(show bool) {
 	}
 	cmd := exec.Command(exePath, args...)
 	cmd.Dir = filepath.Dir(exePath)
+	hideCommandWindow(cmd)
 
 	if err := cmd.Start(); err != nil {
 		flutterUIMu.Lock()

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
@@ -30,14 +29,11 @@ func GetMachineID() string {
 
 	var id string
 	if runtime.GOOS == "windows" {
-		cmd1 := exec.Command("cmd", "/c", "reg", "query", `HKLM\SOFTWARE\Microsoft\Cryptography`, "/v", "MachineGuid")
-		if out, err := cmd1.Output(); err == nil {
+		if out, err := runMachineIDCommand("cmd", "/c", "reg", "query", `HKLM\SOFTWARE\Microsoft\Cryptography`, "/v", "MachineGuid"); err == nil {
 			id = parseRegValue(string(out), "MachineGuid")
 		}
 		if id == "" {
-			cmd2 := exec.Command("wmic", "csproduct", "get", "uuid")
-			out, err := cmd2.Output()
-			if err == nil {
+			if out, err := runMachineIDCommand("wmic", "csproduct", "get", "uuid"); err == nil {
 				lines := strings.Split(string(out), "\n")
 				if len(lines) >= 2 {
 					id = strings.TrimSpace(lines[1])

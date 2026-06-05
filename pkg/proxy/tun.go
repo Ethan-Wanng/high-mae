@@ -238,7 +238,7 @@ func buildTunBoxOptions(nodeIP string) (option.Options, error) {
 				},
 				Final: tunLocalDNSTag,
 				DNSClientOptions: option.DNSClientOptions{
-					Strategy: option.DomainStrategy(C.DomainStrategyIPv4Only),
+					Strategy: tunDNSStrategy(),
 				},
 			},
 		},
@@ -421,6 +421,13 @@ func reconcileTunRoute() {
 			log.Printf("TUN 自愈重启失败: %v", err)
 		}
 	}
+}
+
+func tunDNSStrategy() option.DomainStrategy {
+	if GlobalSystemConfig.PreferIPv6 {
+		return option.DomainStrategy(C.DomainStrategyPreferIPv6)
+	}
+	return option.DomainStrategy(C.DomainStrategyIPv4Only)
 }
 
 func releaseRuntimeMemory() {

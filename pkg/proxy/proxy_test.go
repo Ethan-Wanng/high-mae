@@ -103,6 +103,26 @@ func TestSelectResolvedIPDefaultsToIPv4(t *testing.T) {
 	}
 }
 
+func TestDefaultDomainStrategyUsesIPv4OnlyWhenIPv6Disabled(t *testing.T) {
+	oldConfig := GlobalSystemConfig
+	GlobalSystemConfig.PreferIPv6 = false
+	t.Cleanup(func() { GlobalSystemConfig = oldConfig })
+
+	if got := defaultDomainStrategy(); got != "ipv4_only" {
+		t.Fatalf("defaultDomainStrategy() = %q, want ipv4_only", got)
+	}
+}
+
+func TestDefaultDomainStrategyUsesPreferIPv6WhenEnabled(t *testing.T) {
+	oldConfig := GlobalSystemConfig
+	GlobalSystemConfig.PreferIPv6 = true
+	t.Cleanup(func() { GlobalSystemConfig = oldConfig })
+
+	if got := defaultDomainStrategy(); got != "prefer_ipv6" {
+		t.Fatalf("defaultDomainStrategy() = %q, want prefer_ipv6", got)
+	}
+}
+
 func TestMieruResolvedDestinationFallback(t *testing.T) {
 	fallback, ok := mieruResolvedDestinationAddr(
 		metadata.ParseSocksaddr("localhost:80"),

@@ -152,6 +152,7 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/clear_logs", clearLogsHandler)
 	api("/api/privacy", privacyToggleHandler)
 	api("/api/system_config", systemConfigHandler)
+	api("/api/restart_admin", restartAdminHandler)
 
 	return mux
 }
@@ -1815,7 +1816,20 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	case "tun", "tunnel":
 		if !utils.IsAdmin() {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "开启隧道连接需要管理员权限！请以管理员身份运行。"})
+			if proxy.GlobalSystemConfig.AutoRestartAsAdmin {
+				if err := utils.RestartAsAdmin(); err != nil {
+					json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "requiresAdmin": true, "msg": "自动请求管理员权限失败: " + err.Error()})
+					return
+				}
+				utils.SafeGo("exit after admin restart", func() {
+					time.Sleep(500 * time.Millisecond)
+					utils.ReleaseSingleInstanceLock()
+					os.Exit(0)
+				})
+				json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "restarting": true, "msg": "正在请求管理员权限并重启 wing..."})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "requiresAdmin": true, "msg": "开启隧道连接需要管理员权限！可在系统设置里开启“需要管理员权限时自动重启”。"})
 			return
 		}
 		// 标记 TUN 正在切换中，防止轮询期间把 checkbox 闪回旧状态
@@ -1846,6 +1860,24 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+}
+
+func restartAdminHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if utils.IsAdmin() {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "当前已经是管理员权限"})
+		return
+	}
+	if err := utils.RestartAsAdmin(); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "请求管理员权限失败: " + err.Error()})
+		return
+	}
+	utils.SafeGo("exit after manual admin restart", func() {
+		time.Sleep(500 * time.Millisecond)
+		utils.ReleaseSingleInstanceLock()
+		os.Exit(0)
+	})
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "restarting": true, "msg": "正在请求管理员权限并重启 wing..."})
 }
 
 func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {

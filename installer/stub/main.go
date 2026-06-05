@@ -19,8 +19,9 @@ import (
 var payloadZip []byte
 
 const (
-	appName       = "wing"
-	defaultFolder = "Programs\\wing"
+	appName        = "wing"
+	defaultFolder  = "Programs\\wing"
+	createNoWindow = 0x08000000
 
 	mbOK        = 0x00000000
 	mbOKCancel  = 0x00000001
@@ -86,7 +87,9 @@ func run() error {
 
 	launch := messageBox("wing installer", "wing 已安装完成。\n\n是否现在启动？", mbYesNo|mbIconInfo)
 	if launch == idYes {
-		_ = exec.Command(exePath).Start()
+		cmd := exec.Command(exePath)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+		_ = cmd.Start()
 	}
 	return nil
 }

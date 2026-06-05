@@ -9,6 +9,10 @@ import (
 type SystemConfig struct {
 	ProxyPort             string `json:"proxyPort"`
 	PreventBingCNRedirect bool   `json:"preventBingCNRedirect"`
+	PreferIPv6            bool   `json:"preferIPv6"`
+	AutoRestartAsAdmin    bool   `json:"autoRestartAsAdmin"`
+	StartupEnabled        bool   `json:"startupEnabled"`
+	ThemeMode             string `json:"themeMode"`
 }
 
 var GlobalSystemConfig SystemConfig
@@ -22,6 +26,9 @@ func LoadSystemConfig() {
 	}
 	if GlobalSystemConfig.ProxyPort == "" {
 		GlobalSystemConfig.ProxyPort = "10808"
+	}
+	if GlobalSystemConfig.ThemeMode == "" {
+		GlobalSystemConfig.ThemeMode = "system"
 	}
 	common.LocalHttpPort = GlobalSystemConfig.ProxyPort
 	common.PreventBingCNRedirect = GlobalSystemConfig.PreventBingCNRedirect

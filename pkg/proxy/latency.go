@@ -22,14 +22,21 @@ import (
 
 // resolveDirect 智能解析服务器地址为真实 IP
 // 1. 如果已经是 IP，直接返回
-// 2. 如果是域名，进行本地 DNS 解析并优先返回 IPv4 地址
+// 2. 如果是域名，进行本地 DNS 解析并按全局 IPv6 开关选择地址
 // 3. 解析失败返回空字符串，交由上层降级使用原域名
 func ResolveDirect(host string) string {
-	return ResolveDirectWithStrategy(host, "prefer_ipv4")
+	return ResolveDirectWithStrategy(host, defaultDomainStrategy())
 }
 
 func ResolveNodeServer(node protocol.Node) string {
-	return ResolveDirectWithStrategy(node.Server, node.DomainStrategy)
+	return ResolveDirectWithStrategy(node.Server, defaultDomainStrategy())
+}
+
+func defaultDomainStrategy() string {
+	if GlobalSystemConfig.PreferIPv6 {
+		return "prefer_ipv6"
+	}
+	return "ipv4_only"
 }
 
 func ResolveDirectWithStrategy(host string, strategy string) string {

@@ -278,64 +278,60 @@
                 </section>
 
                 <section class="help-grid">
-                    <article class="help-card">
-                        <h3>快速开始</h3>
-                        <ol>
-                            <li>点击顶部“导入订阅”，粘贴订阅链接或节点链接。</li>
-                            <li>在“节点选择”里选择订阅组或聚合组，再点击节点卡片切换。</li>
-                            <li>在“系统设置”开启“代理服务”；需要接管不走系统代理的软件时再开启“TUN”。</li>
-                            <li>使用“极速测速”先测延迟，再用“测试网站”确认当前节点可访问目标服务。</li>
-                        </ol>
+                    <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('quickStart')" onkeydown="openHelpTopicByKey(event, 'quickStart')">
+                        <div class="help-card-title">
+                            <h3>快速开始</h3>
+                            <span>查看详情</span>
+                        </div>
+                        <p>导入订阅、选择节点、开启代理和验证可用性的最短路径。</p>
                     </article>
 
-                    <article class="help-card">
-                        <h3>自动选择</h3>
-                        <ul>
-                            <li>自动选择会按候选范围、筛选规则、延迟和网站可用性选择节点。</li>
-                            <li>“立即选择”会立刻重测候选节点；关闭开关后会停止当前自动选择任务。</li>
-                            <li>如果只想从某个订阅或聚合组里选，请把范围改为“指定订阅组”或“指定聚合组”。</li>
-                            <li>网站可用性验证会逐个临时切换候选节点，关闭自动选择可中止后续检查。</li>
-                        </ul>
+                    <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('autoSelect')" onkeydown="openHelpTopicByKey(event, 'autoSelect')">
+                        <div class="help-card-title">
+                            <h3>自动选择</h3>
+                            <span>查看详情</span>
+                        </div>
+                        <p>按订阅组、聚合组、筛选规则、延迟和网站可用性自动挑节点。</p>
                     </article>
 
-                    <article class="help-card">
-                        <h3>防止 DNS / IP 泄露</h3>
-                        <ul>
-                            <li>系统代理只影响遵循系统代理的软件；游戏、命令行或部分应用建议使用 TUN。</li>
-                            <li>TUN 开启后会接管路由，并通过本地 DNS 入口处理 DNS 查询。</li>
-                            <li>DNS 自动覆写会把物理网卡 DNS 指向 127.0.0.2，退出软件时会尝试恢复。</li>
-                            <li>WebRTC 开关会写入 Chrome / Edge 策略，减少浏览器通过 WebRTC 暴露真实 IP。</li>
-                        </ul>
+                    <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('leakProtection')" onkeydown="openHelpTopicByKey(event, 'leakProtection')">
+                        <div class="help-card-title">
+                            <h3>防止 DNS / IP 泄露</h3>
+                            <span>查看详情</span>
+                        </div>
+                        <p>理解系统代理、TUN、DNS 自动覆写、IPv6 和 WebRTC 的边界。</p>
                     </article>
 
-                    <article class="help-card">
-                        <h3>隐私与本地数据</h3>
-                        <ul>
-                            <li>控制面板仅监听本机地址，不对局域网开放。</li>
-                            <li>节点配置和订阅链接使用本机派生密钥做 AES-GCM 加密存储。</li>
-                            <li>DNS 规则、路由规则和使用统计属于本机配置数据，不会主动上传。</li>
-                            <li>导入订阅、测速、网站测试会访问对应订阅地址或目标网站，这是功能必需的网络请求。</li>
-                        </ul>
+                    <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('dnsRules')" onkeydown="openHelpTopicByKey(event, 'dnsRules')">
+                        <div class="help-card-title">
+                            <h3>DNS 规则怎么用</h3>
+                            <span>查看详情</span>
+                        </div>
+                        <p>DNS 规则负责“交给谁解析”，路由规则负责“流量怎么走”。</p>
                     </article>
 
-                    <article class="help-card">
-                        <h3>常见排查</h3>
-                        <ul>
-                            <li>网页能打开但软件不走代理：开启 TUN，或检查该软件是否支持系统代理。</li>
-                            <li>DNS 结果异常：打开“DNS 规则管理”，确认默认服务器和分流规则。</li>
-                            <li>浏览器仍泄露 WebRTC：开启 WebRTC 开关后重启浏览器或刷新 chrome://policy / edge://policy。</li>
-                            <li>托盘点击无响应：确认 wing_ui.exe 已随主程序一起构建并放在同目录或 flutter_ui 子目录。</li>
-                        </ul>
+                    <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('privacy')" onkeydown="openHelpTopicByKey(event, 'privacy')">
+                        <div class="help-card-title">
+                            <h3>隐私与本地数据</h3>
+                            <span>查看详情</span>
+                        </div>
+                        <p>本地监听、加密存储、必要网络请求和敏感信息边界说明。</p>
                     </article>
 
-                    <article class="help-card">
-                        <h3>安全建议</h3>
-                        <ul>
-                            <li>不要导入来源不明的订阅链接，订阅服务商能看到订阅拉取请求。</li>
-                            <li>公共 Wi-Fi 下优先使用 TUN，并开启 WebRTC 防泄露。</li>
-                            <li>定期删除不用的节点和订阅，减少本机保存的敏感配置。</li>
-                            <li>需要分享节点时，只分享必要节点，不要把完整订阅链接发给他人。</li>
-                        </ul>
+                    <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('troubleshooting')" onkeydown="openHelpTopicByKey(event, 'troubleshooting')">
+                        <div class="help-card-title">
+                            <h3>常见排查</h3>
+                            <span>查看详情</span>
+                        </div>
+                        <p>处理软件不走代理、DNS 结果异常、WebRTC 策略和托盘问题。</p>
+                    </article>
+
+                    <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('security')" onkeydown="openHelpTopicByKey(event, 'security')">
+                        <div class="help-card-title">
+                            <h3>安全建议</h3>
+                            <span>查看详情</span>
+                        </div>
+                        <p>订阅来源、公共网络、节点分享和敏感配置的日常安全建议。</p>
                     </article>
                 </section>
             </div>
@@ -390,6 +386,27 @@
                                     <span>防 Bing CN 跳转</span>
                                     <label class="toggle"><input type="checkbox" id="chkBingRedirectGuard" onchange="saveBingRedirectGuard(this.checked)"><span class="slider"></span></label>
                                 </div>
+                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;" title="开启后节点域名解析和 TUN DNS 会优先使用 IPv6">
+                                    <span>IPv6 开关</span>
+                                    <label class="toggle"><input type="checkbox" id="chkPreferIPv6" onchange="savePreferIPv6(this.checked)"><span class="slider"></span></label>
+                                </div>
+                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;" title="开启后，如果开启 TUN 等功能需要管理员权限，会自动请求 UAC 并重启 wing">
+                                    <span>需要管理员权限时自动重启</span>
+                                    <label class="toggle"><input type="checkbox" id="chkAutoRestartAsAdmin" onchange="saveAutoRestartAsAdmin(this.checked)"><span class="slider"></span></label>
+                                </div>
+                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;" title="登录 Windows 后自动启动 wing">
+                                    <span>开机自启动</span>
+                                    <label class="toggle"><input type="checkbox" id="chkStartupEnabled" onchange="saveStartupEnabled(this.checked)"><span class="slider"></span></label>
+                                </div>
+                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;" title="选择浅色、深色或跟随系统主题">
+                                    <span>界面主题</span>
+                                    <select id="themeModeSelect" onchange="saveThemeMode(this.value)" style="min-width: 132px; padding: 7px 10px; border-radius: var(--radius); border: 1px solid rgba(148,163,184,0.18); background: rgba(255,255,255,0.08); color: var(--text-main); outline: none;">
+                                        <option value="system">跟随系统</option>
+                                        <option value="dark">深色</option>
+                                        <option value="light">浅色</option>
+                                    </select>
+                                </div>
+                                <button class="btn-ghost" onclick="restartAsAdmin()" style="height: 44px; border-radius: 12px; font-weight: 600;">以管理员身份重启</button>
                             </div>
                         </div>
                     </div>
@@ -471,6 +488,17 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="helpTopicModal">
+        <div class="modal help-topic-modal">
+            <h2 id="helpTopicTitle">帮助详情</h2>
+            <p id="helpTopicSummary" class="help-topic-summary"></p>
+            <div id="helpTopicBody" class="help-topic-body"></div>
+            <div class="action-bar">
+                <button class="btn-ghost" onclick="closeHelpTopic()">关闭</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="ruleModal">
         <div class="modal" style="width: min(860px, 100%);">
             <h2>规则组管理</h2>
@@ -531,83 +559,59 @@
     </div>
 
     <div class="modal-overlay" id="dnsModal">
-        <div class="modal" style="width: min(860px, 100%);">
+        <div class="modal dns-modal" style="width: min(860px, 100%);">
             <h2>DNS 规则管理</h2>
 
-            <div
-                style="margin-bottom: 16px; border: 1px solid rgba(59,130,246,0.22); border-radius: 14px; padding: 14px; background: rgba(59,130,246,0.06);">
-                <div style="font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 10px;">DNS 规则怎么用</div>
-                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; font-size: 12px; color: var(--text-sub); line-height: 1.55;">
-                    <div>
-                        <strong style="color: var(--text-main);">它决定解析服务器</strong>
-                        <div>DNS 规则只决定某个域名交给哪台 DNS 服务器解析，不直接决定流量走直连还是代理；流量路径仍由规则分流决定。</div>
+            <div class="modal-scroll dns-modal-scroll">
+                <div
+                    style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="font-size: 14px; font-weight: 600; color: var(--accent);">🔄 DNS 自动覆写</div>
+                        <label class="toggle"><input type="checkbox" id="chkAutoOverwrite"><span
+                                class="slider"></span></label>
                     </div>
-                    <div>
-                        <strong style="color: var(--text-main);">匹配顺序</strong>
-                        <div>查询域名会从上到下匹配 DNS 分流规则；没有命中时使用“默认服务器”。</div>
-                    </div>
-                    <div>
-                        <strong style="color: var(--text-main);">三种匹配</strong>
-                        <div>完整域名匹配单个域名；域名后缀匹配整个站点；关键字匹配包含该词的域名。</div>
-                    </div>
-                    <div>
-                        <strong style="color: var(--text-main);">常见配置</strong>
-                        <div>国内域名后缀 cn 可用 Aliyun；baidu、alicdn 可用国内 DNS；默认服务器可选 Google 或 Cloudflare。</div>
-                    </div>
+                    <div style="font-size: 12px; color: var(--text-sub); margin-top: 8px;">开启后将修改物理网卡的 DNS 指向本程序的本地 DNS 服务
+                        (127.0.0.2)。退出时将自动恢复。</div>
                 </div>
-                <div style="margin-top: 10px; font-size: 12px; color: var(--text-sub); line-height: 1.5;">
-                    自动覆写系统 DNS 会把物理网卡 DNS 指向本程序的 127.0.0.2；TUN 模式开启时程序会跳过物理网卡覆写，由内置 TUN/DNS 接管。
-                </div>
-            </div>
 
-            <div
-                style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-size: 14px; font-weight: 600; color: var(--accent);">🔄 自动覆写系统 DNS</div>
-                    <label class="toggle"><input type="checkbox" id="chkAutoOverwrite"><span
-                            class="slider"></span></label>
+                <div
+                    style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
+                    <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--accent);">📡 DNS 服务器列表
+                    </div>
+                    <div id="dnsServerList" style="max-height: 150px; overflow-y: auto; margin-bottom: 10px;"></div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <input type="text" id="dnsServerName" placeholder="服务器名称"
+                            style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
+                        <input type="text" id="dnsServerAddr" placeholder="地址 (如 8.8.8.8:53)"
+                            style="flex:2; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
+                        <button class="btn-success" style="padding: 6px 12px; font-size:12px;"
+                            onclick="addDNSServer()">添加服务器</button>
+                    </div>
                 </div>
-                <div style="font-size: 12px; color: var(--text-sub); margin-top: 8px;">开启后将修改物理网卡的 DNS 指向本程序的本地 DNS 服务
-                    (127.0.0.2)。退出时将自动恢复。</div>
-            </div>
 
-            <div
-                style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
-                <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--accent);">📡 DNS 服务器列表
-                </div>
-                <div id="dnsServerList" style="max-height: 150px; overflow-y: auto; margin-bottom: 10px;"></div>
-                <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <input type="text" id="dnsServerName" placeholder="服务器名称"
-                        style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
-                    <input type="text" id="dnsServerAddr" placeholder="地址 (如 8.8.8.8:53)"
-                        style="flex:2; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
-                    <button class="btn-success" style="padding: 6px 12px; font-size:12px;"
-                        onclick="addDNSServer()">添加服务器</button>
-                </div>
-            </div>
-
-            <div
-                style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
-                <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--accent);">🛣️ DNS 分流规则
-                </div>
-                <div style="display:flex; gap:10px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
-                    <span>默认服务器:</span>
-                    <select id="dnsDefaultServer" style="min-width:150px; padding:6px; font-size:13px;"></select>
-                </div>
-                <div id="dnsRuleList"
-                    style="max-height: 200px; overflow-y: auto; margin-bottom: 10px; border-top: 1px solid rgba(148,163,184,0.1); padding-top:10px;">
-                </div>
-                <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <select id="dnsRuleType" style="min-width:100px; padding:6px; font-size:13px;">
-                        <option value="domain_suffix">域名后缀</option>
-                        <option value="domain_keyword">域名关键字</option>
-                        <option value="domain">完整域名</option>
-                    </select>
-                    <input type="text" id="dnsRuleValue" placeholder="域名/关键字"
-                        style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
-                    <select id="dnsRuleServer" style="min-width:120px; padding:6px; font-size:13px;"></select>
-                    <button class="btn-success" style="padding: 6px 12px; font-size:12px;"
-                        onclick="addDNSRule()">添加规则</button>
+                <div
+                    style="margin-bottom: 20px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; padding: 15px; background: rgba(255,255,255,0.02);">
+                    <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--accent);">🛣️ DNS 分流规则
+                    </div>
+                    <div style="display:flex; gap:10px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
+                        <span>默认服务器:</span>
+                        <select id="dnsDefaultServer" style="min-width:150px; padding:6px; font-size:13px;"></select>
+                    </div>
+                    <div id="dnsRuleList"
+                        style="max-height: 200px; overflow-y: auto; margin-bottom: 10px; border-top: 1px solid rgba(148,163,184,0.1); padding-top:10px;">
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <select id="dnsRuleType" style="min-width:100px; padding:6px; font-size:13px;">
+                            <option value="domain_suffix">域名后缀</option>
+                            <option value="domain_keyword">域名关键字</option>
+                            <option value="domain">完整域名</option>
+                        </select>
+                        <input type="text" id="dnsRuleValue" placeholder="域名/关键字"
+                            style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(148,163,184,0.18); color:white; padding:8px; border-radius:8px; outline:none; font-size:13px;">
+                        <select id="dnsRuleServer" style="min-width:120px; padding:6px; font-size:13px;"></select>
+                        <button class="btn-success" style="padding: 6px 12px; font-size:12px;"
+                            onclick="addDNSRule()">添加规则</button>
+                    </div>
                 </div>
             </div>
 

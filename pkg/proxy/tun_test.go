@@ -28,6 +28,10 @@ func TestToggleTunModeState(t *testing.T) {
 }
 
 func TestBuildTunBoxOptionsUsesInternalTunAndLocalSocks(t *testing.T) {
+	oldConfig := GlobalSystemConfig
+	GlobalSystemConfig.PreferIPv6 = false
+	t.Cleanup(func() { GlobalSystemConfig = oldConfig })
+
 	opts, err := buildTunBoxOptions("203.0.113.8")
 	if err != nil {
 		t.Fatalf("buildTunBoxOptions() error = %v", err)
@@ -125,6 +129,20 @@ func TestBuildTunBoxOptionsUsesInternalTunAndLocalSocks(t *testing.T) {
 		proxyRule.Action != C.RuleActionTypeRoute ||
 		proxyRule.RouteOptions.Outbound != tunLocalSocksTag {
 		t.Fatalf("proxy rule = %+v, want TUN route to local SOCKS", proxyRule)
+	}
+}
+
+func TestBuildTunBoxOptionsUsesPreferIPv6WhenEnabled(t *testing.T) {
+	oldConfig := GlobalSystemConfig
+	GlobalSystemConfig.PreferIPv6 = true
+	t.Cleanup(func() { GlobalSystemConfig = oldConfig })
+
+	opts, err := buildTunBoxOptions("203.0.113.8")
+	if err != nil {
+		t.Fatalf("buildTunBoxOptions() error = %v", err)
+	}
+	if opts.DNS.Strategy != option.DomainStrategy(C.DomainStrategyPreferIPv6) {
+		t.Fatalf("DNS strategy = %d, want prefer IPv6", opts.DNS.Strategy)
 	}
 }
 

@@ -16,6 +16,8 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
+const createNoWindow = 0x08000000
+
 func ShowWindowsMsgBox(title, message string) {
 	if runtime.GOOS == "windows" {
 		user32 := syscall.NewLazyDLL("user32.dll")
@@ -71,11 +73,11 @@ func SetSystemDNS(enable bool, dnsIP string) {
 		// powershell -Command "Get-DnsClientServerAddress | Where-Object {$_.ServerAddresses -ne $null} | Set-DnsClientServerAddress -ServerAddresses '127.0.0.2'"
 		script := fmt.Sprintf(`Get-NetAdapter | Where-Object {$_.Status -eq 'Up' -and $_.InterfaceAlias -notmatch 'TUN'} | Set-DnsClientServerAddress -ServerAddresses '%s'`, dnsIP)
 		cmdStr := fmt.Sprintf(`Start-Process powershell -ArgumentList "-NoProfile -Command %s" -Verb RunAs -WindowStyle Hidden`, script)
-		exec.Command("powershell", "-Command", cmdStr).Run()
+		_, _ = RunHiddenCommand("powershell", "-NoProfile", "-Command", cmdStr)
 	} else {
 		script := `Get-NetAdapter | Where-Object {$_.Status -eq 'Up' -and $_.InterfaceAlias -notmatch 'TUN'} | Set-DnsClientServerAddress -ResetServerAddresses`
 		cmdStr := fmt.Sprintf(`Start-Process powershell -ArgumentList "-NoProfile -Command %s" -Verb RunAs -WindowStyle Hidden`, script)
-		exec.Command("powershell", "-Command", cmdStr).Run()
+		_, _ = RunHiddenCommand("powershell", "-NoProfile", "-Command", cmdStr)
 	}
 }
 
@@ -112,7 +114,7 @@ func GetRealLocalIP() string {
 // RunHiddenCommand 运行命令并隐藏终端窗口
 func RunHiddenCommand(name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	return cmd.Output()
 }
 
@@ -128,7 +130,7 @@ func RestartAsAdmin() error {
 	cwdPtr, _ := syscall.UTF16PtrFromString(cwd)
 	argPtr, _ := syscall.UTF16PtrFromString(args)
 
-	var showCmd int32 = 1 // SW_NORMAL
+	var showCmd int32 = 0 // SW_HIDE
 	shell32 := syscall.NewLazyDLL("shell32.dll")
 	shellExecute := shell32.NewProc("ShellExecuteW")
 
@@ -143,4 +145,42 @@ func RestartAsAdmin() error {
 		return fmt.Errorf("ShellExecute failed with code %d: %v", ret, err)
 	}
 	return nil
+}
+
+func SetStartupEnabled(enable bool) error {
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+
+	const name = "wing"
+	if !enable {
+		if err := k.DeleteValue(name); err != nil && err != registry.ErrNotExist {
+			return err
+		}
+		return nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	return k.SetStringValue(name, `"`+exe+`"`)
+}
+
+func IsStartupEnabled() bool {
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	value, _, err := k.GetStringValue("wing")
+	if err != nil {
+		return false
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(strings.Trim(value, `"`), exe)
 }

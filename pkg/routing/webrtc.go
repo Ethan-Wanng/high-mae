@@ -4,8 +4,8 @@ package routing
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
+	"wing/pkg/utils"
 
 	"golang.org/x/sys/windows/registry"
 )
@@ -28,7 +28,7 @@ func ToggleWebRTCLeak(enable bool) {
 
 	// 使用单一 UAC 提示执行所有命令
 	cmdStr := fmt.Sprintf(`Start-Process powershell -ArgumentList "-NoProfile -Command %s" -Verb RunAs -WindowStyle Hidden`, script)
-	exec.Command("powershell", "-Command", cmdStr).Run()
+	_, _ = utils.RunHiddenCommand("powershell", "-NoProfile", "-Command", cmdStr)
 }
 
 // CheckWebRTCLeakStatus 检查是否已经启用了防 WebRTC 泄露

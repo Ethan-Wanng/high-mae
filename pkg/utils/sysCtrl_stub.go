@@ -39,3 +39,11 @@ func RunHiddenCommand(name string, args ...string) ([]byte, error) {
 func RestartAsAdmin() error {
 	return fmt.Errorf("administrator restart is only supported on Windows")
 }
+
+func SetStartupEnabled(enable bool) error {
+	return fmt.Errorf("startup setting is only supported on Windows")
+}
+
+func IsStartupEnabled() bool {
+	return false
+}

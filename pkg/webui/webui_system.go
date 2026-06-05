@@ -14,6 +14,10 @@ import (
 func systemConfigHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
+		proxy.GlobalSystemConfig.StartupEnabled = utils.IsStartupEnabled()
+		if proxy.GlobalSystemConfig.ThemeMode == "" {
+			proxy.GlobalSystemConfig.ThemeMode = "system"
+		}
 		json.NewEncoder(w).Encode(proxy.GlobalSystemConfig)
 		return
 	}
@@ -22,6 +26,10 @@ func systemConfigHandler(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ProxyPort             string `json:"proxyPort"`
 			PreventBingCNRedirect *bool  `json:"preventBingCNRedirect"`
+			PreferIPv6            *bool  `json:"preferIPv6"`
+			AutoRestartAsAdmin    *bool  `json:"autoRestartAsAdmin"`
+			StartupEnabled        *bool  `json:"startupEnabled"`
+			ThemeMode             string `json:"themeMode"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -53,6 +61,27 @@ func systemConfigHandler(w http.ResponseWriter, r *http.Request) {
 		if req.PreventBingCNRedirect != nil {
 			proxy.GlobalSystemConfig.PreventBingCNRedirect = *req.PreventBingCNRedirect
 			common.PreventBingCNRedirect = *req.PreventBingCNRedirect
+		}
+		if req.PreferIPv6 != nil {
+			proxy.GlobalSystemConfig.PreferIPv6 = *req.PreferIPv6
+		}
+		if req.AutoRestartAsAdmin != nil {
+			proxy.GlobalSystemConfig.AutoRestartAsAdmin = *req.AutoRestartAsAdmin
+		}
+		if req.StartupEnabled != nil {
+			if err := utils.SetStartupEnabled(*req.StartupEnabled); err != nil {
+				json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "开机自启动设置失败: " + err.Error()})
+				return
+			}
+			proxy.GlobalSystemConfig.StartupEnabled = *req.StartupEnabled
+		}
+		themeMode := strings.TrimSpace(req.ThemeMode)
+		if themeMode != "" {
+			if themeMode != "light" && themeMode != "dark" && themeMode != "system" {
+				http.Error(w, "Invalid theme mode", http.StatusBadRequest)
+				return
+			}
+			proxy.GlobalSystemConfig.ThemeMode = themeMode
 		}
 		if err := proxy.SaveSystemConfig(); err != nil {
 			http.Error(w, "Save failed: "+err.Error(), http.StatusInternalServerError)

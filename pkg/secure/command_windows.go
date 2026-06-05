@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package secure
 
 import (
 	"os/exec"
@@ -9,9 +9,11 @@ import (
 
 const createNoWindow = 0x08000000
 
-func hideCommandWindow(cmd *exec.Cmd) {
+func runMachineIDCommand(name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
 		CreationFlags: createNoWindow,
 	}
+	return cmd.Output()
 }

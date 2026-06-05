@@ -27,6 +27,8 @@ let autoSelectEventsBound = false;
 let autoSelectQueuedRun = null;
 let autoSelectAbortController = null;
 let autoSelectRunSeq = 0;
+
+applyThemeMode(localStorage.getItem('wing_theme_mode') || 'system');
 let shareQRCodeURL = "";
 
 const statusPollIntervalMs = 5000;
@@ -378,6 +380,9 @@ function renderAutoNodes() {
                     <div class="node-detail-title">自动选择节点范围</div>
                     <div class="node-detail-subtitle">${candidates.length} 个候选节点${keyword ? "匹配当前搜索" : ""}</div>
                 </div>
+                <div class="node-detail-actions">
+                    ${autoSelectExcludedNodeCount() ? `<button class="btn-mini" onclick="clearAutoSelectExcludedNodes()">恢复已排除节点 (${autoSelectExcludedNodeCount()})</button>` : ''}
+                </div>
             </div>
             <div class="node-detail-body"></div>
         </section>
@@ -388,7 +393,7 @@ function renderAutoNodes() {
         body.innerHTML = '<div class="empty-state">没有符合自动选择规则的候选节点。</div>';
         return;
     }
-    body.appendChild(renderNodeTable(candidates));
+    body.appendChild(renderNodeTable(candidates, { autoSelect: true }));
 }
 
 let filterNodesTimeout = null;
@@ -421,7 +426,7 @@ function renderSelectedGroupActions(group) {
     `;
 }
 
-function renderNodeTable(nodes) {
+function renderNodeTable(nodes, options = {}) {
     const table = document.createElement('table');
     table.className = 'win-explorer-table';
     table.innerHTML = `
@@ -464,6 +469,10 @@ function renderNodeTable(nodes) {
         const tr = document.createElement('tr');
         if (n.active) tr.className = 'active';
         tr.ondblclick = () => switchNode(n.index);
+        const removeAction = options.autoSelect
+            ? `<button class="btn-action btn-action-danger" onclick="excludeAutoSelectNode('${encodeURIComponent(autoSelectNodeKey(n))}')">删除</button>`
+            : `<button class="btn-action btn-action-danger" onclick="deleteNode(${n.index})">删除</button>`;
+        const removeTitle = options.autoSelect ? '从自动选择候选中排除，不删除原订阅或聚合组节点' : '删除节点';
         tr.innerHTML = `
             <td class="status-cell"><span class="status-dot ${n.active ? 'active' : ''}"></span></td>
             <td class="node-name-cell">${escapeHTML(n.name || '')}</td>
@@ -475,7 +484,7 @@ function renderNodeTable(nodes) {
                 <button class="btn-action" onclick="testSingle(${n.index})">延迟</button>
                 <button class="btn-action" onclick="testSpeed(${n.index})">带宽</button>
                 <button class="btn-action" onclick="shareNode(${n.index})">分享</button>
-                <button class="btn-action btn-action-danger" onclick="deleteNode(${n.index})">删除</button>
+                <span title="${removeTitle}">${removeAction}</span>
             </td>
         `;
         tbody.appendChild(tr);
@@ -756,6 +765,12 @@ async function doAction(type) {
         if (data && data.msg) {
             showToast(data.msg, data.ok === false ? 'error' : 'info');
         }
+        if (data?.requiresAdmin && !data?.restarting) {
+            const autoRestartEl = document.getElementById('chkAutoRestartAsAdmin');
+            if (!autoRestartEl?.checked && confirm('开启该功能需要管理员权限。是否现在以管理员身份重启 wing？')) {
+                await restartAsAdmin();
+            }
+        }
     } catch(e) {}
     finally {
         clearTimeout(timeout);
@@ -773,9 +788,25 @@ async function loadSystemConfig() {
         if (portEl) portEl.value = config.proxyPort || '10808';
         const bingGuardEl = document.getElementById('chkBingRedirectGuard');
         if (bingGuardEl) bingGuardEl.checked = !!config.preventBingCNRedirect;
+        const preferIPv6El = document.getElementById('chkPreferIPv6');
+        if (preferIPv6El) preferIPv6El.checked = !!config.preferIPv6;
+        const autoRestartEl = document.getElementById('chkAutoRestartAsAdmin');
+        if (autoRestartEl) autoRestartEl.checked = !!config.autoRestartAsAdmin;
+        const startupEl = document.getElementById('chkStartupEnabled');
+        if (startupEl) startupEl.checked = !!config.startupEnabled;
+        const themeEl = document.getElementById('themeModeSelect');
+        const themeMode = ['light', 'dark', 'system'].includes(config.themeMode) ? config.themeMode : 'system';
+        if (themeEl) themeEl.value = themeMode;
+        applyThemeMode(themeMode);
     } catch(e) {
         showToast('系统设置加载失败', 'warning', 2200);
     }
+}
+
+function applyThemeMode(mode) {
+    const theme = ['light', 'dark', 'system'].includes(mode) ? mode : 'system';
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('wing_theme_mode', theme);
 }
 
 function buildSystemConfigPayload() {
@@ -787,10 +818,45 @@ function buildSystemConfigPayload() {
         return null;
     }
     const bingGuardEl = document.getElementById('chkBingRedirectGuard');
+    const preferIPv6El = document.getElementById('chkPreferIPv6');
+    const autoRestartEl = document.getElementById('chkAutoRestartAsAdmin');
+    const startupEl = document.getElementById('chkStartupEnabled');
+    const themeEl = document.getElementById('themeModeSelect');
     return {
         proxyPort: String(portNum),
-        preventBingCNRedirect: !!bingGuardEl?.checked
+        preventBingCNRedirect: !!bingGuardEl?.checked,
+        preferIPv6: !!preferIPv6El?.checked,
+        autoRestartAsAdmin: !!autoRestartEl?.checked,
+        startupEnabled: !!startupEl?.checked,
+        themeMode: themeEl?.value || 'system'
     };
+}
+
+async function saveSystemConfigOption(successMessage, errorMessage) {
+    const payload = buildSystemConfigPayload();
+    if (!payload) {
+        await loadSystemConfig();
+        return;
+    }
+    applyThemeMode(payload.themeMode);
+    try {
+        const res = await fetch('/api/system_config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            data.ok = false;
+            data.msg = data.msg || '保存失败';
+        }
+        showToast(data.msg || (data.ok === false ? '保存失败' : successMessage), data.ok === false ? 'error' : 'success');
+        await loadSystemConfig();
+        await loadStatus();
+    } catch(e) {
+        showToast(errorMessage, 'error');
+        await loadSystemConfig();
+    }
 }
 
 async function saveProxyPort() {
@@ -817,27 +883,33 @@ async function saveProxyPort() {
 }
 
 async function saveBingRedirectGuard() {
-    const payload = buildSystemConfigPayload();
-    if (!payload) {
-        await loadSystemConfig();
-        return;
-    }
+    await saveSystemConfigOption('Bing 跳转保护已更新', '保存 Bing 跳转保护失败');
+}
+
+async function savePreferIPv6() {
+    await saveSystemConfigOption('IPv6 开关已更新', '保存 IPv6 开关失败');
+}
+
+async function saveAutoRestartAsAdmin() {
+    await saveSystemConfigOption('管理员自动重启设置已更新', '保存管理员自动重启设置失败');
+}
+
+async function saveStartupEnabled() {
+    await saveSystemConfigOption('开机自启动设置已更新', '保存开机自启动设置失败');
+}
+
+async function saveThemeMode(value) {
+    applyThemeMode(value);
+    await saveSystemConfigOption('主题设置已更新', '保存主题设置失败');
+}
+
+async function restartAsAdmin() {
     try {
-        const res = await fetch('/api/system_config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+        const res = await fetch('/api/restart_admin', { method: 'POST' });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-            data.ok = false;
-            data.msg = data.msg || '保存失败';
-        }
-        showToast(data.msg || (data.ok === false ? '保存失败' : 'Bing 跳转保护已更新'), data.ok === false ? 'error' : 'success');
-        await loadSystemConfig();
+        showToast(data.msg || (data.ok === false ? '请求管理员权限失败' : '正在请求管理员权限并重启'), data.ok === false ? 'error' : 'success');
     } catch(e) {
-        showToast('保存 Bing 跳转保护失败', 'error');
-        await loadSystemConfig();
+        showToast('请求管理员权限失败', 'error');
     }
 }
 
@@ -1263,6 +1335,7 @@ function defaultAutoSelectConfig() {
             ids: []
         },
         ignoreTimeout: false,
+        excludedNodeKeys: [],
         rules: [
             { id: 'preset_no_hk', type: 'exclude_keyword', value: '香港', label: '不使用香港的节点' }
         ]
@@ -1321,6 +1394,8 @@ function normalizeAutoSelectConfig() {
     if (!Array.isArray(autoSelectConfig.siteCheck.ids)) autoSelectConfig.siteCheck.ids = [];
     if (!['none', 'any', 'all'].includes(autoSelectConfig.siteCheck.mode)) autoSelectConfig.siteCheck.mode = 'none';
     autoSelectConfig.ignoreTimeout = !!autoSelectConfig.ignoreTimeout;
+    if (!Array.isArray(autoSelectConfig.excludedNodeKeys)) autoSelectConfig.excludedNodeKeys = [];
+    autoSelectConfig.excludedNodeKeys = normalizedStringList(autoSelectConfig.excludedNodeKeys);
     if (!Array.isArray(autoSelectConfig.rules)) autoSelectConfig.rules = [];
 }
 
@@ -1337,6 +1412,18 @@ function normalizedFileList(values) {
     return out;
 }
 
+function normalizedStringList(values) {
+    const out = [];
+    const seen = new Set();
+    (values || []).forEach(value => {
+        const text = String(value || '').trim();
+        if (!text || seen.has(text)) return;
+        seen.add(text);
+        out.push(text);
+    });
+    return out;
+}
+
 function saveAutoSelectConfig(options = {}) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     normalizeAutoSelectConfig();
@@ -1344,7 +1431,8 @@ function saveAutoSelectConfig(options = {}) {
     scheduleAutoSelectConfigSave();
     if (options.timer !== false) scheduleAutoSelectTimer();
     if (options.render !== false) scheduleAutoSelectConfigRender();
-    if (autoSelectConfig.enabled && options.run === true) scheduleAutoSelectRun(700);
+    if (autoSelectConfig.enabled && options.restart === true) requestAutoSelectRestart({ silent: options.silent !== false });
+    else if (autoSelectConfig.enabled && options.run === true) scheduleAutoSelectRun(700);
 }
 
 function scheduleAutoSelectConfigSave() {
@@ -1467,6 +1555,23 @@ function drainAutoSelectQueuedRun(delay = 0) {
     const queued = autoSelectQueuedRun;
     autoSelectQueuedRun = null;
     setTimeout(() => runAutoSelectCycle(queued), delay);
+}
+
+function requestAutoSelectRestart(options = {}) {
+    if (!autoSelectConfig?.enabled && !options.force) return;
+    const queued = {
+        ...options,
+        force: true,
+        silent: options.silent !== false
+    };
+    setAutoSelectNowButtonBusy(true);
+    queueAutoSelectRun(queued);
+    if (autoSelectAbortController) {
+        autoSelectAbortController.abort();
+    }
+    if (!autoSelectRunning) {
+        drainAutoSelectQueuedRun();
+    }
 }
 
 function setAutoSelectNowButtonBusy(isBusy) {
@@ -1630,13 +1735,13 @@ function setAutoSelectEnabled(checked) {
 function setAutoSelectIgnoreTimeout(checked) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.ignoreTimeout = !!checked;
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
 }
 
 function setAutoSelectScope(scope) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.scope = ['all', 'subscription', 'aggregate'].includes(scope) ? scope : 'subscription';
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
 }
 
@@ -1647,7 +1752,7 @@ function toggleAutoSelectSubscription(encodedFileName, checked) {
     if (checked) set.add(fileName);
     else set.delete(fileName);
     autoSelectConfig.subscriptionFiles = Array.from(set);
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
 }
 
 function toggleAutoSelectAggregate(encodedFileName, checked) {
@@ -1657,7 +1762,7 @@ function toggleAutoSelectAggregate(encodedFileName, checked) {
     if (checked) set.add(fileName);
     else set.delete(fileName);
     autoSelectConfig.aggregateFiles = Array.from(set);
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
 }
 
 function normalizeAutoSelectInterval(value) {
@@ -1669,21 +1774,20 @@ function normalizeAutoSelectInterval(value) {
 function setAutoSelectInterval(value) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(value);
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     scheduleAutoSelectTimer();
 }
 
 function setAutoSelectStartupMode(mode) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.startupMode = ['none', 'proxy', 'tun', 'proxy_tun'].includes(mode) ? mode : 'none';
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
-    if (autoSelectConfig.enabled) ensureAutoSelectNetworkMode();
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
 }
 
 function setAutoSelectSiteMode(mode) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.siteCheck.mode = ['none', 'any', 'all'].includes(mode) ? mode : 'none';
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
 }
 
 function setAutoSelectSiteTarget(encodedId, checked) {
@@ -1693,7 +1797,7 @@ function setAutoSelectSiteTarget(encodedId, checked) {
     if (checked) ids.add(id);
     else ids.delete(id);
     autoSelectConfig.siteCheck.ids = Array.from(ids);
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
 }
 
 function addAutoSelectRule() {
@@ -1713,7 +1817,7 @@ function addAutoSelectRule() {
         values: splitAutoSelectValues(value)
     });
     if (input) input.value = '';
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
 }
 
@@ -1807,7 +1911,7 @@ function updateAutoSelectRuleType(encodedId, type) {
     rule.values = [];
     rule.value = '';
     delete rule.label;
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
 }
 
@@ -1820,7 +1924,7 @@ function updateAutoSelectRuleValue(encodedId, value) {
     rule.value = nextValue;
     rule.values = splitAutoSelectValues(value);
     delete rule.label;
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
 }
 
@@ -1835,7 +1939,7 @@ function updateAutoSelectRulePickedValue(encodedId, encodedValue, checked) {
     rule.values = Array.from(values);
     rule.value = rule.values.join(',');
     delete rule.label;
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
 }
 
@@ -1843,7 +1947,7 @@ function deleteAutoSelectRule(encodedId) {
     if (!autoSelectConfig) return;
     const id = decodeAutoSelectParam(encodedId);
     autoSelectConfig.rules = autoSelectConfig.rules.filter(rule => rule.id !== id);
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
 }
 
@@ -1851,7 +1955,7 @@ function clearAutoSelectRules() {
     if (!autoSelectConfig?.rules?.length) return;
     if (!confirm('确定清空所有自动选择规则吗？')) return;
     autoSelectConfig.rules = [];
-    saveAutoSelectConfig({ render: false, run: false, timer: false });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
     showToast('自动选择规则已清空', 'success');
 }
@@ -1951,6 +2055,9 @@ function valuesMatchText(values, text) {
 }
 
 function nodePassesAutoSelectRules(node) {
+    if (autoSelectNodeExcluded(node)) {
+        return false;
+    }
     if (autoSelectConfig?.ignoreTimeout && node.latency === -1) {
         return false;
     }
@@ -1979,6 +2086,51 @@ function nodePassesAutoSelectRules(node) {
                 return true;
         }
     });
+}
+
+function autoSelectNodeKey(node) {
+    return [
+        node?.fileName || '',
+        node?.sourceFile || '',
+        node?.subIndex ?? '',
+        node?.sourceName || '',
+        node?.name || '',
+        node?.type || ''
+    ].join('\u001f');
+}
+
+function autoSelectNodeExcluded(node) {
+    if (!autoSelectConfig?.excludedNodeKeys?.length) return false;
+    return autoSelectConfig.excludedNodeKeys.includes(autoSelectNodeKey(node));
+}
+
+function autoSelectExcludedNodeCount() {
+    return autoSelectConfig?.excludedNodeKeys?.length || 0;
+}
+
+function excludeAutoSelectNode(encodedKey) {
+    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
+    let key = '';
+    try { key = decodeURIComponent(encodedKey || ''); } catch(e) {}
+    const node = (allNodesList || []).find(n => autoSelectNodeKey(n) === key);
+    const name = node?.name || '该节点';
+    if (!key) return;
+    if (!confirm('确定从自动选择候选中删除「' + name + '」吗？\n这不会删除订阅组或聚合组里的原节点。')) return;
+    const excluded = new Set(autoSelectConfig.excludedNodeKeys || []);
+    excluded.add(key);
+    autoSelectConfig.excludedNodeKeys = Array.from(excluded);
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
+    renderAutoNodes();
+    showToast('已从自动选择候选中排除，不影响原节点', 'success');
+}
+
+function clearAutoSelectExcludedNodes() {
+    if (!autoSelectConfig?.excludedNodeKeys?.length) return;
+    if (!confirm('确定恢复所有已排除的自动选择候选节点吗？')) return;
+    autoSelectConfig.excludedNodeKeys = [];
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
+    renderAutoNodes();
+    showToast('已恢复自动选择候选节点', 'success');
 }
 
 function autoSelectCandidates(fileName = '') {
@@ -2125,7 +2277,6 @@ async function runAutoSelectCycle(options = {}) {
     if (autoSelectRunning || switchingNodeIndex !== null) {
         if (options.force) {
             queueAutoSelectRun(options);
-            if (!options.silent) showToast('已收到请求，本轮结束后马上重新选择。', 'info', 1400);
             if (!autoSelectRunning) drainAutoSelectQueuedRun(600);
         } else if (!options.silent) {
             showToast('自动选择正在运行，请稍候。', 'info');
@@ -2212,12 +2363,11 @@ async function ensureAutoSelectNetworkMode() {
 }
 
 async function runAutoSelectNow() {
-    setAutoSelectNowButtonBusy(true);
-    try {
-        await runAutoSelectCycle({ silent: false, force: true });
-    } finally {
-        setAutoSelectNowButtonBusy(autoSelectRunning || !!autoSelectQueuedRun);
+    if (!autoSelectConfig?.enabled) {
+        showToast('请先开启自动选择节点', 'warning');
+        return;
     }
+    requestAutoSelectRestart({ silent: false, force: true });
 }
 
 function scheduleAutoSelectTimer() {
@@ -2496,6 +2646,195 @@ async function copyShareModalText() {
     } catch(e) {
         showToast('复制分享内容失败', 'error');
     }
+}
+
+const helpTopics = {
+    quickStart: {
+        title: '快速开始',
+        summary: '从导入节点到验证可用性，按这个顺序走可以最快确认软件是否工作正常。',
+        body: `
+            <h3>推荐流程</h3>
+            <ol>
+                <li>点击顶部“导入订阅”，粘贴订阅链接、单节点链接或配置内容。</li>
+                <li>在“节点选择”中打开订阅组或聚合组，点击节点卡片或表格中的“选择”。</li>
+                <li>普通浏览器和多数桌面软件可先开启“代理服务”；游戏、命令行、部分不认系统代理的软件建议开启 TUN。</li>
+                <li>先用“极速测速”确认延迟，再用“测试网站”确认目标服务能否访问。</li>
+            </ol>
+            <h3>注意</h3>
+            <ul>
+                <li>系统代理只影响遵循系统代理的软件，TUN 才会接管更多流量。</li>
+                <li>如果订阅刚导入后列表为空，优先检查订阅地址能否正常访问。</li>
+            </ul>
+            <div class="help-topic-links">
+                <a href="https://support.microsoft.com/windows/use-a-proxy-server-in-windows-03096c53-0554-4ffe-b6ab-8b1deee8dae1" target="_blank" rel="noopener">Windows 代理设置</a>
+                <a href="https://sing-box.sagernet.org/configuration/inbound/tun/" target="_blank" rel="noopener">sing-box TUN 文档</a>
+            </div>
+        `
+    },
+    autoSelect: {
+        title: '自动选择',
+        summary: '自动选择会从指定候选范围里重测延迟，再按规则和网站可用性挑出当前最佳节点。',
+        body: `
+            <h3>候选范围</h3>
+            <ul>
+                <li>“全部节点”会从当前所有订阅组和聚合组中选择。</li>
+                <li>“指定订阅组”只从勾选的订阅组里选择。</li>
+                <li>“指定聚合组”只从勾选的聚合组里选择。</li>
+            </ul>
+            <h3>立即选择和删除候选</h3>
+            <ul>
+                <li>点击“立即选择”时，如果上一轮还没结束，软件不会显示排队提示；上一轮结束后会马上重新选择。</li>
+                <li>关闭自动选择开关会中止当前选择任务和后续网站检查。</li>
+                <li>自动节点列表里的“删除”只会把该节点从自动选择候选中排除，不会删除订阅组或聚合组里的原节点。</li>
+            </ul>
+            <h3>网站验证</h3>
+            <ul>
+                <li>网站可用性验证会临时切换候选节点，确认目标网站能访问后再确定最终节点。</li>
+                <li>如果开启“忽略超时节点”，延迟为 Timeout 的节点不会进入候选排序。</li>
+            </ul>
+        `
+    },
+    leakProtection: {
+        title: '防止 DNS / IP 泄露',
+        summary: '泄露通常来自不走系统代理的软件、DNS 没被接管、IPv6 路径绕过或浏览器 WebRTC。',
+        body: `
+            <h3>系统代理与 TUN</h3>
+            <ul>
+                <li>系统代理只对遵循系统代理的软件生效。</li>
+                <li>TUN 会创建虚拟网卡并接管路由，适合游戏、命令行工具和不支持系统代理的软件。</li>
+                <li>TUN 开启后，DNS 查询会通过本地 DNS 入口处理。</li>
+            </ul>
+            <h3>DNS 自动覆写和 IPv6</h3>
+            <ul>
+                <li>DNS 自动覆写会把物理网卡 DNS 指向 127.0.0.2，退出时会尝试恢复。</li>
+                <li>TUN 模式开启时会跳过物理网卡 DNS 自动覆写，由 TUN/DNS 接管。</li>
+                <li>IPv6 开关开启后，节点域名解析和 TUN DNS 会优先使用 IPv6；关闭时限制为 IPv4，减少 IPv6 绕路风险。</li>
+            </ul>
+            <h3>WebRTC</h3>
+            <ul>
+                <li>WebRTC 防泄露会写入 Chrome / Edge 策略，减少浏览器通过实时通信接口暴露真实地址。</li>
+                <li>策略写入后建议重启浏览器，或打开 chrome://policy / edge://policy 刷新策略。</li>
+            </ul>
+            <div class="help-topic-links">
+                <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Connectivity" target="_blank" rel="noopener">MDN WebRTC 连接</a>
+                <a href="https://chromeenterprise.google/policies/#WebRtcIPHandling" target="_blank" rel="noopener">Chrome WebRTC 策略</a>
+                <a href="https://sing-box.sagernet.org/configuration/inbound/tun/" target="_blank" rel="noopener">TUN 入站说明</a>
+            </div>
+        `
+    },
+    dnsRules: {
+        title: 'DNS 规则怎么用',
+        summary: 'DNS 规则只决定域名交给哪台 DNS 服务器解析；真正走代理、直连或拦截，仍由规则分流决定。',
+        body: `
+            <h3>匹配方式</h3>
+            <ul>
+                <li>完整域名：只匹配单个域名，例如 www.example.com。</li>
+                <li>域名后缀：匹配整个站点或区域，例如 cn 可匹配 .cn 域名。</li>
+                <li>域名关键字：匹配包含该关键字的域名，例如 baidu 或 alicdn。</li>
+            </ul>
+            <h3>匹配顺序</h3>
+            <ul>
+                <li>DNS 查询会从上到下匹配 DNS 分流规则。</li>
+                <li>没有命中任何规则时，使用“默认服务器”。</li>
+                <li>DNS 服务器建议写成 IP:端口，例如 8.8.8.8:53 或 223.5.5.5:53。</li>
+            </ul>
+            <h3>常见配置</h3>
+            <ul>
+                <li>国内域名后缀 cn 可用 Aliyun 或 Tencent DNS。</li>
+                <li>baidu、alicdn 等关键字可以分配给国内 DNS。</li>
+                <li>默认服务器可选 Google、Cloudflare、Quad9 等公共 DNS。</li>
+                <li>DNS 自动覆写开启后会把物理网卡 DNS 指向本程序本地 DNS 服务；TUN 开启时会跳过该物理网卡覆写。</li>
+            </ul>
+            <div class="help-topic-links">
+                <a href="https://www.cloudflare.com/learning/dns/what-is-dns/" target="_blank" rel="noopener">Cloudflare DNS 介绍</a>
+                <a href="https://developers.google.com/speed/public-dns/docs/using" target="_blank" rel="noopener">Google Public DNS</a>
+                <a href="https://www.quad9.net/service/service-addresses-and-features/" target="_blank" rel="noopener">Quad9 服务地址</a>
+            </div>
+        `
+    },
+    privacy: {
+        title: '隐私与本地数据',
+        summary: '控制面板监听本机地址，节点和订阅会加密保存；订阅拉取、测速和网站测试会产生必要网络请求。',
+        body: `
+            <h3>本地数据</h3>
+            <ul>
+                <li>控制面板仅监听本机地址，不对局域网开放。</li>
+                <li>节点配置和订阅链接使用本机派生密钥做 AES-GCM 加密存储。</li>
+                <li>DNS 规则、路由规则和使用统计属于本机配置数据，不会主动上传。</li>
+            </ul>
+            <h3>必要网络请求</h3>
+            <ul>
+                <li>导入或更新订阅时，会访问对应订阅地址。</li>
+                <li>延迟测速、带宽测速、网站测试会访问测试目标，这是功能必需行为。</li>
+                <li>订阅服务商能看到订阅拉取请求；目标网站能看到通过当前出口访问的请求。</li>
+            </ul>
+            <div class="help-topic-links">
+                <a href="https://pkg.go.dev/crypto/cipher#NewGCM" target="_blank" rel="noopener">AES-GCM 说明</a>
+                <a href="https://owasp.org/www-project-top-ten/" target="_blank" rel="noopener">OWASP Top 10</a>
+            </div>
+        `
+    },
+    troubleshooting: {
+        title: '常见排查',
+        summary: '优先确认软件是否走系统代理、DNS 是否按预期解析、浏览器策略是否生效。',
+        body: `
+            <h3>软件不走代理</h3>
+            <ul>
+                <li>网页正常但某个软件不走代理时，先确认该软件是否支持系统代理。</li>
+                <li>不支持系统代理的软件，建议开启 TUN。</li>
+            </ul>
+            <h3>DNS 结果异常</h3>
+            <ul>
+                <li>打开“DNS 规则管理”，确认默认服务器和分流规则。</li>
+                <li>如果刚关闭程序后 DNS 仍异常，可以手动检查系统网卡 DNS 是否恢复。</li>
+            </ul>
+            <h3>托盘或桌面窗口</h3>
+            <ul>
+                <li>托盘点击无响应时，确认 wing_ui.exe 已随主程序一起构建，并放在同目录或 flutter_ui 子目录。</li>
+                <li>桌面端首次打开慢，通常是 Flutter UI 进程启动和 WebView 初始化；后续托盘点击会复用已启动窗口。</li>
+            </ul>
+        `
+    },
+    security: {
+        title: '安全建议',
+        summary: '订阅和节点本身就是敏感信息，日常使用里要控制来源、分享范围和公共网络风险。',
+        body: `
+            <h3>订阅来源</h3>
+            <ul>
+                <li>不要导入来源不明的订阅链接。</li>
+                <li>订阅服务商能看到订阅拉取请求，订阅地址也可能包含你的身份标识。</li>
+            </ul>
+            <h3>公共网络</h3>
+            <ul>
+                <li>公共 Wi-Fi 下优先开启 TUN 和 WebRTC 防泄露。</li>
+                <li>如果本机网络支持 IPv6，但代理出口不稳定，可以关闭 IPv6 开关减少绕路。</li>
+            </ul>
+            <h3>分享节点</h3>
+            <ul>
+                <li>只分享必要节点，不要把完整订阅链接发给他人。</li>
+                <li>定期删除不用的节点和订阅，减少本机保存的敏感配置。</li>
+            </ul>
+        `
+    }
+};
+
+function openHelpTopicByKey(event, topicId) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    openHelpTopic(topicId);
+}
+
+function openHelpTopic(topicId) {
+    const topic = helpTopics[topicId];
+    if (!topic) return;
+    document.getElementById('helpTopicTitle').textContent = topic.title;
+    document.getElementById('helpTopicSummary').textContent = topic.summary;
+    document.getElementById('helpTopicBody').innerHTML = topic.body;
+    document.getElementById('helpTopicModal').style.display = 'flex';
+}
+
+function closeHelpTopic() {
+    document.getElementById('helpTopicModal').style.display = 'none';
 }
 
 async function copyText(text) {
