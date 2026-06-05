@@ -13,7 +13,7 @@
     <div class="container">
         <div class="header">
             <div class="brand">
-                <div class="brand-badge">W</div>
+                <div class="brand-badge"><img class="brand-mark" src="logo-mark.png" alt="wing"></div>
                 <div>
                     <h1>wing</h1>
                     <div class="subtitle">Windows 桌面代理客户端 v1.0.2 · 规则分流 / 隧道连接 / Mieru / Naive / AnyTLS</div>
@@ -22,17 +22,33 @@
 
             <div class="status-cluster">
                 <div class="speed-monitor" id="speedMonitor">↑ 0 B/s &nbsp; ↓ 0 B/s</div>
-                <div id="selectedNodeGroupDisplay" class="selected-node-group-display">来源组: --</div>
-                <div id="selectedNodeDisplay" class="selected-node-display">当前节点: 正在加载...</div>
-            </div>
-
-            <div class="header-actions">
-                <button class="btn-success" onclick="openAddModal()">添加节点</button>
-                <button class="btn-primary" id="btnFreeTraffic" onclick="useFreeTraffic()">获取免费流量</button>
-                <button class="btn-ghost" id="btnImport" onclick="importSubscription()">导入订阅</button>
-                <button class="btn-primary" id="btnTestAll" onclick="testAll()">极速测速</button>
             </div>
         </div>
+
+        <section class="connection-stage">
+            <div class="connection-card" id="connectionCard">
+                <div class="connection-orb" id="connectionOrb"><img src="logo-mark.png" alt=""></div>
+                <div class="connection-copy">
+                    <div id="selectedNodeGroupDisplay" class="selected-node-group-display">来源组: --</div>
+                    <div id="selectedNodeDisplay" class="selected-node-display">当前节点: 正在加载...</div>
+                    <div id="statusModeLabel" class="status-mode-label">直连 / 未开启</div>
+                </div>
+                <div class="proxy-mode-strip">
+                    <button class="proxy-mode-button" data-preset="direct" onclick="activateProxyPreset('direct')" title="关闭系统代理与 TUN，并使用直连" aria-label="直连">
+                        <img src="logo-mark.png" alt=""><span>直</span>
+                    </button>
+                    <button class="proxy-mode-button" data-preset="proxy" onclick="activateProxyPreset('proxy')" title="只开启系统代理" aria-label="系统代理">
+                        <img src="logo-mark.png" alt=""><span>P</span>
+                    </button>
+                    <button class="proxy-mode-button" data-preset="tun" onclick="activateProxyPreset('tun')" title="只开启 TUN 隧道" aria-label="TUN">
+                        <img src="logo-mark.png" alt=""><span>T</span>
+                    </button>
+                    <button class="proxy-mode-button" data-preset="proxy_tun" onclick="activateProxyPreset('proxy_tun')" title="同时开启系统代理与 TUN" aria-label="系统代理和 TUN">
+                        <img src="logo-mark.png" alt=""><span>PT</span>
+                    </button>
+                </div>
+            </div>
+        </section>
 
         <div class="tabs">
             <button class="tab-btn active" onclick="showTab('nodes')">节点选择</button>
@@ -58,6 +74,7 @@
                                 <select id="supplierSelect" onchange="switchSupplier(this.value)" style="display:none;"></select>
                                 <select id="aggregateSelect" onchange="switchAggregateGroup(this.value)" style="display:none;"></select>
                                 <button class="btn-update icon-button" id="btnUpdate" onclick="updateSupplier()" title="更新全部订阅">↻</button>
+                                <button class="btn-primary" id="btnTestAll" onclick="testAll()">极速测速</button>
                                 <button class="btn-ghost direct-button" id="btnDirect" onclick="selectDirect()" title="不选择节点，所有代理入口改为直连">直连</button>
                             </div>
                         </div>
@@ -278,6 +295,14 @@
                 </section>
 
                 <section class="help-grid">
+                    <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('projectIntro')" onkeydown="openHelpTopicByKey(event, 'projectIntro')">
+                        <div class="help-card-title">
+                            <h3>项目介绍</h3>
+                            <span>查看详情</span>
+                        </div>
+                        <p>wing 的定位、核心能力、桌面/移动端形态和技术栈说明。</p>
+                    </article>
+
                     <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('quickStart')" onkeydown="openHelpTopicByKey(event, 'quickStart')">
                         <div class="help-card-title">
                             <h3>快速开始</h3>
@@ -421,6 +446,22 @@
 
                 <!-- Right Column: Advanced Configuration Management Tools -->
                 <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg); display: flex; flex-direction: column; gap: 16px;">
+                    <h4 style="margin: 0; font-size: 14px; color: var(--accent); display: flex; align-items: center; gap: 6px;">入口操作</h4>
+                    <div class="system-action-deck">
+                        <button class="system-action-card import" id="btnImport" onclick="importSubscription()">
+                            <span>导入订阅</span>
+                            <small>粘贴订阅链接或节点链接</small>
+                        </button>
+                        <button class="system-action-card add" onclick="openAddModal()">
+                            <span>添加节点</span>
+                            <small>手动添加单节点</small>
+                        </button>
+                        <button class="system-action-card free" id="btnFreeTraffic" onclick="useFreeTraffic()">
+                            <span>免费流量</span>
+                            <small>临时试用可用出口</small>
+                        </button>
+                    </div>
+
                     <h4 style="margin: 0; font-size: 14px; color: var(--accent); display: flex; align-items: center; gap: 6px;">🛠️ 高级网络管理工具</h4>
                     <div style="display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 6px;">
                         <button class="btn-primary" onclick="openRuleModal()" style="height: 48px; border-radius: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; cursor: pointer;">
@@ -440,16 +481,7 @@
 
         <div class="footer">
             <div class="footer-brand">wing v1.0.2</div>
-            <p>基于 Flutter + Go 的代理客户端，集成 sing-box、Mieru Client 与本地控制面板，支持订阅管理、节点测速、自动选点、规则分流、隧道连接、DNS 分流与命令行进程规则。</p>
-            <div class="tech-tags">
-                <span class="tech-tag">sing-box Core</span>
-                <span class="tech-tag">Mieru Engine</span>
-                <span class="tech-tag">Command Routing</span>
-                <span class="tech-tag">Flutter Desktop</span>
-                <span class="tech-tag">Flutter Mobile</span>
-                <span class="tech-tag">Go Standard Library</span>
-            </div>
-            <p>Created with ❤️ by <a href="https://github.com/Ethan-Wanng" target="_blank">Ethan-Wanng</a></p>
+            <p>项目介绍已移动到帮助中心。</p>
         </div>
     </div>
 

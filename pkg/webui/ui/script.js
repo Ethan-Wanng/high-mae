@@ -235,8 +235,44 @@ async function loadStatus() {
         document.getElementById('chkTun').checked = st.tun;
         document.getElementById('chkWebRTC').checked = st.webrtc;
         document.getElementById('speedMonitor').innerHTML = '↑ ' + st.speedOut + ' &nbsp; ↓ ' + st.speedIn;
+        updateConnectionState(st);
         renderFreeTrafficState(st.freeTraffic);
+        updateConnectionNodeSummary();
     } catch(e) {}
+}
+
+function updateConnectionState(status = {}) {
+    const proxyOn = !!status.proxy;
+    const tunOn = !!status.tun;
+    let state = 'direct';
+    let label = '直连 / 未开启';
+    if (proxyOn && tunOn) {
+        state = 'proxy_tun';
+        label = '系统代理 + TUN';
+    } else if (proxyOn) {
+        state = 'proxy';
+        label = '系统代理已开启';
+    } else if (tunOn) {
+        state = 'tun';
+        label = 'TUN 隧道已开启';
+    }
+    document.body.dataset.networkState = state;
+    const card = document.getElementById('connectionCard');
+    if (card) card.dataset.state = state;
+    const labelEl = document.getElementById('statusModeLabel');
+    if (labelEl) labelEl.textContent = label;
+    document.querySelectorAll('.proxy-mode-button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.preset === state);
+    });
+}
+
+function updateConnectionNodeSummary() {
+    const activeNode = allNodesList.find(n => n.active);
+    const nodeDisplayEl = document.getElementById('selectedNodeDisplay');
+    if (nodeDisplayEl) {
+        nodeDisplayEl.textContent = activeNode ? activeNode.name : (freeTrafficState?.active ? '免费流量' : '直连 (Direct)');
+    }
+    renderSelectedNodeGroup(activeNode);
 }
 
 function showTab(tabId) {
@@ -322,32 +358,38 @@ function renderNodes() {
     const groupList = groups.filter(g => !keyword || g.name.toLowerCase().includes(keyword) || (selectedGroup && g.fileName === selectedGroup.fileName));
 
     grid.innerHTML = `
-        <aside class="node-group-sidebar">
-            <div class="node-group-sidebar-title">${nodeGroupMode === "aggregate" ? "聚合组" : "订阅组"}</div>
-            <div class="node-group-list"></div>
-        </aside>
-        <section class="node-detail-pane">
-            <div class="node-detail-header">
+        <section class="node-card-table">
+            <div class="node-card-table-header">
                 <div>
-                    <div class="node-detail-title">${selectedGroup ? escapeHTML(selectedGroup.name) : "未展开组"}</div>
-                    <div class="node-detail-subtitle">${selectedGroup ? `${selectedNodes.length} 个节点${keyword ? "匹配当前搜索" : ""}` : "点击左侧组名查看节点，再点一次收起"}</div>
+                    <div class="node-card-table-title">${nodeGroupMode === "aggregate" ? "聚合组牌推" : "订阅组牌推"}</div>
+                    <div class="node-card-table-subtitle">${groupList.length} 张来源牌${keyword ? " · 已按搜索过滤" : ""}</div>
                 </div>
-                <div class="node-detail-actions">${renderSelectedGroupActions(selectedGroup)}</div>
+                <div class="node-card-table-actions">${selectedGroup ? renderSelectedGroupActions(selectedGroup) : ''}</div>
             </div>
-            <div class="node-detail-body"></div>
+            <div class="source-card-deck"></div>
+            <div class="node-deck-window">
+                <div class="node-detail-header">
+                    <div>
+                        <div class="node-detail-title">${selectedGroup ? escapeHTML(selectedGroup.name) : "未展开组"}</div>
+                        <div class="node-detail-subtitle">${selectedGroup ? `${selectedNodes.length} 个节点${keyword ? "匹配当前搜索" : ""}` : "点击上方来源牌展开节点"}</div>
+                    </div>
+                </div>
+                <div class="node-detail-body"></div>
+            </div>
         </section>
     `;
 
-    const list = grid.querySelector('.node-group-list');
+    const list = grid.querySelector('.source-card-deck');
     groupList.forEach(group => {
         const item = document.createElement('button');
         const isSelected = selectedGroup && group.fileName === selectedGroup.fileName;
         const showActive = !autoSelectConfig?.enabled && group.active;
-        item.className = `node-group-item ${isSelected ? 'selected' : ''} ${showActive ? 'active' : ''}`;
+        item.className = `source-push-card ${isSelected ? 'selected' : ''} ${showActive ? 'active' : ''}`;
         item.onclick = () => selectNodeGroup(group.fileName);
         item.innerHTML = `
+            <span class="source-card-shine"></span>
             <span class="node-group-name">${escapeHTML(group.name)}</span>
-            <span class="node-group-meta">${showActive ? '当前' : ''}${group.count ? ` · ${group.count}` : ''}</span>
+            <span class="node-group-meta">${showActive ? '当前 · ' : ''}${group.count || 0} 节点</span>
         `;
         list.appendChild(item);
     });
@@ -427,22 +469,8 @@ function renderSelectedGroupActions(group) {
 }
 
 function renderNodeTable(nodes, options = {}) {
-    const table = document.createElement('table');
-    table.className = 'win-explorer-table';
-    table.innerHTML = `
-        <thead>
-            <tr>
-                <th style="width: 50px; text-align: center;">状态</th>
-                <th>节点名称</th>
-                <th style="width: 100px;">协议类型</th>
-                <th style="width: 100px; text-align: right;">延迟</th>
-                <th style="width: 120px; text-align: right;">带宽</th>
-                <th style="width: 280px; text-align: center;">操作</th>
-            </tr>
-        </thead>
-        <tbody></tbody>
-    `;
-    const tbody = table.querySelector('tbody');
+    const deck = document.createElement('div');
+    deck.className = 'node-hand';
     nodes.forEach(n => {
         let latClass = 'unknown';
         let latText = '-- ms';
@@ -466,30 +494,45 @@ function renderNodeTable(nodes, options = {}) {
             speedText = '失败';
         }
 
-        const tr = document.createElement('tr');
-        if (n.active) tr.className = 'active';
-        tr.ondblclick = () => switchNode(n.index);
+        const card = document.createElement('article');
+        card.className = `node-play-card ${n.active ? 'active' : ''}`;
+        card.onclick = event => toggleNodeCard(n.index, event);
+        card.ondblclick = () => switchNode(n.index);
         const removeAction = options.autoSelect
-            ? `<button class="btn-action btn-action-danger" onclick="excludeAutoSelectNode('${encodeURIComponent(autoSelectNodeKey(n))}')">删除</button>`
-            : `<button class="btn-action btn-action-danger" onclick="deleteNode(${n.index})">删除</button>`;
+            ? `<button class="btn-action btn-action-danger" onclick="event.stopPropagation(); excludeAutoSelectNode('${encodeURIComponent(autoSelectNodeKey(n))}')">删除</button>`
+            : `<button class="btn-action btn-action-danger" onclick="event.stopPropagation(); deleteNode(${n.index})">删除</button>`;
         const removeTitle = options.autoSelect ? '从自动选择候选中排除，不删除原订阅或聚合组节点' : '删除节点';
-        tr.innerHTML = `
-            <td class="status-cell"><span class="status-dot ${n.active ? 'active' : ''}"></span></td>
-            <td class="node-name-cell">${escapeHTML(n.name || '')}</td>
-            <td><span class="node-type">${escapeHTML(n.type || '')}</span></td>
-            <td style="text-align: right;" class="latency ${latClass}" id="lat-${n.index}">${latText}</td>
-            <td style="text-align: right;" class="latency ${speedClass}" id="speed-${n.index}">↓ ${speedText}</td>
-            <td class="node-actions-cell">
-                <button class="btn-action ${n.active ? 'btn-action-primary' : ''}" ${switchingNodeIndex !== null ? 'disabled' : ''} onclick="switchNode(${n.index})">${switchingNodeIndex === n.index ? '切换中' : (n.active ? '已选择' : '选择')}</button>
-                <button class="btn-action" onclick="testSingle(${n.index})">延迟</button>
-                <button class="btn-action" onclick="testSpeed(${n.index})">带宽</button>
-                <button class="btn-action" onclick="shareNode(${n.index})">分享</button>
+        card.innerHTML = `
+            <div class="node-card-face">
+                <span class="status-dot ${n.active ? 'active' : ''}"></span>
+                <div class="node-card-main">
+                    <div class="node-name-cell">${escapeHTML(n.name || '')}</div>
+                    <div class="node-card-meta">
+                        <span class="node-type">${escapeHTML(n.type || '')}</span>
+                        <span class="latency ${latClass}" id="lat-${n.index}">${latText}</span>
+                        <span class="latency ${speedClass}" id="speed-${n.index}">↓ ${speedText}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="node-card-peek">
+                <button class="btn-action ${n.active ? 'btn-action-primary' : ''}" ${switchingNodeIndex !== null ? 'disabled' : ''} onclick="event.stopPropagation(); switchNode(${n.index})">${switchingNodeIndex === n.index ? '切换中' : (n.active ? '已选择' : '选择')}</button>
+                <button class="btn-action" onclick="event.stopPropagation(); testSingle(${n.index})">延迟</button>
+                <button class="btn-action" onclick="event.stopPropagation(); testSpeed(${n.index})">带宽</button>
+                <button class="btn-action" onclick="event.stopPropagation(); shareNode(${n.index})">分享</button>
                 <span title="${removeTitle}">${removeAction}</span>
-            </td>
+            </div>
         `;
-        tbody.appendChild(tr);
+        deck.appendChild(card);
     });
-    return table;
+    return deck;
+}
+
+function toggleNodeCard(index, event) {
+    const source = event?.target instanceof Element ? event.target : null;
+    if (source?.closest('button')) return;
+    const card = source?.closest('.node-play-card');
+    if (!card) return;
+    card.classList.toggle('revealed');
 }
 
 async function selectNodeGroup(fileName) {
@@ -754,7 +797,7 @@ async function doAction(type) {
     if (pendingActions.has(type)) {
         showToast('正在切换中，请稍候。', 'info', 1600);
         loadStatus();
-        return;
+        return null;
     }
     pendingActions.add(type);
     const controller = new AbortController();
@@ -771,6 +814,7 @@ async function doAction(type) {
                 await restartAsAdmin();
             }
         }
+        return data;
     } catch(e) {}
     finally {
         clearTimeout(timeout);
@@ -778,6 +822,26 @@ async function doAction(type) {
         setTimeout(loadStatus, 300);
         if (type === 'tun' || type === 'tunnel') setTimeout(loadStatus, 2500);
     }
+    return null;
+}
+
+async function activateProxyPreset(preset) {
+    const proxyOn = !!document.getElementById('chkProxy')?.checked;
+    const tunOn = !!document.getElementById('chkTun')?.checked;
+    const wantProxy = preset === 'proxy' || preset === 'proxy_tun';
+    const wantTun = preset === 'tun' || preset === 'proxy_tun';
+    if (preset === 'direct') {
+        await selectDirect();
+    }
+    if (proxyOn !== wantProxy) {
+        await doAction('proxy');
+        await sleep(250);
+    }
+    if (tunOn !== wantTun) {
+        await doAction('tun');
+    }
+    setTimeout(loadStatus, 350);
+    setTimeout(loadStatus, 1800);
 }
 
 async function loadSystemConfig() {
@@ -918,14 +982,7 @@ async function loadNodes() {
         const res = await fetch('/api/nodes');
         const nodes = await res.json();
         allNodesList = nodes || [];
-        
-        const activeNode = allNodesList.find(n => n.active);
-        const nodeDisplayEl = document.getElementById('selectedNodeDisplay');
-        if (nodeDisplayEl) {
-            nodeDisplayEl.textContent = activeNode ? `当前节点: ${activeNode.name}` : (freeTrafficState?.active ? '当前节点: 免费流量' : '当前节点: 直连 (Direct)');
-        }
-        renderSelectedNodeGroup(activeNode);
-        
+        updateConnectionNodeSummary();
         renderNodes();
     } catch(e) {}
 }
@@ -940,12 +997,12 @@ function renderSelectedNodeGroup(activeNode) {
             ? supplierNameByFile(activeNode.sourceFile)
             : '';
         groupEl.textContent = sourceName
-            ? `来源组: ${groupType} / ${activeNode.group || '--'} · 原订阅 ${sourceName}`
-            : `来源组: ${groupType} / ${activeNode.group || '--'}`;
+            ? `${groupType} / ${activeNode.group || '--'} · 原订阅 ${sourceName}`
+            : `${groupType} / ${activeNode.group || '--'}`;
     } else if (freeTrafficState?.active) {
-        groupEl.textContent = '来源组: 免费流量';
+        groupEl.textContent = '免费流量';
     } else {
-        groupEl.textContent = '来源组: 直连';
+        groupEl.textContent = '直连';
     }
 }
 
@@ -2649,6 +2706,37 @@ async function copyShareModalText() {
 }
 
 const helpTopics = {
+    projectIntro: {
+        title: '项目介绍',
+        summary: 'wing 是 Flutter + Go 构建的跨平台代理客户端，核心目标是把节点选择、分流、TUN 和 DNS 管理收进一个轻量控制面板。',
+        body: `
+            <h3>wing 是什么</h3>
+            <ul>
+                <li>wing 使用 Go 后端常驻本机，负责代理入口、节点存储、测速、规则分流、DNS、TUN 和系统托盘。</li>
+                <li>桌面端使用 Flutter WebView 承载本机控制面板，移动端使用 Flutter WebView 访问本机、模拟器或局域网控制面板。</li>
+                <li>控制面板默认只监听 127.0.0.1:10809，不对外网暴露。</li>
+            </ul>
+            <h3>核心能力</h3>
+            <ul>
+                <li>支持导入订阅、手动添加节点、订阅组、聚合组、免费流量和自动选择。</li>
+                <li>支持系统代理、TUN 隧道、规则分流、命令行进程规则、DNS 分流、DNS 自动覆写和 WebRTC 防泄露。</li>
+                <li>支持延迟测速、带宽测速和常用网站可用性测试。</li>
+            </ul>
+            <h3>技术栈</h3>
+            <ul>
+                <li>桌面与移动壳：Flutter。</li>
+                <li>后端与托盘：Go、net/http、getlantern/systray。</li>
+                <li>代理与隧道：sing-box、Mieru Client、Wintun 等项目内适配层。</li>
+                <li>本地存储：bbolt 与 AES-GCM 安全存储封装。</li>
+            </ul>
+            <div class="help-topic-links">
+                <a href="https://flutter.dev/multi-platform/desktop" target="_blank" rel="noopener">Flutter Desktop</a>
+                <a href="https://go.dev/doc/" target="_blank" rel="noopener">Go 文档</a>
+                <a href="https://sing-box.sagernet.org/" target="_blank" rel="noopener">sing-box 文档</a>
+                <a href="https://github.com/enfein/mieru" target="_blank" rel="noopener">Mieru 项目</a>
+            </div>
+        `
+    },
     quickStart: {
         title: '快速开始',
         summary: '从导入节点到验证可用性，按这个顺序走可以最快确认软件是否工作正常。',

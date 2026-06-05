@@ -1,4 +1,6 @@
-# wing
+<p align="center">
+  <img src="assets/logo-mark.png" width="132" alt="">
+</p>
 
 wing 是一款基于 Flutter + Go 的代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，提供节点订阅、测速、网站可用性测试、自动选点、规则分流、隧道连接、DNS 分流、WebRTC 防泄漏和命令行进程规则等能力。
 

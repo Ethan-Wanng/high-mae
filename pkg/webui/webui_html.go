@@ -15,6 +15,9 @@ var styleCSS string
 //go:embed ui/script.js
 var scriptJS string
 
+//go:embed ui/logo-mark.png
+var logoMarkPNG []byte
+
 func setWebUISecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -38,4 +41,10 @@ func serveJS(w http.ResponseWriter, r *http.Request) {
 	setWebUISecurityHeaders(w)
 	w.Header().Set("Content-Type", "application/javascript")
 	io.WriteString(w, scriptJS)
+}
+
+func serveLogoMark(w http.ResponseWriter, r *http.Request) {
+	setWebUISecurityHeaders(w)
+	w.Header().Set("Content-Type", "image/png")
+	w.Write(logoMarkPNG)
 }

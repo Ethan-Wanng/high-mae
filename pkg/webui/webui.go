@@ -112,6 +112,7 @@ func buildWebUIMux() *http.ServeMux {
 	mux.HandleFunc("/", serveHTML)
 	mux.HandleFunc("/style.css", serveCSS)
 	mux.HandleFunc("/script.js", serveJS)
+	mux.HandleFunc("/logo-mark.png", serveLogoMark)
 	api("/api/nodes", getNodes)
 	api("/api/switch", switchNodeHandler)
 	api("/api/direct", directNodeHandler)
