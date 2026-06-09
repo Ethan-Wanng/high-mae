@@ -7,9 +7,11 @@ let ruleGroups = [];
 let cmdRules = [];
 let currentRuleGroupIndex = 0;
 let activeTab = "nodes";
+let bottomTabsCollapsed = false;
 let lastDashboardPoll = 0;
 let nodeGroupMode = "subscription";
 let selectedNodeGroupFile = "";
+let nodeGroupManualCollapsed = false;
 let switchingNodeIndex = null;
 let pendingActions = new Set();
 let freeTrafficState = null;
@@ -27,6 +29,10 @@ let autoSelectEventsBound = false;
 let autoSelectQueuedRun = null;
 let autoSelectAbortController = null;
 let autoSelectRunSeq = 0;
+let autoSelectRuleChangeRestartTimer = null;
+let nodeGroupAnimationSeq = 0;
+let autoSelectEditingRuleId = "";
+let autoSelectLastDrawnRuleId = "";
 
 applyThemeMode(localStorage.getItem('wing_theme_mode') || 'system');
 let shareQRCodeURL = "";
@@ -194,6 +200,88 @@ function syncCustomSelect(select) {
     }, 0);
 }
 
+function initDesktopWheelDamping() {
+    if (window.__wingWheelDampingReady) return;
+    window.__wingWheelDampingReady = true;
+
+    const finePointer = window.matchMedia?.('(pointer: fine)').matches ?? true;
+    if (!finePointer) return;
+
+    const wheelScale = 0.42;
+    const trackpadThreshold = 48;
+    const lineHeight = 16;
+
+    const normalizeWheelDelta = event => {
+        if (event.deltaMode === 1) {
+            return { x: event.deltaX * lineHeight, y: event.deltaY * lineHeight };
+        }
+        if (event.deltaMode === 2) {
+            const pageStep = Math.max(window.innerHeight * 0.85, 320);
+            return { x: event.deltaX * pageStep, y: event.deltaY * pageStep };
+        }
+        return { x: event.deltaX, y: event.deltaY };
+    };
+
+    const canScroll = (element, axis, delta) => {
+        if (!element) return false;
+        const isRoot = element === document.scrollingElement || element === document.documentElement || element === document.body;
+        if (!isRoot) {
+            const style = getComputedStyle(element);
+            const overflow = axis === 'y' ? style.overflowY : style.overflowX;
+            if (!/(auto|scroll|overlay)/.test(overflow)) return false;
+        }
+
+        const maxScroll = axis === 'y'
+            ? element.scrollHeight - element.clientHeight
+            : element.scrollWidth - element.clientWidth;
+        if (maxScroll <= 1) return false;
+
+        const current = axis === 'y' ? element.scrollTop : element.scrollLeft;
+        if (delta < 0) return current > 0;
+        if (delta > 0) return current < maxScroll - 1;
+        return true;
+    };
+
+    const findScrollTarget = (start, axis, delta) => {
+        let element = start;
+        while (element && element !== document.body) {
+            if (canScroll(element, axis, delta)) return element;
+            element = element.parentElement;
+        }
+
+        const root = document.scrollingElement || document.documentElement;
+        return canScroll(root, axis, delta) ? root : null;
+    };
+
+    document.addEventListener('wheel', event => {
+        if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) return;
+        if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
+
+        const delta = normalizeWheelDelta(event);
+        const largestDelta = Math.max(Math.abs(delta.x), Math.abs(delta.y));
+        if (event.deltaMode === 0 && largestDelta < trackpadThreshold) return;
+
+        const horizontalIntent = event.shiftKey || Math.abs(delta.x) > Math.abs(delta.y);
+        const axis = horizontalIntent ? 'x' : 'y';
+        const amount = axis === 'x'
+            ? (delta.x || delta.y) * wheelScale
+            : delta.y * wheelScale;
+        if (Math.abs(amount) < 1) return;
+
+        const scrollTarget = findScrollTarget(target, axis, amount);
+        if (!scrollTarget) return;
+
+        event.preventDefault();
+        if (axis === 'x') {
+            scrollTarget.scrollBy({ left: amount, behavior: 'auto' });
+        } else {
+            scrollTarget.scrollBy({ top: amount, behavior: 'auto' });
+        }
+    }, { passive: false });
+}
+
 function toggleCustomSelect(wrapper) {
     if (!wrapper || wrapper.classList.contains('disabled')) return;
     const isOpen = wrapper.classList.contains('open');
@@ -275,12 +363,35 @@ function updateConnectionNodeSummary() {
     renderSelectedNodeGroup(activeNode);
 }
 
+function handleBottomTabClick(tabId) {
+    if (activeTab === tabId && !bottomTabsCollapsed) {
+        collapseBottomTabs();
+        return;
+    }
+    showTab(tabId);
+}
+
+function collapseBottomTabs() {
+    bottomTabsCollapsed = true;
+    document.body.classList.add('tabs-collapsed');
+    document.querySelector('.tabs')?.setAttribute('aria-hidden', 'true');
+    document.getElementById('tabsExpandButton')?.setAttribute('aria-expanded', 'false');
+}
+
+function expandBottomTabs() {
+    bottomTabsCollapsed = false;
+    document.body.classList.remove('tabs-collapsed');
+    document.querySelector('.tabs')?.removeAttribute('aria-hidden');
+    document.getElementById('tabsExpandButton')?.setAttribute('aria-expanded', 'true');
+}
+
 function showTab(tabId) {
+    expandBottomTabs();
     activeTab = tabId;
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
     
-    const activeBtn = document.querySelector(`.tab-btn[onclick="showTab('${tabId}')"]`);
+    const activeBtn = document.querySelector(`.tab-btn[onclick="handleBottomTabClick('${tabId}')"]`);
     if (activeBtn) activeBtn.classList.add('active');
     
     const activeContent = document.getElementById(`tab-${tabId}`);
@@ -294,13 +405,14 @@ function showTab(tabId) {
 function setNodeGroupMode(mode) {
     nodeGroupMode = ["subscription", "aggregate", "auto", "auto_nodes"].includes(mode) ? mode : "subscription";
     if (nodeGroupMode !== "auto") selectedNodeGroupFile = "";
+    nodeGroupManualCollapsed = false;
     document.querySelectorAll('.node-source-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === nodeGroupMode);
     });
     renderNodes();
 }
 
-function renderNodes() {
+function renderNodes(options = {}) {
     const grid = document.getElementById('nodeGrid');
     const autoPane = document.getElementById('autoSelectNodePane');
     if (!grid) return;
@@ -340,7 +452,7 @@ function renderNodes() {
         }));
 
     const activeGroup = groups.find(g => g.active);
-    if (!selectedNodeGroupFile && activeGroup) {
+    if (!selectedNodeGroupFile && activeGroup && !nodeGroupManualCollapsed) {
         selectedNodeGroupFile = activeGroup.fileName;
     }
     const selectedGroup = groups.find(g => g.fileName === selectedNodeGroupFile);
@@ -385,6 +497,7 @@ function renderNodes() {
         const isSelected = selectedGroup && group.fileName === selectedGroup.fileName;
         const showActive = !autoSelectConfig?.enabled && group.active;
         item.className = `source-push-card ${isSelected ? 'selected' : ''} ${showActive ? 'active' : ''}`;
+        item.dataset.fileName = group.fileName;
         item.onclick = () => selectNodeGroup(group.fileName);
         item.innerHTML = `
             <span class="source-card-shine"></span>
@@ -396,14 +509,14 @@ function renderNodes() {
 
     const body = grid.querySelector('.node-detail-body');
     if (!selectedGroup) {
-        body.innerHTML = '<div class="empty-state">点击左侧组名称展开节点列表。</div>';
+        body.innerHTML = '<div class="empty-state">点击上方来源牌展开节点列表。</div>';
         return;
     }
     if (!selectedNodes.length) {
         body.innerHTML = '<div class="empty-state">没有匹配的节点。</div>';
         return;
     }
-    body.appendChild(renderNodeTable(selectedNodes));
+    body.appendChild(renderNodeTable(selectedNodes, { animateDeal: !!options.animateDeck }));
 }
 
 function renderAutoNodes() {
@@ -471,7 +584,9 @@ function renderSelectedGroupActions(group) {
 function renderNodeTable(nodes, options = {}) {
     const deck = document.createElement('div');
     deck.className = 'node-hand';
-    nodes.forEach(n => {
+    if (options.autoSelect) deck.classList.add('node-hand-auto');
+    if (options.animateDeal) deck.classList.add('node-hand-dealing');
+    nodes.forEach((n, index) => {
         let latClass = 'unknown';
         let latText = '-- ms';
         if (n.latency > 0 && n.latency < 500) {
@@ -496,35 +611,57 @@ function renderNodeTable(nodes, options = {}) {
 
         const card = document.createElement('article');
         card.className = `node-play-card ${n.active ? 'active' : ''}`;
+        card.style.setProperty('--deal-index', String(Math.min(index, 18)));
         card.onclick = event => toggleNodeCard(n.index, event);
         card.ondblclick = () => switchNode(n.index);
         const removeAction = options.autoSelect
             ? `<button class="btn-action btn-action-danger" onclick="event.stopPropagation(); excludeAutoSelectNode('${encodeURIComponent(autoSelectNodeKey(n))}')">删除</button>`
             : `<button class="btn-action btn-action-danger" onclick="event.stopPropagation(); deleteNode(${n.index})">删除</button>`;
         const removeTitle = options.autoSelect ? '从自动选择候选中排除，不删除原订阅或聚合组节点' : '删除节点';
+        const cardRank = escapeHTML((n.type || 'N').slice(0, 2).toUpperCase());
         card.innerHTML = `
-            <div class="node-card-face">
-                <span class="status-dot ${n.active ? 'active' : ''}"></span>
-                <div class="node-card-main">
-                    <div class="node-name-cell">${escapeHTML(n.name || '')}</div>
-                    <div class="node-card-meta">
-                        <span class="node-type">${escapeHTML(n.type || '')}</span>
-                        <span class="latency ${latClass}" id="lat-${n.index}">${latText}</span>
-                        <span class="latency ${speedClass}" id="speed-${n.index}">↓ ${speedText}</span>
+            <div class="node-card-back" aria-hidden="true">
+                <img src="logo-mark.png" alt="">
+                <span>wing</span>
+            </div>
+            <div class="node-card-front">
+                <div class="node-card-corner top-left">
+                    <strong>${cardRank}</strong>
+                    <span>${n.active ? 'PLAY' : 'NODE'}</span>
+                </div>
+                <div class="node-card-corner bottom-right">
+                    <strong>${cardRank}</strong>
+                    <span>${n.active ? 'PLAY' : 'NODE'}</span>
+                </div>
+                <div class="node-card-face">
+                    <img class="node-card-mark" src="logo-mark.png" alt="" aria-hidden="true">
+                    <span class="status-dot ${n.active ? 'active' : ''}"></span>
+                    <div class="node-card-main">
+                        <div class="node-name-cell">${escapeHTML(n.name || '')}</div>
+                        <div class="node-card-meta">
+                            <span class="node-type">${escapeHTML(n.type || '')}</span>
+                            <span class="latency ${latClass}" id="lat-${n.index}">${latText}</span>
+                            <span class="latency ${speedClass}" id="speed-${n.index}">↓ ${speedText}</span>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="node-card-peek">
-                <button class="btn-action ${n.active ? 'btn-action-primary' : ''}" ${switchingNodeIndex !== null ? 'disabled' : ''} onclick="event.stopPropagation(); switchNode(${n.index})">${switchingNodeIndex === n.index ? '切换中' : (n.active ? '已选择' : '选择')}</button>
-                <button class="btn-action" onclick="event.stopPropagation(); testSingle(${n.index})">延迟</button>
-                <button class="btn-action" onclick="event.stopPropagation(); testSpeed(${n.index})">带宽</button>
-                <button class="btn-action" onclick="event.stopPropagation(); shareNode(${n.index})">分享</button>
-                <span title="${removeTitle}">${removeAction}</span>
+                <div class="node-card-peek">
+                    <button class="btn-action ${n.active ? 'btn-action-primary' : ''}" ${switchingNodeIndex !== null ? 'disabled' : ''} onclick="event.stopPropagation(); switchNode(${n.index})">${switchingNodeIndex === n.index ? '切换中' : (n.active ? '已选择' : '选择')}</button>
+                    <button class="btn-action" onclick="event.stopPropagation(); testSingle(${n.index})">延迟</button>
+                    <button class="btn-action" onclick="event.stopPropagation(); testSpeed(${n.index})">带宽</button>
+                    <button class="btn-action" onclick="event.stopPropagation(); shareNode(${n.index})">分享</button>
+                    <span title="${removeTitle}">${removeAction}</span>
+                </div>
             </div>
         `;
         deck.appendChild(card);
     });
     return deck;
+}
+
+function findSourceCardByFileName(fileName) {
+    return Array.from(document.querySelectorAll('.source-push-card'))
+        .find(card => card.dataset.fileName === fileName) || null;
 }
 
 function toggleNodeCard(index, event) {
@@ -536,14 +673,29 @@ function toggleNodeCard(index, event) {
 }
 
 async function selectNodeGroup(fileName) {
+    const seq = ++nodeGroupAnimationSeq;
     if (selectedNodeGroupFile === fileName) {
+        const deck = document.querySelector('.node-detail-body .node-hand');
+        const sourceCard = findSourceCardByFileName(fileName);
+        if (deck) {
+            deck.classList.add('node-hand-collecting');
+            sourceCard?.classList.add('collecting');
+            await sleep(260);
+            if (seq !== nodeGroupAnimationSeq) return;
+        }
         selectedNodeGroupFile = "";
+        nodeGroupManualCollapsed = true;
         renderNodes();
         return;
     }
     selectedNodeGroupFile = fileName;
-    renderNodes();
-    autoTestSelectedNodeGroup(fileName);
+    nodeGroupManualCollapsed = false;
+    renderNodes({ animateDeck: true });
+    setTimeout(() => {
+        if (selectedNodeGroupFile === fileName && !nodeGroupManualCollapsed) {
+            autoTestSelectedNodeGroup(fileName);
+        }
+    }, 620);
 }
 
 
@@ -1389,10 +1541,12 @@ function defaultAutoSelectConfig() {
         startupMode: 'none',
         siteCheck: {
             mode: 'none',
-            ids: []
+            ids: [],
+            defaultSelectionApplied: false
         },
         ignoreTimeout: false,
         excludedNodeKeys: [],
+        discardedRules: [],
         rules: [
             { id: 'preset_no_hk', type: 'exclude_keyword', value: '香港', label: '不使用香港的节点' }
         ]
@@ -1446,13 +1600,18 @@ function normalizeAutoSelectConfig() {
     autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
     if (!['none', 'proxy', 'tun', 'proxy_tun'].includes(autoSelectConfig.startupMode)) autoSelectConfig.startupMode = 'none';
     if (!autoSelectConfig.siteCheck || typeof autoSelectConfig.siteCheck !== 'object') {
-        autoSelectConfig.siteCheck = { mode: 'none', ids: [] };
+        autoSelectConfig.siteCheck = { mode: 'none', ids: [], defaultSelectionApplied: false };
     }
     if (!Array.isArray(autoSelectConfig.siteCheck.ids)) autoSelectConfig.siteCheck.ids = [];
+    autoSelectConfig.siteCheck.defaultSelectionApplied = !!autoSelectConfig.siteCheck.defaultSelectionApplied;
     if (!['none', 'any', 'all'].includes(autoSelectConfig.siteCheck.mode)) autoSelectConfig.siteCheck.mode = 'none';
     autoSelectConfig.ignoreTimeout = !!autoSelectConfig.ignoreTimeout;
     if (!Array.isArray(autoSelectConfig.excludedNodeKeys)) autoSelectConfig.excludedNodeKeys = [];
     autoSelectConfig.excludedNodeKeys = normalizedStringList(autoSelectConfig.excludedNodeKeys);
+    if (!Array.isArray(autoSelectConfig.discardedRules)) autoSelectConfig.discardedRules = [];
+    autoSelectConfig.discardedRules = autoSelectConfig.discardedRules
+        .filter(rule => rule && typeof rule === 'object')
+        .slice(0, 5);
     if (!Array.isArray(autoSelectConfig.rules)) autoSelectConfig.rules = [];
 }
 
@@ -1587,6 +1746,19 @@ function bindAutoSelectConfigEvents() {
         const action = button.dataset.autoSelectAction;
         if (action === 'delete-rule') {
             deleteAutoSelectRule(button.dataset.ruleId || '');
+        } else if (action === 'subscription-card') {
+            toggleAutoSelectSubscription(button.dataset.fileName || '', !button.classList.contains('selected'));
+            renderAutoSelectConfig();
+        } else if (action === 'aggregate-card') {
+            toggleAutoSelectAggregate(button.dataset.fileName || '', !button.classList.contains('selected'));
+            renderAutoSelectConfig();
+        } else if (action === 'site-target-card') {
+            setAutoSelectSiteTarget(button.dataset.targetId || '', !button.classList.contains('selected'));
+            renderAutoSelectConfig();
+        } else if (action === 'open-rule-card') {
+            openAutoSelectRuleModal(button.dataset.ruleId || '');
+        } else if (action === 'restore-discarded-rule') {
+            restoreAutoSelectDiscardedRule(button.dataset.discardIndex || '');
         }
     });
 }
@@ -1629,6 +1801,15 @@ function requestAutoSelectRestart(options = {}) {
     if (!autoSelectRunning) {
         drainAutoSelectQueuedRun();
     }
+}
+
+function scheduleAutoSelectRuleChangeRestart(delay = 620) {
+    if (!autoSelectConfig?.enabled) return;
+    if (autoSelectRuleChangeRestartTimer) clearTimeout(autoSelectRuleChangeRestartTimer);
+    autoSelectRuleChangeRestartTimer = setTimeout(() => {
+        autoSelectRuleChangeRestartTimer = null;
+        requestAutoSelectRestart({ silent: true });
+    }, delay);
 }
 
 function setAutoSelectNowButtonBusy(isBusy) {
@@ -1680,6 +1861,7 @@ function renderAutoSelectConfig() {
     const siteModeEl = document.getElementById('autoSelectSiteMode');
     const siteListEl = document.getElementById('autoSelectSiteList');
     const listEl = document.getElementById('autoSelectRuleList');
+    const discardEl = document.getElementById('autoSelectDiscardPile');
     const ignoreTimeoutEl = document.getElementById('autoSelectIgnoreTimeout');
     if (!enabledEl || !scopeEl || !listEl || !autoSelectConfig) return;
 
@@ -1700,18 +1882,14 @@ function renderAutoSelectConfig() {
             subscriptionEl.innerHTML = '<div class="auto-select-empty">暂无订阅组</div>';
         } else {
             const selected = new Set(autoSelectConfig.subscriptionFiles || []);
-            subscriptionEl.innerHTML = suppliersCache.map(s => `
-                <label class="auto-select-check">
-                    <input type="checkbox" ${selected.has(s.fileName) ? 'checked' : ''} data-auto-select-action="subscription" data-file-name="${escapeAttr(s.fileName)}">
-                    <span>${escapeHTML(s.name)}</span>
-                </label>
-            `).join('');
-            if (autoSelectConfig.subscriptionFiles.length === 0 && suppliersCache.length > 0) {
-                autoSelectConfig.subscriptionFiles = [suppliersCache[0].fileName];
-                saveAutoSelectConfig({ render: false, run: false, timer: false });
-                renderAutoSelectConfig();
-                return;
-            }
+            subscriptionEl.innerHTML = suppliersCache.map((s, index) => renderAutoSelectSourceCard({
+                kind: 'subscription',
+                value: s.fileName,
+                title: s.name || s.fileName,
+                meta: `${s.nodeCount || s.count || 0} 节点`,
+                selected: selected.has(s.fileName),
+                index
+            })).join('');
         }
     }
     if (aggregateEl) {
@@ -1720,18 +1898,14 @@ function renderAutoSelectConfig() {
             aggregateEl.innerHTML = '<div class="auto-select-empty">暂无聚合组</div>';
         } else {
             const selected = new Set(autoSelectConfig.aggregateFiles || []);
-            aggregateEl.innerHTML = aggregateGroupsCache.map(g => `
-                <label class="auto-select-check">
-                    <input type="checkbox" ${selected.has(g.fileName) ? 'checked' : ''} data-auto-select-action="aggregate" data-file-name="${escapeAttr(g.fileName)}">
-                    <span>${escapeHTML(g.name)}</span>
-                </label>
-            `).join('');
-            if (autoSelectConfig.aggregateFiles.length === 0 && aggregateGroupsCache.length > 0) {
-                autoSelectConfig.aggregateFiles = [aggregateGroupsCache[0].fileName];
-                saveAutoSelectConfig({ render: false, run: false, timer: false });
-                renderAutoSelectConfig();
-                return;
-            }
+            aggregateEl.innerHTML = aggregateGroupsCache.map((g, index) => renderAutoSelectSourceCard({
+                kind: 'aggregate',
+                value: g.fileName,
+                title: g.name || g.fileName,
+                meta: `${g.count || 0} 节点`,
+                selected: selected.has(g.fileName),
+                index
+            })).join('');
         }
     }
     if (siteModeEl) siteModeEl.value = autoSelectConfig.siteCheck?.mode || 'none';
@@ -1739,35 +1913,99 @@ function renderAutoSelectConfig() {
         if (!siteTargetsCache.length) {
             siteListEl.innerHTML = '<div class="auto-select-empty">测试网站加载后可选择。</div>';
         } else {
+            if (!autoSelectConfig.siteCheck) autoSelectConfig.siteCheck = { mode: 'none', ids: [], defaultSelectionApplied: false };
+            if (!Array.isArray(autoSelectConfig.siteCheck.ids)) autoSelectConfig.siteCheck.ids = [];
+            if (!autoSelectConfig.siteCheck.ids.length && !autoSelectConfig.siteCheck.defaultSelectionApplied) {
+                autoSelectConfig.siteCheck.ids = siteTargetsCache.map(target => target.id);
+                autoSelectConfig.siteCheck.defaultSelectionApplied = true;
+                saveAutoSelectConfig({ render: false, run: false, timer: false });
+            }
             const ids = new Set(autoSelectConfig.siteCheck?.ids || []);
-            siteListEl.innerHTML = siteTargetsCache.map(target => `
-                <label class="auto-select-check">
-                    <input type="checkbox" ${ids.has(target.id) ? 'checked' : ''} data-auto-select-action="site-target" data-target-id="${escapeAttr(target.id)}">
-                    <span>${escapeHTML(target.name)}</span>
-                </label>
-            `).join('');
+            siteListEl.innerHTML = siteTargetsCache.map((target, index) => renderAutoSelectSiteCard(target, ids.has(target.id), index)).join('');
         }
     }
     if (!autoSelectConfig.rules.length) {
-        listEl.innerHTML = '<div class="auto-select-empty">暂无筛选规则</div>';
+        listEl.innerHTML = '<div class="auto-select-empty">暂无筛选规则，补一张规则牌开始过滤候选节点。</div>';
         renderAutoSelectRulePicker();
+        renderAutoSelectDiscardPile(discardEl);
         scheduleCustomSelectSync();
         return;
     }
-    listEl.innerHTML = autoSelectConfig.rules.map(rule => `
-        <div class="auto-select-rule-row">
-            <div class="auto-select-rule-editor">
-                <select data-auto-select-action="rule-type" data-rule-id="${escapeAttr(rule.id)}">
-                    ${autoSelectRuleTypeOptions(rule.type)}
-                </select>
-                ${autoSelectRuleValueEditor(rule)}
-                <span>${escapeHTML(autoSelectRuleDescription(rule))}</span>
-            </div>
-            <button class="btn-mini btn-mini-danger" data-auto-select-action="delete-rule" data-rule-id="${escapeAttr(rule.id)}">删除</button>
-        </div>
-    `).join('');
+    listEl.innerHTML = autoSelectConfig.rules.map((rule, index) => renderAutoSelectRuleCard(rule, {
+        index,
+        justDrawn: rule.id === autoSelectLastDrawnRuleId
+    })).join('');
+    autoSelectLastDrawnRuleId = "";
+    renderAutoSelectDiscardPile(discardEl);
     renderAutoSelectRulePicker();
     scheduleCustomSelectSync();
+}
+
+function renderAutoSelectSourceCard({ kind, value, title, meta, selected, index }) {
+    const action = kind === 'aggregate' ? 'aggregate-card' : 'subscription-card';
+    const rank = kind === 'aggregate' ? 'AG' : 'SUB';
+    return `
+        <button type="button" class="auto-select-choice-card ${selected ? 'selected' : ''}" data-auto-select-action="${action}" data-file-name="${escapeAttr(value)}" aria-pressed="${selected ? 'true' : 'false'}" style="--deal-index:${Math.min(index || 0, 12)}">
+            <span class="auto-select-card-corner">${rank}</span>
+            <span class="auto-select-card-mark"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
+            <span class="auto-select-card-title">${escapeHTML(title)}</span>
+            <span class="auto-select-card-meta">${escapeHTML(meta)}</span>
+        </button>
+    `;
+}
+
+function renderAutoSelectSiteCard(target, selected, index) {
+    return `
+        <button type="button" class="auto-select-choice-card site ${selected ? 'selected' : ''}" data-auto-select-action="site-target-card" data-target-id="${escapeAttr(target.id)}" aria-pressed="${selected ? 'true' : 'false'}" style="--deal-index:${Math.min(index || 0, 12)}">
+            <span class="auto-select-card-corner">WEB</span>
+            <span class="auto-select-card-mark"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
+            <span class="auto-select-card-title">${escapeHTML(target.name || target.url || target.id)}</span>
+            <span class="auto-select-card-meta">${escapeHTML(target.category || '网站')}</span>
+        </button>
+    `;
+}
+
+function renderAutoSelectRuleCard(rule, options = {}) {
+    const values = autoSelectRuleValues(rule);
+    const description = autoSelectRuleDescription(rule);
+    return `
+        <button type="button" class="auto-select-rule-card ${options.justDrawn ? 'drawn' : ''}" data-auto-select-action="open-rule-card" data-rule-id="${escapeAttr(rule.id)}" style="--deal-index:${Math.min(options.index || 0, 18)}">
+            <span class="auto-select-rule-rank">${escapeHTML(autoSelectRuleCardRank(rule.type))}</span>
+            <span class="auto-select-rule-suit"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
+            <span class="auto-select-rule-title">${escapeHTML(autoSelectRuleLabel(rule))}</span>
+            <span class="auto-select-rule-desc">${escapeHTML(description)}</span>
+            <span class="auto-select-rule-meta">${values.length || 1} 个条件</span>
+        </button>
+    `;
+}
+
+function renderAutoSelectDiscardPile(container) {
+    if (!container || !autoSelectConfig) return;
+    const pile = (autoSelectConfig.discardedRules || []).slice(0, 5);
+    if (!pile.length) {
+        container.innerHTML = `
+            <div class="auto-select-discard-title">弃牌堆</div>
+            <div class="auto-select-discard-empty">暂无弃牌</div>
+        `;
+        return;
+    }
+    container.innerHTML = `
+        <div class="auto-select-discard-title">弃牌堆 <span>${pile.length}/5</span></div>
+        <div class="auto-select-discard-stack">
+            ${pile.map((rule, index) => renderAutoSelectDiscardCard(rule, index)).join('')}
+        </div>
+    `;
+}
+
+function renderAutoSelectDiscardCard(rule, index) {
+    return `
+        <button type="button" class="auto-select-rule-card discarded" data-auto-select-action="restore-discarded-rule" data-discard-index="${index}" title="重新启用规则牌" aria-label="重新启用规则牌：${escapeAttr(autoSelectRuleLabel(rule))}" style="--discard-index:${index}; z-index:${10 - index}">
+            <span class="auto-select-rule-rank">${escapeHTML(autoSelectRuleCardRank(rule.type))}</span>
+            <span class="auto-select-rule-suit"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
+            <span class="auto-select-rule-title">${escapeHTML(autoSelectRuleLabel(rule))}</span>
+            <span class="auto-select-rule-desc">${escapeHTML(autoSelectRuleDescription(rule))}</span>
+        </button>
+    `;
 }
 
 function setAutoSelectEnabled(checked) {
@@ -1854,6 +2092,7 @@ function setAutoSelectSiteTarget(encodedId, checked) {
     if (checked) ids.add(id);
     else ids.delete(id);
     autoSelectConfig.siteCheck.ids = Array.from(ids);
+    autoSelectConfig.siteCheck.defaultSelectionApplied = true;
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
 }
 
@@ -1867,15 +2106,19 @@ function addAutoSelectRule() {
         showToast('请输入规则内容，多个值可用逗号分隔', 'warning');
         return;
     }
-    autoSelectConfig.rules.push({
+    const rule = {
         id: 'rule_' + Date.now(),
         type,
         value,
-        values: splitAutoSelectValues(value)
-    });
+        values: splitAutoSelectValues(value),
+        createdAt: Date.now()
+    };
+    autoSelectConfig.rules.unshift(rule);
+    autoSelectLastDrawnRuleId = rule.id;
     if (input) input.value = '';
-    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: false });
     renderAutoSelectConfig();
+    scheduleAutoSelectRuleChangeRestart();
 }
 
 function autoSelectRuleTypeOptions(selected) {
@@ -2000,21 +2243,163 @@ function updateAutoSelectRulePickedValue(encodedId, encodedValue, checked) {
     renderAutoSelectConfig();
 }
 
+function openAutoSelectRuleModal(encodedId) {
+    const id = decodeAutoSelectParam(encodedId);
+    const rule = autoSelectConfig?.rules?.find(r => r.id === id);
+    const modal = document.getElementById('autoSelectRuleModal');
+    const typeEl = document.getElementById('autoSelectEditRuleType');
+    const valueEl = document.getElementById('autoSelectEditRuleValue');
+    if (!modal || !typeEl || !valueEl || !rule) return;
+    autoSelectEditingRuleId = id;
+    typeEl.innerHTML = autoSelectRuleTypeOptions(rule.type);
+    typeEl.value = rule.type || 'exclude_keyword';
+    valueEl.value = autoSelectRuleValues(rule).join(',');
+    renderAutoSelectRuleModalPicker();
+    scheduleCustomSelectSync();
+    modal.style.display = 'flex';
+}
+
+function closeAutoSelectRuleModal() {
+    const modal = document.getElementById('autoSelectRuleModal');
+    if (modal) modal.style.display = 'none';
+    autoSelectEditingRuleId = "";
+}
+
+function onAutoSelectRuleModalTypeChange(type) {
+    const valueEl = document.getElementById('autoSelectEditRuleValue');
+    if (valueEl) valueEl.value = '';
+    renderAutoSelectRuleModalPicker(type);
+    scheduleCustomSelectSync();
+}
+
+function renderAutoSelectRuleModalPicker(type = '') {
+    const typeEl = document.getElementById('autoSelectEditRuleType');
+    const valueWrap = document.getElementById('autoSelectEditRuleValueWrap');
+    const valueEl = document.getElementById('autoSelectEditRuleValue');
+    const picker = document.getElementById('autoSelectEditRulePicker');
+    if (!typeEl || !valueWrap || !valueEl || !picker) return;
+    const currentType = type || typeEl.value || 'exclude_keyword';
+    const options = selectableAutoSelectValues(currentType);
+    if (!autoSelectRuleUsesPicker(currentType) || !options.length) {
+        valueWrap.style.display = '';
+        picker.innerHTML = '';
+        return;
+    }
+    valueWrap.style.display = 'none';
+    const selected = new Set(splitAutoSelectValues(valueEl.value));
+    picker.innerHTML = options.map(value => `
+        <label class="auto-select-check auto-select-modal-check">
+            <input type="checkbox" ${selected.has(value) ? 'checked' : ''} onchange="syncAutoSelectRuleModalPicker()">
+            <span>${escapeHTML(value)}</span>
+        </label>
+    `).join('');
+}
+
+function syncAutoSelectRuleModalPicker() {
+    const valueEl = document.getElementById('autoSelectEditRuleValue');
+    const picker = document.getElementById('autoSelectEditRulePicker');
+    if (!valueEl || !picker) return;
+    const labels = Array.from(picker.querySelectorAll('label'));
+    if (!labels.length) return;
+    valueEl.value = labels
+        .filter(label => label.querySelector('input')?.checked)
+        .map(label => label.textContent.trim())
+        .join(',');
+}
+
+function saveEditingAutoSelectRule() {
+    const rule = autoSelectConfig?.rules?.find(r => r.id === autoSelectEditingRuleId);
+    const typeEl = document.getElementById('autoSelectEditRuleType');
+    const valueEl = document.getElementById('autoSelectEditRuleValue');
+    if (!rule || !typeEl || !valueEl) return;
+    syncAutoSelectRuleModalPicker();
+    const values = splitAutoSelectValues(valueEl.value);
+    if (!values.length) {
+        showToast('请输入规则内容，多个值可用逗号分隔', 'warning');
+        return;
+    }
+    rule.type = typeEl.value || 'exclude_keyword';
+    rule.value = values.join(',');
+    rule.values = values;
+    rule.updatedAt = Date.now();
+    delete rule.label;
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
+    closeAutoSelectRuleModal();
+    renderAutoSelectConfig();
+    showToast('规则牌已更新', 'success', 1800);
+}
+
+function discardEditingAutoSelectRule() {
+    if (!autoSelectEditingRuleId) return;
+    const encodedId = encodeURIComponent(autoSelectEditingRuleId);
+    closeAutoSelectRuleModal();
+    deleteAutoSelectRule(encodedId);
+    showToast('规则牌已弃牌', 'success', 1800);
+}
+
 function deleteAutoSelectRule(encodedId) {
     if (!autoSelectConfig) return;
     const id = decodeAutoSelectParam(encodedId);
+    const rule = autoSelectConfig.rules.find(r => r.id === id);
+    if (rule) pushAutoSelectDiscardedRules([rule]);
     autoSelectConfig.rules = autoSelectConfig.rules.filter(rule => rule.id !== id);
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
 }
 
-function clearAutoSelectRules() {
+async function clearAutoSelectRules() {
     if (!autoSelectConfig?.rules?.length) return;
-    if (!confirm('确定清空所有自动选择规则吗？')) return;
+    const listEl = document.getElementById('autoSelectRuleList');
+    if (listEl) {
+        listEl.classList.add('discarding');
+        await sleep(420);
+    }
+    pushAutoSelectDiscardedRules(autoSelectConfig.rules);
     autoSelectConfig.rules = [];
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
-    showToast('自动选择规则已清空', 'success');
+    showToast('规则牌已全部弃牌', 'success');
+}
+
+function pushAutoSelectDiscardedRules(rules) {
+    if (!autoSelectConfig) return;
+    const next = (rules || [])
+        .filter(rule => rule && typeof rule === 'object')
+        .map(rule => ({
+            id: rule.id || ('discard_' + Date.now()),
+            type: rule.type || 'exclude_keyword',
+            value: rule.value || '',
+            values: autoSelectRuleValues(rule),
+            label: rule.label || '',
+            discardedAt: Date.now()
+        }));
+    autoSelectConfig.discardedRules = [
+        ...next,
+        ...(autoSelectConfig.discardedRules || [])
+    ].slice(0, 5);
+}
+
+function restoreAutoSelectDiscardedRule(indexValue) {
+    if (!autoSelectConfig) return;
+    const index = Number.parseInt(indexValue, 10);
+    if (!Number.isInteger(index) || index < 0) return;
+    const discarded = autoSelectConfig.discardedRules || [];
+    const rule = discarded[index];
+    if (!rule) return;
+    autoSelectConfig.discardedRules = discarded.filter((_, itemIndex) => itemIndex !== index);
+    const restored = {
+        ...rule,
+        id: rule.id || ('rule_' + Date.now()),
+        values: autoSelectRuleValues(rule),
+        restoredAt: Date.now()
+    };
+    delete restored.discardedAt;
+    autoSelectConfig.rules.unshift(restored);
+    autoSelectLastDrawnRuleId = restored.id;
+    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: false });
+    renderAutoSelectConfig();
+    scheduleAutoSelectRuleChangeRestart();
+    showToast('规则牌已重新启用', 'success', 1800);
 }
 
 function autoSelectScopeName(scope) {
@@ -2049,6 +2434,40 @@ function autoSelectRuleLabel(rule) {
         case 'exclude_protocol': return '不使用指定协议';
         default: return '不使用指定关键字';
     }
+}
+
+function autoSelectRuleTypeLabel(type) {
+    const labels = {
+        exclude_keyword: '不使用包含',
+        include_region: '只选择地区',
+        include_node: '只选择节点',
+        include_subscription: '只选择订阅组',
+        include_aggregate_group: '只选择聚合组',
+        include_protocol: '只使用协议',
+        exclude_protocol: '不使用协议'
+    };
+    return labels[type] || labels.exclude_keyword;
+}
+
+function autoSelectRuleCardRank(type) {
+    const ranks = {
+        exclude_keyword: 'XK',
+        include_region: 'RG',
+        include_node: 'ND',
+        include_subscription: 'SUB',
+        include_aggregate_group: 'AG',
+        include_protocol: 'PT',
+        exclude_protocol: 'XP'
+    };
+    return ranks[type] || 'RL';
+}
+
+function autoSelectRuleSuit(type) {
+    if (String(type || '').startsWith('exclude')) return '弃';
+    if (type === 'include_protocol' || type === 'exclude_protocol') return '协';
+    if (type === 'include_subscription' || type === 'include_aggregate_group') return '组';
+    if (type === 'include_node') return '点';
+    return '选';
 }
 
 function autoSelectRuleDescription(rule) {
@@ -4291,6 +4710,7 @@ async function submitAggAction() {
 }
 
 window.onload = async () => {
+    initDesktopWheelDamping();
     initCustomSelects();
     await loadSystemConfig();
     await loadAutoSelectConfig();

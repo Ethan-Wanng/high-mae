@@ -1,6 +1,8 @@
 # wing 构建脚本
 # 使用方法: .\mk.ps1 build
 
+$ErrorActionPreference = "Stop"
+
 # 核心插件标签
 $tags = "with_quic,with_utls,with_gvisor,with_naive_outbound,with_purego"
 # 链接器参数: -s -w 去除调试信息, -H windowsgui 隐藏控制台窗口
@@ -14,6 +16,45 @@ $flutterDist = Join-Path $repoRoot "build\bin\flutter_ui"
 $backendExe = Join-Path $repoRoot "build\bin\wing.exe"
 $portablePackageScript = Join-Path $repoRoot "scripts\package-portable.ps1"
 $innoPackageScript = Join-Path $repoRoot "scripts\package.ps1"
+
+function Stop-BuildOutputProcesses {
+    param([string[]]$TargetRoots)
+
+    $fullRoots = @($TargetRoots | ForEach-Object {
+        if ($_ -and (Test-Path $_)) {
+            [System.IO.Path]::GetFullPath($_).TrimEnd('\')
+        }
+    })
+    if ($fullRoots.Count -eq 0) {
+        return
+    }
+
+    $processes = Get-Process -Name "wing", "wing_ui" -ErrorAction SilentlyContinue | Where-Object {
+        $processPath = $null
+        try {
+            $processPath = $_.Path
+        }
+        catch {
+            $processPath = $null
+        }
+        if (-not $processPath) {
+            return $false
+        }
+        $fullProcessPath = [System.IO.Path]::GetFullPath($processPath)
+        foreach ($root in $fullRoots) {
+            if ($fullProcessPath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        }
+        return $false
+    }
+
+    foreach ($process in $processes) {
+        Write-Host "🛑 正在停止旧构建进程 $($process.ProcessName) (PID $($process.Id))..." -ForegroundColor Yellow
+        Stop-Process -Id $process.Id -Force
+        Wait-Process -Id $process.Id -Timeout 10 -ErrorAction SilentlyContinue
+    }
+}
 
 function Protect-LegacyGoModCache {
     if (Test-Path $legacyGoModCache) {
@@ -128,6 +169,7 @@ function Build-FlutterUI {
         throw "Flutter 构建失败: 未能找到 $flutterExe"
     }
 
+    Stop-BuildOutputProcesses @($flutterDist)
     Reset-ProjectDirectory $flutterDist
     Copy-Item -Path (Join-Path $flutterRelease "*") -Destination $flutterDist -Recurse -Force
     Write-Host "✅ Flutter 控制面板已输出到 build\bin\flutter_ui" -ForegroundColor Green
@@ -138,6 +180,7 @@ function Build-GoBackend {
     Copy-CronetDll
     Write-Host "🚀 正在构建 Go 后端与系统托盘..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path (Split-Path -Parent $backendExe) -Force | Out-Null
+    Stop-BuildOutputProcesses @((Split-Path -Parent $backendExe))
 
     Invoke-WithProjectGoCache {
         go build -tags $tags -ldflags $ldflags -o $backendExe .
@@ -150,6 +193,18 @@ function Build-GoBackend {
     Write-Host "✅ Go 后端构建完成: wing.exe" -ForegroundColor Green
 }
 
+function Invoke-InnoPackage {
+    $packageArgs = @()
+    if ($args.Count -gt 1) {
+        $packageArgs = $args[1..($args.Count - 1)]
+    }
+
+    & $innoPackageScript @packageArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "安装包生成失败，退出码: $LASTEXITCODE"
+    }
+}
+
 switch ($args[0]) {
     "build" {
         Build-FlutterUI
@@ -159,18 +214,12 @@ switch ($args[0]) {
     "package" {
         Build-FlutterUI
         Build-GoBackend
-        & $innoPackageScript
-        if ($LASTEXITCODE -ne 0) {
-            throw "安装包生成失败，退出码: $LASTEXITCODE"
-        }
+        Invoke-InnoPackage @args
     }
     "installer" {
         Build-FlutterUI
         Build-GoBackend
-        & $innoPackageScript
-        if ($LASTEXITCODE -ne 0) {
-            throw "安装包生成失败，退出码: $LASTEXITCODE"
-        }
+        Invoke-InnoPackage @args
     }
     "portable" {
         Build-FlutterUI
@@ -183,10 +232,7 @@ switch ($args[0]) {
     "inno" {
         Build-FlutterUI
         Build-GoBackend
-        & $innoPackageScript
-        if ($LASTEXITCODE -ne 0) {
-            throw "安装包生成失败，退出码: $LASTEXITCODE"
-        }
+        Invoke-InnoPackage @args
     }
     "backend" {
         Build-GoBackend

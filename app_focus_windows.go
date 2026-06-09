@@ -15,7 +15,6 @@ func focusFlutterWindow(cmd *exec.Cmd) bool {
 	user32 := syscall.NewLazyDLL("user32.dll")
 	enumWindows := user32.NewProc("EnumWindows")
 	getWindowThreadProcessID := user32.NewProc("GetWindowThreadProcessId")
-	isWindowVisible := user32.NewProc("IsWindowVisible")
 	showWindow := user32.NewProc("ShowWindow")
 	setForegroundWindow := user32.NewProc("SetForegroundWindow")
 
@@ -24,8 +23,7 @@ func focusFlutterWindow(cmd *exec.Cmd) bool {
 	cb := syscall.NewCallback(func(hwnd uintptr, lparam uintptr) uintptr {
 		var pid uint32
 		getWindowThreadProcessID.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
-		visible, _, _ := isWindowVisible.Call(hwnd)
-		if pid == targetPID && visible != 0 {
+		if pid == targetPID {
 			found = hwnd
 			return 0
 		}
