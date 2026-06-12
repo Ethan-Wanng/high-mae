@@ -84,3 +84,29 @@ func TestTrustedWebUIOriginRejectsPublicHosts(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedAggregateGroupFileName(t *testing.T) {
+	allowed := []string{
+		"group_1710000000.yml",
+		"agg_1710000000.yml",
+	}
+	for _, fileName := range allowed {
+		if !isManagedAggregateGroupFileName(fileName) {
+			t.Fatalf("expected %s to be a managed aggregate group file", fileName)
+		}
+	}
+
+	blocked := []string{
+		"",
+		"nodes.yml",
+		"../nodes.yml",
+		`..\nodes.yml`,
+		"group_1710000000.json",
+		"C:/Users/name/nodes.yml",
+	}
+	for _, fileName := range blocked {
+		if isManagedAggregateGroupFileName(fileName) {
+			t.Fatalf("expected %s to be rejected", fileName)
+		}
+	}
+}

@@ -33,6 +33,7 @@ let autoSelectRuleChangeRestartTimer = null;
 let nodeGroupAnimationSeq = 0;
 let autoSelectEditingRuleId = "";
 let autoSelectLastDrawnRuleId = "";
+let lastConnectionStatus = {};
 
 applyThemeMode(localStorage.getItem('wing_theme_mode') || 'system');
 let shareQRCodeURL = "";
@@ -258,6 +259,7 @@ function initDesktopWheelDamping() {
         const target = event.target instanceof Element ? event.target : null;
         if (!target) return;
         if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
+        if (target.closest('.auto-select-site-list, .auto-select-picker, .auto-select-rule-list, .auto-select-discard-stack, .auto-node-list, .node-detail-body, .modal-scroll, .dns-modal-scroll')) return;
 
         const delta = normalizeWheelDelta(event);
         const largestDelta = Math.max(Math.abs(delta.x), Math.abs(delta.y));
@@ -318,11 +320,17 @@ async function loadStatus() {
     try {
         const res = await fetch('/api/status');
         const st = await res.json();
-        document.getElementById('chkProxy').checked = st.proxy;
-        document.getElementById('chkMode').checked = (st.mode === 'Global');
-        document.getElementById('chkTun').checked = st.tun;
-        document.getElementById('chkWebRTC').checked = st.webrtc;
-        document.getElementById('speedMonitor').innerHTML = '↑ ' + st.speedOut + ' &nbsp; ↓ ' + st.speedIn;
+        lastConnectionStatus = st || {};
+        const proxyEl = document.getElementById('chkProxy');
+        const modeEl = document.getElementById('chkMode');
+        const tunEl = document.getElementById('chkTun');
+        const webrtcEl = document.getElementById('chkWebRTC');
+        const speedEl = document.getElementById('speedMonitor');
+        if (proxyEl) proxyEl.checked = st.proxy;
+        if (modeEl) modeEl.checked = (st.mode === 'Global');
+        if (tunEl) tunEl.checked = st.tun;
+        if (webrtcEl) webrtcEl.checked = st.webrtc;
+        if (speedEl) speedEl.innerHTML = '↑ ' + st.speedOut + ' &nbsp; ↓ ' + st.speedIn;
         updateConnectionState(st);
         renderFreeTrafficState(st.freeTraffic);
         updateConnectionNodeSummary();
@@ -333,7 +341,7 @@ function updateConnectionState(status = {}) {
     const proxyOn = !!status.proxy;
     const tunOn = !!status.tun;
     let state = 'direct';
-    let label = '直连 / 未开启';
+    let label = '代理/TUN 已关闭';
     if (proxyOn && tunOn) {
         state = 'proxy_tun';
         label = '系统代理 + TUN';
@@ -358,7 +366,7 @@ function updateConnectionNodeSummary() {
     const activeNode = allNodesList.find(n => n.active);
     const nodeDisplayEl = document.getElementById('selectedNodeDisplay');
     if (nodeDisplayEl) {
-        nodeDisplayEl.textContent = activeNode ? activeNode.name : (freeTrafficState?.active ? '免费流量' : '直连 (Direct)');
+        nodeDisplayEl.textContent = activeNode ? activeNode.name : (freeTrafficState?.active ? '免费流量' : '未选择节点');
     }
     renderSelectedNodeGroup(activeNode);
 }
@@ -548,7 +556,7 @@ function renderAutoNodes() {
         body.innerHTML = '<div class="empty-state">没有符合自动选择规则的候选节点。</div>';
         return;
     }
-    body.appendChild(renderNodeTable(candidates, { autoSelect: true }));
+    body.appendChild(renderAutoNodeList(candidates, { autoSelect: true }));
 }
 
 let filterNodesTimeout = null;
@@ -582,10 +590,17 @@ function renderSelectedGroupActions(group) {
 }
 
 function renderNodeTable(nodes, options = {}) {
-    const deck = document.createElement('div');
-    deck.className = 'node-hand';
-    if (options.autoSelect) deck.classList.add('node-hand-auto');
-    if (options.animateDeal) deck.classList.add('node-hand-dealing');
+    return renderAutoNodeList(nodes, {
+        autoSelect: !!options.autoSelect,
+        animateDeal: !!options.animateDeal
+    });
+}
+
+function renderAutoNodeList(nodes, options = {}) {
+    const list = document.createElement('div');
+    list.className = 'auto-node-list';
+    if (options.animateDeal) list.classList.add('auto-node-list-dealing');
+    const fragment = document.createDocumentFragment();
     nodes.forEach((n, index) => {
         let latClass = 'unknown';
         let latText = '-- ms';
@@ -599,6 +614,7 @@ function renderNodeTable(nodes, options = {}) {
             latClass = 'bad';
             latText = 'Timeout';
         }
+
         let speedClass = 'unknown';
         let speedText = '--';
         if (n.speed > 0) {
@@ -609,54 +625,37 @@ function renderNodeTable(nodes, options = {}) {
             speedText = '失败';
         }
 
-        const card = document.createElement('article');
-        card.className = `node-play-card ${n.active ? 'active' : ''}`;
-        card.style.setProperty('--deal-index', String(Math.min(index, 18)));
-        card.onclick = event => toggleNodeCard(n.index, event);
-        card.ondblclick = () => switchNode(n.index);
-        const removeAction = options.autoSelect
-            ? `<button class="btn-action btn-action-danger" onclick="event.stopPropagation(); excludeAutoSelectNode('${encodeURIComponent(autoSelectNodeKey(n))}')">删除</button>`
-            : `<button class="btn-action btn-action-danger" onclick="event.stopPropagation(); deleteNode(${n.index})">删除</button>`;
-        const removeTitle = options.autoSelect ? '从自动选择候选中排除，不删除原订阅或聚合组节点' : '删除节点';
-        const cardRank = escapeHTML((n.type || 'N').slice(0, 2).toUpperCase());
-        card.innerHTML = `
-            <div class="node-card-back" aria-hidden="true">
-                <img src="logo-mark.png" alt="">
-                <span>wing</span>
+        const item = document.createElement('article');
+        item.className = `auto-node-item ${n.active ? 'active' : ''}`;
+        item.style.setProperty('--deal-index', String(Math.min(index, 18)));
+        const sourceLabel = supplierNameForNode(n) || aggregateNameByFile(n.fileName) || n.group || n.fileName || '';
+        const deleteButton = options.autoSelect
+            ? `<button class="btn-action btn-action-danger" title="从自动选择候选中排除，不删除原订阅或聚合组节点" onclick="excludeAutoSelectNode('${encodeURIComponent(autoSelectNodeKey(n))}')">删除</button>`
+            : `<button class="btn-action btn-action-danger" title="删除节点" onclick="deleteNode(${n.index})">删除</button>`;
+        const shareButton = options.autoSelect ? '' : `<button class="btn-action" onclick="shareNode(${n.index})">分享</button>`;
+        item.innerHTML = `
+            <div class="auto-node-main">
+                <span class="status-dot ${n.active ? 'active' : ''}"></span>
+                <div class="auto-node-name">${escapeHTML(n.name || '')}</div>
+                <div class="auto-node-source">${escapeHTML(sourceLabel)}</div>
             </div>
-            <div class="node-card-front">
-                <div class="node-card-corner top-left">
-                    <strong>${cardRank}</strong>
-                    <span>${n.active ? 'PLAY' : 'NODE'}</span>
-                </div>
-                <div class="node-card-corner bottom-right">
-                    <strong>${cardRank}</strong>
-                    <span>${n.active ? 'PLAY' : 'NODE'}</span>
-                </div>
-                <div class="node-card-face">
-                    <img class="node-card-mark" src="logo-mark.png" alt="" aria-hidden="true">
-                    <span class="status-dot ${n.active ? 'active' : ''}"></span>
-                    <div class="node-card-main">
-                        <div class="node-name-cell">${escapeHTML(n.name || '')}</div>
-                        <div class="node-card-meta">
-                            <span class="node-type">${escapeHTML(n.type || '')}</span>
-                            <span class="latency ${latClass}" id="lat-${n.index}">${latText}</span>
-                            <span class="latency ${speedClass}" id="speed-${n.index}">↓ ${speedText}</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="node-card-peek">
-                    <button class="btn-action ${n.active ? 'btn-action-primary' : ''}" ${switchingNodeIndex !== null ? 'disabled' : ''} onclick="event.stopPropagation(); switchNode(${n.index})">${switchingNodeIndex === n.index ? '切换中' : (n.active ? '已选择' : '选择')}</button>
-                    <button class="btn-action" onclick="event.stopPropagation(); testSingle(${n.index})">延迟</button>
-                    <button class="btn-action" onclick="event.stopPropagation(); testSpeed(${n.index})">带宽</button>
-                    <button class="btn-action" onclick="event.stopPropagation(); shareNode(${n.index})">分享</button>
-                    <span title="${removeTitle}">${removeAction}</span>
-                </div>
+            <div class="auto-node-metrics">
+                <span class="node-type">${escapeHTML(n.type || '')}</span>
+                <span class="latency ${latClass}" id="lat-${n.index}">${latText}</span>
+                <span class="latency ${speedClass}" id="speed-${n.index}">↓ ${speedText}</span>
+            </div>
+            <div class="auto-node-actions">
+                <button class="btn-action ${n.active ? 'btn-action-primary' : ''}" ${switchingNodeIndex !== null ? 'disabled' : ''} onclick="switchNode(${n.index})">${switchingNodeIndex === n.index ? '切换中' : (n.active ? '已选择' : '选择')}</button>
+                <button class="btn-action" onclick="testSingle(${n.index})">延迟</button>
+                <button class="btn-action" onclick="testSpeed(${n.index})">带宽</button>
+                ${shareButton}
+                ${deleteButton}
             </div>
         `;
-        deck.appendChild(card);
+        fragment.appendChild(item);
     });
-    return deck;
+    list.appendChild(fragment);
+    return list;
 }
 
 function findSourceCardByFileName(fileName) {
@@ -664,21 +663,13 @@ function findSourceCardByFileName(fileName) {
         .find(card => card.dataset.fileName === fileName) || null;
 }
 
-function toggleNodeCard(index, event) {
-    const source = event?.target instanceof Element ? event.target : null;
-    if (source?.closest('button')) return;
-    const card = source?.closest('.node-play-card');
-    if (!card) return;
-    card.classList.toggle('revealed');
-}
-
 async function selectNodeGroup(fileName) {
     const seq = ++nodeGroupAnimationSeq;
     if (selectedNodeGroupFile === fileName) {
-        const deck = document.querySelector('.node-detail-body .node-hand');
+        const deck = document.querySelector('.node-detail-body .auto-node-list');
         const sourceCard = findSourceCardByFileName(fileName);
         if (deck) {
-            deck.classList.add('node-hand-collecting');
+            deck.classList.add('auto-node-list-collecting');
             sourceCard?.classList.add('collecting');
             await sleep(260);
             if (seq !== nodeGroupAnimationSeq) return;
@@ -698,41 +689,43 @@ async function selectNodeGroup(fileName) {
     }, 620);
 }
 
-
-
 async function loadSuppliers() {
     try {
         const res = await fetch('/api/suppliers');
         const suppliers = await res.json();
         suppliersCache = suppliers || [];
         const sel = document.getElementById('supplierSelect');
-        sel.innerHTML = '';
+        if (sel) sel.innerHTML = '';
 
         if (!suppliersCache.length) {
-            const opt = document.createElement('option');
-            opt.value = '';
-            opt.textContent = '暂无';
-            opt.disabled = true;
-            opt.selected = true;
-            sel.appendChild(opt);
+            if (sel) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = '暂无';
+                opt.disabled = true;
+                opt.selected = true;
+                sel.appendChild(opt);
+            }
             renderSupplierTraffic(null);
             await loadAggregateGroups();
             return;
         }
 
-        const empty = document.createElement('option');
-        empty.value = '';
-        empty.textContent = '';
-        sel.appendChild(empty);
+        if (sel) {
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.textContent = '';
+            sel.appendChild(empty);
 
-        suppliersCache.forEach(s => {
-            const opt = document.createElement('option');
-            opt.value = s.fileName;
-            opt.textContent = s.name;
-            if (s.active) opt.selected = true;
-            sel.appendChild(opt);
-        });
-        renderSupplierTraffic(sel.value);
+            suppliersCache.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.fileName;
+                opt.textContent = s.name;
+                if (s.active) opt.selected = true;
+                sel.appendChild(opt);
+            });
+        }
+        renderSupplierTraffic(sel?.value);
         await loadAggregateGroups();
         renderAutoSelectConfig();
         renderNodes();
@@ -745,26 +738,28 @@ async function loadAggregateGroups() {
         const groups = await res.json();
         aggregateGroupsCache = groups || [];
         const sel = document.getElementById('aggregateSelect');
-        sel.innerHTML = '';
-        if (!aggregateGroupsCache.length) {
-            const empty = document.createElement('option');
-            empty.value = '';
-            empty.textContent = '暂无';
-            empty.disabled = true;
-            sel.appendChild(empty);
-        } else {
-            const empty = document.createElement('option');
-            empty.value = '';
-            empty.textContent = '';
-            sel.appendChild(empty);
+        if (sel) {
+            sel.innerHTML = '';
+            if (!aggregateGroupsCache.length) {
+                const empty = document.createElement('option');
+                empty.value = '';
+                empty.textContent = '暂无';
+                empty.disabled = true;
+                sel.appendChild(empty);
+            } else {
+                const empty = document.createElement('option');
+                empty.value = '';
+                empty.textContent = '';
+                sel.appendChild(empty);
+            }
+            aggregateGroupsCache.forEach(g => {
+                const opt = document.createElement('option');
+                opt.value = g.fileName;
+                opt.textContent = g.name;
+                if (g.active) opt.selected = true;
+                sel.appendChild(opt);
+            });
         }
-        aggregateGroupsCache.forEach(g => {
-            const opt = document.createElement('option');
-            opt.value = g.fileName;
-            opt.textContent = g.name;
-            if (g.active) opt.selected = true;
-            sel.appendChild(opt);
-        });
         renderAutoSelectConfig();
         renderNodes();
     } catch(e) {}
@@ -841,8 +836,9 @@ function renderSupplierTraffic(fileName) {
 
 function renderFreeTrafficState(state) {
     const btn = document.getElementById('btnFreeTraffic');
-    if (!btn || !state) return;
+    if (!state) return;
     freeTrafficState = state;
+    if (!btn) return;
     const remaining = formatBytes(state.remaining || 0);
     btn.textContent = state.active ? `免费流量 ${remaining}` : '获取免费流量';
     btn.disabled = !!state.exceeded;
@@ -886,7 +882,7 @@ async function useFreeTraffic() {
 
 async function selectDirect() {
     const btn = document.getElementById('btnDirect');
-    const oldText = btn?.textContent || '直连';
+    const oldText = btn?.textContent || '关闭代理/TUN模式';
     if (btn) {
         btn.disabled = true;
         btn.textContent = '切换中';
@@ -978,13 +974,12 @@ async function doAction(type) {
 }
 
 async function activateProxyPreset(preset) {
-    const proxyOn = !!document.getElementById('chkProxy')?.checked;
-    const tunOn = !!document.getElementById('chkTun')?.checked;
+    const proxyControl = document.getElementById('chkProxy');
+    const tunControl = document.getElementById('chkTun');
+    const proxyOn = proxyControl ? !!proxyControl.checked : !!lastConnectionStatus.proxy;
+    const tunOn = tunControl ? !!tunControl.checked : !!lastConnectionStatus.tun;
     const wantProxy = preset === 'proxy' || preset === 'proxy_tun';
     const wantTun = preset === 'tun' || preset === 'proxy_tun';
-    if (preset === 'direct') {
-        await selectDirect();
-    }
     if (proxyOn !== wantProxy) {
         await doAction('proxy');
         await sleep(250);
@@ -1154,7 +1149,7 @@ function renderSelectedNodeGroup(activeNode) {
     } else if (freeTrafficState?.active) {
         groupEl.textContent = '免费流量';
     } else {
-        groupEl.textContent = '直连';
+        groupEl.textContent = '未选择来源组';
     }
 }
 
@@ -1169,6 +1164,7 @@ async function switchNode(idx) {
     const previousNodes = allNodesList.map(n => ({ ...n }));
     allNodesList = allNodesList.map(n => ({ ...n, active: n.index === idx }));
     renderNodes();
+    updateConnectionNodeSummary();
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -1193,6 +1189,7 @@ async function switchNode(idx) {
         setTimeout(() => {
             switchingNodeIndex = null;
             renderNodes();
+            updateConnectionNodeSummary();
         }, 1800);
     }
 }
@@ -1886,7 +1883,7 @@ function renderAutoSelectConfig() {
                 kind: 'subscription',
                 value: s.fileName,
                 title: s.name || s.fileName,
-                meta: `${s.nodeCount || s.count || 0} 节点`,
+                meta: autoSelectSourceMeta('subscription', s),
                 selected: selected.has(s.fileName),
                 index
             })).join('');
@@ -1902,7 +1899,7 @@ function renderAutoSelectConfig() {
                 kind: 'aggregate',
                 value: g.fileName,
                 title: g.name || g.fileName,
-                meta: `${g.count || 0} 节点`,
+                meta: autoSelectSourceMeta('aggregate', g),
                 selected: selected.has(g.fileName),
                 index
             })).join('');
@@ -1954,6 +1951,25 @@ function renderAutoSelectSourceCard({ kind, value, title, meta, selected, index 
     `;
 }
 
+function autoSelectSourceNodeCount(kind, source) {
+    const fileName = source?.fileName || '';
+    if (!fileName) return 0;
+    const liveCount = (allNodesList || []).filter(node => {
+        if (kind === 'subscription') return node.fileName === fileName || node.sourceFile === fileName;
+        return node.fileName === fileName;
+    }).length;
+    const cachedCount = Number(source?.nodeCount || source?.count || 0);
+    return Math.max(liveCount, Number.isFinite(cachedCount) ? cachedCount : 0);
+}
+
+function autoSelectSourceMeta(kind, source) {
+    const total = autoSelectSourceNodeCount(kind, source);
+    const selected = kind === 'subscription'
+        ? (autoSelectConfig?.subscriptionFiles || []).includes(source.fileName)
+        : (autoSelectConfig?.aggregateFiles || []).includes(source.fileName);
+    return `${total} 个节点${selected ? ' · 已选择' : ''}`;
+}
+
 function renderAutoSelectSiteCard(target, selected, index) {
     return `
         <button type="button" class="auto-select-choice-card site ${selected ? 'selected' : ''}" data-auto-select-action="site-target-card" data-target-id="${escapeAttr(target.id)}" aria-pressed="${selected ? 'true' : 'false'}" style="--deal-index:${Math.min(index || 0, 12)}">
@@ -1968,20 +1984,21 @@ function renderAutoSelectSiteCard(target, selected, index) {
 function renderAutoSelectRuleCard(rule, options = {}) {
     const values = autoSelectRuleValues(rule);
     const description = autoSelectRuleDescription(rule);
+    const detail = autoSelectRuleDetail(rule);
     return `
-        <button type="button" class="auto-select-rule-card ${options.justDrawn ? 'drawn' : ''}" data-auto-select-action="open-rule-card" data-rule-id="${escapeAttr(rule.id)}" style="--deal-index:${Math.min(options.index || 0, 18)}">
+        <button type="button" class="auto-select-rule-card ${options.justDrawn ? 'drawn' : ''}" data-auto-select-action="open-rule-card" data-rule-id="${escapeAttr(rule.id)}" title="${escapeAttr(detail)}" style="--deal-index:${Math.min(options.index || 0, 18)}">
             <span class="auto-select-rule-rank">${escapeHTML(autoSelectRuleCardRank(rule.type))}</span>
             <span class="auto-select-rule-suit"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
             <span class="auto-select-rule-title">${escapeHTML(autoSelectRuleLabel(rule))}</span>
             <span class="auto-select-rule-desc">${escapeHTML(description)}</span>
-            <span class="auto-select-rule-meta">${values.length || 1} 个条件</span>
+            <span class="auto-select-rule-meta">${values.length || 1} 个条件 · 点击查看/编辑</span>
         </button>
     `;
 }
 
 function renderAutoSelectDiscardPile(container) {
     if (!container || !autoSelectConfig) return;
-    const pile = (autoSelectConfig.discardedRules || []).slice(0, 5);
+    const pile = autoSelectConfig.discardedRules || [];
     if (!pile.length) {
         container.innerHTML = `
             <div class="auto-select-discard-title">弃牌堆</div>
@@ -1990,7 +2007,7 @@ function renderAutoSelectDiscardPile(container) {
         return;
     }
     container.innerHTML = `
-        <div class="auto-select-discard-title">弃牌堆 <span>${pile.length}/5</span></div>
+        <div class="auto-select-discard-title">弃牌堆 <span>${pile.length} 张</span></div>
         <div class="auto-select-discard-stack">
             ${pile.map((rule, index) => renderAutoSelectDiscardCard(rule, index)).join('')}
         </div>
@@ -1998,8 +2015,9 @@ function renderAutoSelectDiscardPile(container) {
 }
 
 function renderAutoSelectDiscardCard(rule, index) {
+    const detail = autoSelectRuleDetail(rule);
     return `
-        <button type="button" class="auto-select-rule-card discarded" data-auto-select-action="restore-discarded-rule" data-discard-index="${index}" title="重新启用规则牌" aria-label="重新启用规则牌：${escapeAttr(autoSelectRuleLabel(rule))}" style="--discard-index:${index}; z-index:${10 - index}">
+        <button type="button" class="auto-select-rule-card discarded" data-auto-select-action="restore-discarded-rule" data-discard-index="${index}" title="${escapeAttr(detail)}" aria-label="查看弃牌：${escapeAttr(autoSelectRuleLabel(rule))}" style="--discard-index:${index}">
             <span class="auto-select-rule-rank">${escapeHTML(autoSelectRuleCardRank(rule.type))}</span>
             <span class="auto-select-rule-suit"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
             <span class="auto-select-rule-title">${escapeHTML(autoSelectRuleLabel(rule))}</span>
@@ -2376,7 +2394,7 @@ function pushAutoSelectDiscardedRules(rules) {
     autoSelectConfig.discardedRules = [
         ...next,
         ...(autoSelectConfig.discardedRules || [])
-    ].slice(0, 5);
+    ].slice(0, 20);
 }
 
 function restoreAutoSelectDiscardedRule(indexValue) {
@@ -2386,6 +2404,10 @@ function restoreAutoSelectDiscardedRule(indexValue) {
     const discarded = autoSelectConfig.discardedRules || [];
     const rule = discarded[index];
     if (!rule) return;
+    const detail = autoSelectRuleDetail(rule);
+    if (!confirm('查看弃牌内容：\n\n' + detail + '\n\n是否重新启用这张规则牌？')) {
+        return;
+    }
     autoSelectConfig.discardedRules = discarded.filter((_, itemIndex) => itemIndex !== index);
     const restored = {
         ...rule,
@@ -2481,6 +2503,12 @@ function autoSelectRuleDescription(rule) {
         case 'exclude_protocol': return '排除协议：' + values;
         default: return '排除：' + values;
     }
+}
+
+function autoSelectRuleDetail(rule) {
+    const values = autoSelectRuleValues(rule);
+    const content = values.length ? values.join('\n') : (rule.value || '（空）');
+    return `${autoSelectRuleLabel(rule)}\n${autoSelectRuleTypeLabel(rule.type)}\n\n${content}`;
 }
 
 function supplierNameByFile(fileName) {
@@ -2826,16 +2854,13 @@ async function ensureAutoSelectNetworkMode() {
     const mode = autoSelectConfig?.startupMode || 'none';
     if (mode === 'none') return;
     await loadStatus();
-    const proxyOn = !!document.getElementById('chkProxy')?.checked;
-    const tunOn = !!document.getElementById('chkTun')?.checked;
-    if ((mode === 'proxy' || mode === 'proxy_tun') && !proxyOn) {
-        showToast('自动选择已开启，正在启动系统代理', 'info', 1800);
-        await doAction('proxy');
-    }
-    if ((mode === 'tun' || mode === 'proxy_tun') && !tunOn) {
-        showToast('自动选择已开启，正在启动 TUN', 'info', 1800);
-        await doAction('tun');
-    }
+    const modeLabel = {
+        proxy: '系统代理（关闭 TUN）',
+        tun: 'TUN（关闭系统代理）',
+        proxy_tun: '代理+TUN'
+    }[mode] || '';
+    if (modeLabel) showToast('自动选择已开启，正在切换到 ' + modeLabel, 'info', 1800);
+    await activateProxyPreset(mode);
 }
 
 async function runAutoSelectNow() {

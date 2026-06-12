@@ -29,6 +29,7 @@ import (
 	"wing/pkg/utils"
 	"wing/protocol"
 
+	"github.com/getlantern/systray"
 	"github.com/skip2/go-qrcode"
 )
 
@@ -595,6 +596,31 @@ func SaveAggregateGroups(groups []AggregateGroup) error {
 	return secure.SecureWriteFile(AggregateGroupsFile, data)
 }
 
+func aggregateGroupByFile(fileName string) (AggregateGroup, bool) {
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		return AggregateGroup{}, false
+	}
+	groups, err := ReadAggregateGroups()
+	if err != nil {
+		return AggregateGroup{}, false
+	}
+	for _, group := range groups {
+		if group.FileName == fileName {
+			return group, true
+		}
+	}
+	return AggregateGroup{}, false
+}
+
+func isManagedAggregateGroupFileName(fileName string) bool {
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" || strings.ContainsAny(fileName, `/\`) || !strings.HasSuffix(fileName, ".yml") {
+		return false
+	}
+	return strings.HasPrefix(fileName, "group_") || strings.HasPrefix(fileName, "agg_")
+}
+
 func withAggregateSource(sourceFile string, nodes []protocol.Node) []protocol.Node {
 	out := make([]protocol.Node, len(nodes))
 	for i, node := range nodes {
@@ -797,6 +823,12 @@ func aggregateGroupsHandler(w http.ResponseWriter, r *http.Request) {
 
 func switchAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 	fileName := r.URL.Query().Get("file")
+	group, ok := aggregateGroupByFile(fileName)
+	if !ok {
+		http.Error(w, "Group not found", http.StatusNotFound)
+		return
+	}
+	fileName = group.FileName
 	nodes, err := protocol.ParseNodes(fileName)
 	if err == nil && len(nodes) > 0 {
 		sub.SetActiveConfigFile(fileName)
@@ -819,7 +851,9 @@ func deleteAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 		if group.FileName == fileName {
 			found = true
 			_ = storage.Delete(group.FileName)
-			_ = os.Remove(group.FileName)
+			if isManagedAggregateGroupFileName(group.FileName) {
+				_ = os.Remove(group.FileName)
+			}
 			continue
 		}
 		next = append(next, group)
@@ -1822,11 +1856,7 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 					json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "requiresAdmin": true, "msg": "自动请求管理员权限失败: " + err.Error()})
 					return
 				}
-				utils.SafeGo("exit after admin restart", func() {
-					time.Sleep(500 * time.Millisecond)
-					utils.ReleaseSingleInstanceLock()
-					os.Exit(0)
-				})
+				scheduleExitAfterAdminRestart("auto admin restart")
 				json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "restarting": true, "msg": "正在请求管理员权限并重启 wing..."})
 				return
 			}
@@ -1873,12 +1903,15 @@ func restartAdminHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "请求管理员权限失败: " + err.Error()})
 		return
 	}
-	utils.SafeGo("exit after manual admin restart", func() {
-		time.Sleep(500 * time.Millisecond)
-		utils.ReleaseSingleInstanceLock()
-		os.Exit(0)
-	})
+	scheduleExitAfterAdminRestart("manual admin restart")
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "restarting": true, "msg": "正在请求管理员权限并重启 wing..."})
+}
+
+func scheduleExitAfterAdminRestart(name string) {
+	utils.SafeGo(name, func() {
+		time.Sleep(500 * time.Millisecond)
+		systray.Quit()
+	})
 }
 
 func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
@@ -2096,6 +2129,12 @@ func importSubscriptionHandler(w http.ResponseWriter, r *http.Request) {
 
 func aggGroupNodesHandler(w http.ResponseWriter, r *http.Request) {
 	fileName := r.URL.Query().Get("file")
+	group, ok := aggregateGroupByFile(fileName)
+	if !ok {
+		http.Error(w, "Group not found", http.StatusNotFound)
+		return
+	}
+	fileName = group.FileName
 	nodes, err := protocol.ParseNodes(fileName)
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil || nodes == nil {
@@ -2118,14 +2157,20 @@ func aggGroupAddNodesHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
-	existing, _ := protocol.ParseNodes(req.File)
+	group, ok := aggregateGroupByFile(req.File)
+	if !ok {
+		http.Error(w, "Group not found", http.StatusNotFound)
+		return
+	}
+	fileName := group.FileName
+	existing, _ := protocol.ParseNodes(fileName)
 	existing = append(existing, normalizeAggregateSources(req.Nodes)...)
-	if err := sub.SaveNodesToYAML(req.File, existing); err != nil {
+	if err := sub.SaveNodesToYAML(fileName, existing); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
 		return
 	}
-	if sub.CurrentConfigFile == req.File {
+	if sub.CurrentConfigFile == fileName {
 		common.AllNodes = existing
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
@@ -2164,6 +2209,12 @@ func aggGroupRemoveNodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fileName := r.URL.Query().Get("file")
+	group, ok := aggregateGroupByFile(fileName)
+	if !ok {
+		http.Error(w, "Group not found", http.StatusNotFound)
+		return
+	}
+	fileName = group.FileName
 	idxStr := r.URL.Query().Get("idx")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil {

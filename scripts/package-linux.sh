@@ -1,27 +1,49 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${WING_VERSION:-1.0.2}"
+VERSION="${WING_VERSION:-1.0.3}"
+ARCH="${WING_ARCH:-$(uname -m)}"
+case "$ARCH" in
+  x86_64|amd64) DIST_ARCH="x64" ;;
+  aarch64|arm64) DIST_ARCH="arm64" ;;
+  *) DIST_ARCH="$ARCH" ;;
+esac
 TAGS="with_quic,with_utls,with_gvisor,with_naive_outbound,with_purego"
 DIST="$ROOT/dist"
 WORK="$DIST/linux-package"
 PAYLOAD="$WORK/payload"
 ARCHIVE="$WORK/wing-linux-payload.tar.gz"
-INSTALLER="$DIST/wing-${VERSION}-linux-x64.run"
+INSTALLER="$DIST/wing-${VERSION}-linux-${DIST_ARCH}.run"
 
 rm -rf "$WORK"
 mkdir -p "$PAYLOAD" "$DIST"
 
-echo "Building wing Linux backend..."
+if [[ "$(uname -s)" != "Linux" ]]; then
+  echo "Linux packages must be built on Linux." >&2
+  exit 1
+fi
+
+echo "Building wing Linux backend (${DIST_ARCH})..."
 (cd "$ROOT" && go build -tags "$TAGS" -ldflags "-s -w" -o "$PAYLOAD/wing" .)
 chmod +x "$PAYLOAD/wing"
 
 cat > "$PAYLOAD/README.txt" <<EOF
 wing ${VERSION}
 
-Run ./wing to start the local backend and tray. If the desktop UI bundle is not
-present, wing opens http://127.0.0.1:10809/ in your default browser.
+Run ./wing to start the local backend and tray. The local control panel runs at
+http://127.0.0.1:10809/ and opens in the default browser when no Flutter desktop
+bundle is present for this platform.
+EOF
+
+cat > "$PAYLOAD/wing.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=wing
+Comment=Desktop proxy client
+Exec=__INSTALL_DIR__/wing
+Terminal=false
+Categories=Network;
 EOF
 
 tar -czf "$ARCHIVE" -C "$PAYLOAD" .
@@ -43,16 +65,7 @@ chmod +x "$INSTALL_DIR/wing"
 
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 ln -sf "$INSTALL_DIR/wing" "$HOME/.local/bin/wing"
-
-cat > "$HOME/.local/share/applications/wing.desktop" <<DESKTOP
-[Desktop Entry]
-Type=Application
-Name=wing
-Comment=Desktop proxy client backend
-Exec=$INSTALL_DIR/wing
-Terminal=false
-Categories=Network;
-DESKTOP
+sed "s#__INSTALL_DIR__#$INSTALL_DIR#g" "$INSTALL_DIR/wing.desktop" > "$HOME/.local/share/applications/wing.desktop"
 
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true

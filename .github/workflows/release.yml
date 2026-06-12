@@ -12,9 +12,9 @@ permissions:
   contents: write
 
 env:
-  WING_VERSION: "1.0.2"
+  WING_VERSION: "1.0.3"
   FLUTTER_VERSION: "3.29.2"
-  FLUTTER_BUILD_NUMBER: "2"
+  FLUTTER_BUILD_NUMBER: "3"
 
 jobs:
   windows:
@@ -122,12 +122,10 @@ jobs:
           cache: true
 
       - name: Build Android APK
-        working-directory: flutter_ui
         run: |
-          flutter pub get
-          flutter build apk --release --build-name "$WING_VERSION" --build-number "$FLUTTER_BUILD_NUMBER"
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
-          cp build/app/outputs/flutter-apk/app-release.apk "$GITHUB_WORKSPACE/artifacts/wing-${WING_VERSION}-android-universal.apk"
+          bash scripts/package-android.sh
+          cp "dist/wing-${WING_VERSION}-android-universal.apk" "$GITHUB_WORKSPACE/artifacts/"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -147,13 +145,10 @@ jobs:
           cache: true
 
       - name: Build unsigned iOS IPA
-        working-directory: flutter_ui
         run: |
-          flutter pub get
-          flutter build ios --release --no-codesign --build-name "$WING_VERSION" --build-number "$FLUTTER_BUILD_NUMBER"
-          mkdir -p Payload "$GITHUB_WORKSPACE/artifacts"
-          cp -R build/ios/iphoneos/Runner.app Payload/
-          ditto -c -k --sequesterRsrc --keepParent Payload "$GITHUB_WORKSPACE/artifacts/wing-${WING_VERSION}-ios-unsigned.ipa"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          bash scripts/package-ios.sh
+          cp "dist/wing-${WING_VERSION}-ios-unsigned.ipa" "$GITHUB_WORKSPACE/artifacts/"
 
       - uses: actions/upload-artifact@v4
         with:

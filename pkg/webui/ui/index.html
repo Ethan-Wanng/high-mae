@@ -16,7 +16,6 @@
                 <div class="brand-badge"><img class="brand-mark" src="logo-mark.png" alt="wing"></div>
                 <div>
                     <h1>wing</h1>
-                    <div class="subtitle">Windows 桌面代理客户端 v1.0.2 · 规则分流 / 隧道连接 / Mieru / Naive / AnyTLS</div>
                 </div>
             </div>
 
@@ -34,8 +33,8 @@
                     <div id="statusModeLabel" class="status-mode-label">直连 / 未开启</div>
                 </div>
                 <div class="proxy-mode-strip">
-                    <button class="proxy-mode-button" data-preset="direct" onclick="activateProxyPreset('direct')" title="关闭系统代理与 TUN，并使用直连" aria-label="直连">
-                        <img src="logo-mark.png" alt=""><span>直</span>
+                    <button class="proxy-mode-button" data-preset="direct" onclick="activateProxyPreset('direct')" title="关闭系统代理与 TUN，保留当前节点选择" aria-label="关闭代理/TUN模式">
+                        <img src="logo-mark.png" alt=""><span>关</span>
                     </button>
                     <button class="proxy-mode-button" data-preset="proxy" onclick="activateProxyPreset('proxy')" title="只开启系统代理" aria-label="系统代理">
                         <img src="logo-mark.png" alt=""><span>P</span>
@@ -88,7 +87,7 @@
                                 <select id="aggregateSelect" onchange="switchAggregateGroup(this.value)" style="display:none;"></select>
                                 <button class="btn-update icon-button" id="btnUpdate" onclick="updateSupplier()" title="更新全部订阅">↻</button>
                                 <button class="btn-primary" id="btnTestAll" onclick="testAll()">极速测速</button>
-                                <button class="btn-ghost direct-button" id="btnDirect" onclick="selectDirect()" title="不选择节点，所有代理入口改为直连">直连</button>
+                                <button class="btn-ghost direct-button" id="btnDirect" onclick="activateProxyPreset('direct')" title="关闭系统代理与 TUN，保留当前节点选择">关闭代理/TUN模式</button>
                             </div>
                         </div>
                     </div>
@@ -144,8 +143,8 @@
                                     <span class="auto-select-inline-label">自动启动</span>
                                     <select id="autoSelectStartupMode" data-auto-select-action="startup-mode" style="min-width:140px;">
                                         <option value="none">不自动启动</option>
-                                        <option value="proxy">系统代理</option>
-                                        <option value="tun">TUN</option>
+                                        <option value="proxy">系统代理（关闭 TUN）</option>
+                                        <option value="tun">TUN（关闭系统代理）</option>
                                         <option value="proxy_tun">代理+TUN</option>
                                     </select>
                                 </div>
@@ -379,124 +378,170 @@
 
         <!-- Tab 4: System Settings -->
         <div id="tab-settings" class="tab-content">
-            <div class="settings-layout" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;">
-                <!-- Left Column: Feature Toggles & Subscription Traffic -->
-                <div style="display: flex; flex-direction: column; gap: 16px;">
-                    <!-- Status Toggles -->
-                    <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg);">
-                        <h4 style="margin: 0 0 16px 0; font-size: 14px; color: var(--accent); display: flex; align-items: center; gap: 6px;">🟢 功能核心开关</h4>
-                        <div class="controls" style="margin: 0; padding: 0; background: transparent; border: none; box-shadow: none; display: flex; flex-direction: column; gap: 12px;">
-                            <div class="control-row" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 0;">
-                                <div class="control-card" style="padding: 12px 16px;">
-                                    <span>🟢 代理服务</span>
-                                    <label class="toggle"><input type="checkbox" id="chkProxy" onchange="doAction('proxy')"><span class="slider"></span></label>
-                                </div>
-                                <div class="control-card" style="padding: 12px 16px;">
-                                    <span>🔄 全局路由</span>
-                                    <label class="toggle"><input type="checkbox" id="chkMode" onchange="doAction('mode')"><span class="slider"></span></label>
-                                </div>
+            <div class="settings-layout">
+                <section class="settings-column">
+                    <div class="settings-panel settings-hero-panel">
+                        <div class="settings-panel-heading">
+                            <div>
+                                <h3>运行模式</h3>
+                                <p>控制系统代理、路由策略、TUN 和浏览器泄露防护。</p>
                             </div>
-                            <div class="control-row" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 0;">
-                                <div class="control-card" style="padding: 12px 16px;" title="通过 TUN 隧道接管不遵循系统代理的应用流量">
-                                    <span>🔌 隧道连接</span>
-                                    <label class="toggle"><input type="checkbox" id="chkTun" onchange="doAction('tun')"><span class="slider"></span></label>
-                                </div>
-                                <div class="control-card" style="padding: 12px 16px;" title="修改浏览器配置以防止真实 IP 泄露">
-                                    <span>🛡️ WebRTC</span>
-                                    <label class="toggle"><input type="checkbox" id="chkWebRTC" onchange="doAction('webrtc')"><span class="slider"></span></label>
-                                </div>
-                            </div>
+                        </div>
+                        <div class="settings-toggle-grid">
+                            <label class="settings-switch-card">
+                                <span class="settings-switch-copy">
+                                    <strong>代理服务</strong>
+                                    <small>开启系统 HTTP/SOCKS 代理入口。</small>
+                                </span>
+                                <span class="toggle"><input type="checkbox" id="chkProxy" onchange="doAction('proxy')"><span class="slider"></span></span>
+                            </label>
+                            <label class="settings-switch-card">
+                                <span class="settings-switch-copy">
+                                    <strong>全局路由</strong>
+                                    <small>关闭时使用规则分流。</small>
+                                </span>
+                                <span class="toggle"><input type="checkbox" id="chkMode" onchange="doAction('mode')"><span class="slider"></span></span>
+                            </label>
+                            <label class="settings-switch-card">
+                                <span class="settings-switch-copy">
+                                    <strong>隧道连接</strong>
+                                    <small>接管不遵循系统代理的应用流量。</small>
+                                </span>
+                                <span class="toggle"><input type="checkbox" id="chkTun" onchange="doAction('tun')"><span class="slider"></span></span>
+                            </label>
+                            <label class="settings-switch-card">
+                                <span class="settings-switch-copy">
+                                    <strong>WebRTC 防泄露</strong>
+                                    <small>写入浏览器策略，减少真实 IP 暴露。</small>
+                                </span>
+                                <span class="toggle"><input type="checkbox" id="chkWebRTC" onchange="doAction('webrtc')"><span class="slider"></span></span>
+                            </label>
                         </div>
                     </div>
 
-                    <!-- Basic Settings -->
-                    <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg);">
-                        <h4 style="margin: 0 0 16px 0; font-size: 14px; color: var(--accent); display: flex; align-items: center; gap: 6px;">⚙️ 基础设置</h4>
-                        <div class="controls" style="margin: 0; padding: 0; background: transparent; border: none; box-shadow: none; display: flex; flex-direction: column; gap: 12px;">
-                            <div class="control-row" style="display: grid; grid-template-columns: 1fr; gap: 12px; margin: 0;">
-                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;">
-                                    <span>🌐 HTTP代理端口</span>
-                                    <div style="display: flex; gap: 8px;">
-                                        <input type="number" id="txtProxyPort" placeholder="默认10808" style="width: 120px; padding: 6px 10px; border-radius: var(--radius); border: 1px solid rgba(148,163,184,0.18); background: rgba(255,255,255,0.05); color: var(--text-main); outline: none;" />
-                                        <button class="btn-primary" onclick="saveProxyPort()" style="padding: 6px 12px; font-size: 12px;">保存</button>
-                                    </div>
+                    <div class="settings-panel">
+                        <div class="settings-panel-heading">
+                            <div>
+                                <h3>系统偏好</h3>
+                                <p>端口、启动行为、解析策略和主题。</p>
+                            </div>
+                            <button class="btn-ghost settings-admin-button" onclick="restartAsAdmin()">管理员重启</button>
+                        </div>
+                        <div class="settings-form-list">
+                            <div class="settings-form-row">
+                                <div class="settings-form-copy">
+                                    <strong>HTTP 代理端口</strong>
+                                    <small>本地代理监听端口，默认 10808。</small>
                                 </div>
-                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;" title="开启后 Bing 相关域名会优先走代理，减少 bing.com 跳转到 cn.bing.com">
-                                    <span>防 Bing CN 跳转</span>
-                                    <label class="toggle"><input type="checkbox" id="chkBingRedirectGuard" onchange="saveBingRedirectGuard(this.checked)"><span class="slider"></span></label>
+                                <div class="settings-inline-control">
+                                    <input class="settings-number-input" type="number" id="txtProxyPort" placeholder="10808">
+                                    <button class="btn-primary settings-save-button" onclick="saveProxyPort()">保存</button>
                                 </div>
-                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;" title="开启后节点域名解析和 TUN DNS 会优先使用 IPv6">
-                                    <span>IPv6 开关</span>
-                                    <label class="toggle"><input type="checkbox" id="chkPreferIPv6" onchange="savePreferIPv6(this.checked)"><span class="slider"></span></label>
+                            </div>
+                            <label class="settings-form-row">
+                                <span class="settings-form-copy">
+                                    <strong>防 Bing CN 跳转</strong>
+                                    <small>Bing 相关域名优先走代理。</small>
+                                </span>
+                                <span class="toggle"><input type="checkbox" id="chkBingRedirectGuard" onchange="saveBingRedirectGuard(this.checked)"><span class="slider"></span></span>
+                            </label>
+                            <label class="settings-form-row">
+                                <span class="settings-form-copy">
+                                    <strong>IPv6 优先</strong>
+                                    <small>节点域名和 TUN DNS 优先使用 IPv6。</small>
+                                </span>
+                                <span class="toggle"><input type="checkbox" id="chkPreferIPv6" onchange="savePreferIPv6(this.checked)"><span class="slider"></span></span>
+                            </label>
+                            <label class="settings-form-row">
+                                <span class="settings-form-copy">
+                                    <strong>需要管理员权限时自动重启</strong>
+                                    <small>开启 TUN 等能力时自动请求 UAC。</small>
+                                </span>
+                                <span class="toggle"><input type="checkbox" id="chkAutoRestartAsAdmin" onchange="saveAutoRestartAsAdmin(this.checked)"><span class="slider"></span></span>
+                            </label>
+                            <label class="settings-form-row">
+                                <span class="settings-form-copy">
+                                    <strong>开机自启动</strong>
+                                    <small>登录 Windows 后自动启动 wing。</small>
+                                </span>
+                                <span class="toggle"><input type="checkbox" id="chkStartupEnabled" onchange="saveStartupEnabled(this.checked)"><span class="slider"></span></span>
+                            </label>
+                            <div class="settings-form-row">
+                                <div class="settings-form-copy">
+                                    <strong>界面主题</strong>
+                                    <small>选择浅色、深色或跟随系统。</small>
                                 </div>
-                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;" title="开启后，如果开启 TUN 等功能需要管理员权限，会自动请求 UAC 并重启 wing">
-                                    <span>需要管理员权限时自动重启</span>
-                                    <label class="toggle"><input type="checkbox" id="chkAutoRestartAsAdmin" onchange="saveAutoRestartAsAdmin(this.checked)"><span class="slider"></span></label>
-                                </div>
-                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;" title="登录 Windows 后自动启动 wing">
-                                    <span>开机自启动</span>
-                                    <label class="toggle"><input type="checkbox" id="chkStartupEnabled" onchange="saveStartupEnabled(this.checked)"><span class="slider"></span></label>
-                                </div>
-                                <div class="control-card" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;" title="选择浅色、深色或跟随系统主题">
-                                    <span>界面主题</span>
-                                    <select id="themeModeSelect" onchange="saveThemeMode(this.value)" style="min-width: 132px; padding: 7px 10px; border-radius: var(--radius); border: 1px solid rgba(148,163,184,0.18); background: rgba(255,255,255,0.08); color: var(--text-main); outline: none;">
-                                        <option value="system">跟随系统</option>
-                                        <option value="dark">深色</option>
-                                        <option value="light">浅色</option>
-                                    </select>
-                                </div>
-                                <button class="btn-ghost" onclick="restartAsAdmin()" style="height: 44px; border-radius: 12px; font-weight: 600;">以管理员身份重启</button>
+                                <select id="themeModeSelect" class="settings-select" onchange="saveThemeMode(this.value)">
+                                    <option value="system">跟随系统</option>
+                                    <option value="dark">深色</option>
+                                    <option value="light">浅色</option>
+                                </select>
                             </div>
                         </div>
                     </div>
-
-                    <!-- Active Subscription Traffic Info -->
-                    <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg);">
-                        <h4 style="margin: 0 0 12px 0; font-size: 14px; color: var(--accent-2); display: flex; align-items: center; gap: 6px;">📦 订阅流量状态</h4>
-                        <div class="supplier-traffic" id="supplierTraffic" style="font-size: 13px; color: var(--text-sub); line-height: 1.6; min-height: 40px;"></div>
-                    </div>
-
                 </div>
 
-                <!-- Right Column: Advanced Configuration Management Tools -->
-                <div class="log-container" style="padding: 20px; border-radius: 14px; background: var(--card-bg); display: flex; flex-direction: column; gap: 16px;">
-                    <h4 style="margin: 0; font-size: 14px; color: var(--accent); display: flex; align-items: center; gap: 6px;">入口操作</h4>
-                    <div class="system-action-deck">
-                        <button class="system-action-card import" id="btnImport" onclick="importSubscription()">
-                            <span>导入订阅</span>
-                            <small>粘贴订阅链接或节点链接</small>
-                        </button>
-                        <button class="system-action-card add" onclick="openAddModal()">
-                            <span>添加节点</span>
-                            <small>手动添加单节点</small>
-                        </button>
-                        <button class="system-action-card free" id="btnFreeTraffic" onclick="useFreeTraffic()">
-                            <span>免费流量</span>
-                            <small>临时试用可用出口</small>
-                        </button>
+                <aside class="settings-side">
+                    <div class="settings-panel">
+                        <div class="settings-panel-heading">
+                            <div>
+                                <h3>订阅流量</h3>
+                                <p>当前来源组的套餐余量和到期信息。</p>
+                            </div>
+                        </div>
+                        <div class="supplier-traffic settings-traffic" id="supplierTraffic"></div>
                     </div>
 
-                    <h4 style="margin: 0; font-size: 14px; color: var(--accent); display: flex; align-items: center; gap: 6px;">🛠️ 高级网络管理工具</h4>
-                    <div style="display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 6px;">
-                        <button class="btn-primary" onclick="openRuleModal()" style="height: 48px; border-radius: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; cursor: pointer;">
-                            规则分流管理组
-                        </button>
-                        <button class="btn-ghost" onclick="openDNSModal()" style="height: 48px; border-radius: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; border: 1px solid rgba(148, 163, 184, 0.18); cursor: pointer;">
-                            DNS 规则管理
-                        </button>
-                        <button class="btn-ghost" onclick="openAggGroupModal()" style="height: 48px; border-radius: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; border: 1px solid rgba(148, 163, 184, 0.18); cursor: pointer;">
-                            聚合分组管理
-                        </button>
+                    <div class="settings-panel">
+                        <div class="settings-panel-heading">
+                            <div>
+                                <h3>入口操作</h3>
+                                <p>导入、添加和临时出口。</p>
+                            </div>
+                        </div>
+                        <div class="settings-action-grid">
+                            <button class="system-action-card import" id="btnImport" onclick="importSubscription()">
+                                <span>导入订阅</span>
+                                <small>粘贴订阅链接或节点链接</small>
+                            </button>
+                            <button class="system-action-card add" onclick="openAddModal()">
+                                <span>添加节点</span>
+                                <small>手动添加单节点</small>
+                            </button>
+                            <button class="system-action-card free" id="btnFreeTraffic" onclick="useFreeTraffic()">
+                                <span>免费流量</span>
+                                <small>临时试用可用出口</small>
+                            </button>
+                        </div>
                     </div>
-                </div>
+
+                    <div class="settings-panel">
+                        <div class="settings-panel-heading">
+                            <div>
+                                <h3>高级管理</h3>
+                                <p>规则、DNS 和聚合组配置。</p>
+                            </div>
+                        </div>
+                        <div class="settings-management-list">
+                            <button class="settings-management-button primary" onclick="openRuleModal()">
+                                <span>规则分流管理</span>
+                                <small>路由组、单条规则和命令行规则</small>
+                            </button>
+                            <button class="settings-management-button" onclick="openDNSModal()">
+                                <span>DNS 规则管理</span>
+                                <small>服务器、分流规则和自动覆写</small>
+                            </button>
+                            <button class="settings-management-button" onclick="openAggGroupModal()">
+                                <span>聚合分组管理</span>
+                                <small>把多个订阅节点组合成候选池</small>
+                            </button>
+                        </div>
+                    </div>
+                </aside>
             </div>
         </div>
         </div>
 
-        <div class="footer">
-            <div class="footer-brand">wing v1.0.2</div>
-            <p>项目介绍已移动到帮助中心。</p>
-        </div>
     </div>
 
     <div class="modal-overlay" id="addModal">

@@ -3,7 +3,7 @@ setlocal
 
 set "ROOT=%~dp0"
 set "SCRIPT=%ROOT%scripts\mk.ps1"
-set "OUTPUT=%ROOT%dist\wing-installer.exe"
+set "OUTPUT=%ROOT%dist\wing-1.0.3-windows-x64-setup.exe"
 
 title wing installer package
 cd /d "%ROOT%"

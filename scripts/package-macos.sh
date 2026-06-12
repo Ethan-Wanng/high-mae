@@ -1,8 +1,14 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${WING_VERSION:-1.0.2}"
+VERSION="${WING_VERSION:-1.0.3}"
+ARCH="${WING_ARCH:-$(uname -m)}"
+case "$ARCH" in
+  x86_64|amd64) DIST_ARCH="x64" ;;
+  arm64|aarch64) DIST_ARCH="arm64" ;;
+  *) DIST_ARCH="$ARCH" ;;
+esac
 TAGS="with_quic,with_utls,with_gvisor,with_naive_outbound,with_purego"
 DIST="$ROOT/dist"
 WORK="$DIST/macos-package"
@@ -10,14 +16,23 @@ APP="$WORK/root/Applications/wing.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
-PKG="$DIST/wing-${VERSION}-macos-x64.pkg"
+PKG="$DIST/wing-${VERSION}-macos-${DIST_ARCH}.pkg"
 
 rm -rf "$WORK"
 mkdir -p "$MACOS" "$RESOURCES" "$DIST"
 
-echo "Building wing macOS backend..."
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "macOS packages must be built on macOS." >&2
+  exit 1
+fi
+
+echo "Building wing macOS app (${DIST_ARCH})..."
 (cd "$ROOT" && go build -tags "$TAGS" -ldflags "-s -w" -o "$MACOS/wing" .)
 chmod +x "$MACOS/wing"
+
+if [[ -f "$ROOT/assets/icon.ico" ]]; then
+  cp "$ROOT/assets/icon.ico" "$RESOURCES/icon.ico"
+fi
 
 cat > "$CONTENTS/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -34,6 +49,8 @@ cat > "$CONTENTS/Info.plist" <<EOF
   <string>wing</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CFBundleIconFile</key>
+  <string>icon.ico</string>
   <key>CFBundleShortVersionString</key>
   <string>${VERSION}</string>
   <key>CFBundleVersion</key>
