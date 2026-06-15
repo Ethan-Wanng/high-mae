@@ -10,12 +10,56 @@
 
 <body>
     <div class="toast-container" id="toastContainer"></div>
+    <button class="app-update-button" id="appUpdateButton" onclick="openAppUpdate()" title="下载新版本" aria-label="下载新版本" hidden>
+        <span class="app-update-dot"></span>
+        <span>下载更新</span>
+    </button>
     <div class="container">
         <div class="header">
-            <div class="brand">
-                <div class="brand-badge"><img class="brand-mark" src="logo-mark.png" alt="wing"></div>
-                <div>
-                    <h1>wing</h1>
+            <div class="header-left">
+                <div class="brand">
+                    <div class="brand-badge"><img class="brand-mark" src="logo-mark.png" alt="wing"></div>
+                    <div>
+                        <h1>wing</h1>
+                    </div>
+                </div>
+            </div>
+
+            <div class="island-center" id="islandCenter">
+                <div class="tabs" aria-label="主导航">
+                    <button class="tab-btn active" onclick="handleBottomTabClick('nodes')" title="节点选择" aria-label="节点选择">
+                        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.5"></rect><path d="M9 7h.01M15 17h.01"></path><path d="M8 12h8"></path></svg>
+                    </button>
+                    <button class="tab-btn" onclick="handleBottomTabClick('dashboard')" title="数据看板" aria-label="数据看板">
+                        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M8 16v-5"></path><path d="M12 16V8"></path><path d="M16 16v-3"></path></svg>
+                    </button>
+                    <button class="tab-btn" onclick="handleBottomTabClick('sitecheck')" title="测试网站" aria-label="测试网站">
+                        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16"></path><path d="M12 4a12 12 0 0 1 0 16"></path><path d="M12 4a12 12 0 0 0 0 16"></path></svg>
+                    </button>
+                    <button class="tab-btn" onclick="handleBottomTabClick('help')" title="帮助中心" aria-label="帮助中心">
+                        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9a3 3 0 1 1 5.3 1.9c-1.2.8-2.3 1.5-2.3 3.1"></path><path d="M12 18h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
+                    </button>
+                    <button class="tab-btn" onclick="handleBottomTabClick('settings')" title="系统设置" aria-label="系统设置">
+                        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3"></path><path d="M12 18v3"></path><path d="m4.9 4.9 2.1 2.1"></path><path d="m17 17 2.1 2.1"></path><path d="M3 12h3"></path><path d="M18 12h3"></path><path d="m4.9 19.1 2.1-2.1"></path><path d="m17 7 2.1-2.1"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    </button>
+                </div>
+                <button class="island-node-summary" id="islandNodeSummary" onclick="toggleIslandNodeModes(event)" title="当前节点">
+                    <span id="islandNodeLabel">订阅组 / --</span>
+                    <strong id="islandNodeName">未选择节点</strong>
+                </button>
+                <div class="island-mode-strip" id="islandModeStrip" aria-label="当前节点模式">
+                    <button class="proxy-mode-button island-mode-button" data-preset="direct" onclick="activateProxyPreset('direct')" title="直连" aria-label="直连">
+                        <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14"></path><path d="m13 7 5 5-5 5"></path></svg>
+                    </button>
+                    <button class="proxy-mode-button island-mode-button" data-preset="proxy" onclick="activateProxyPreset('proxy')" title="代理" aria-label="代理">
+                        <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16"></path><path d="M12 4a12 12 0 0 1 0 16"></path><path d="M12 4a12 12 0 0 0 0 16"></path></svg>
+                    </button>
+                    <button class="proxy-mode-button island-mode-button" data-preset="tun" onclick="activateProxyPreset('tun')" title="TUN" aria-label="TUN">
+                        <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7v5c0 5-3.4 8.4-8 9-4.6-.6-8-4-8-9V7l8-4Z"></path><path d="M9 12h6"></path></svg>
+                    </button>
+                    <button class="proxy-mode-button island-mode-button" data-preset="proxy_tun" onclick="activateProxyPreset('proxy_tun')" title="代理+TUN" aria-label="代理+TUN">
+                        <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7v5c0 5-3.4 8.4-8 9-4.6-.6-8-4-8-9V7l8-4Z"></path><path d="M8 12h8"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    </button>
                 </div>
             </div>
 
@@ -28,44 +72,31 @@
             <div class="connection-card" id="connectionCard">
                 <div class="connection-orb" id="connectionOrb"><img src="logo-mark.png" alt=""></div>
                 <div class="connection-copy">
-                    <div id="selectedNodeGroupDisplay" class="selected-node-group-display">来源组: --</div>
-                    <div id="selectedNodeDisplay" class="selected-node-display">当前节点: 正在加载...</div>
-                    <div id="statusModeLabel" class="status-mode-label">直连 / 未开启</div>
-                </div>
-                <div class="proxy-mode-strip">
-                    <button class="proxy-mode-button" data-preset="direct" onclick="activateProxyPreset('direct')" title="关闭系统代理与 TUN，保留当前节点选择" aria-label="关闭代理/TUN模式">
-                        <img src="logo-mark.png" alt=""><span>关</span>
-                    </button>
-                    <button class="proxy-mode-button" data-preset="proxy" onclick="activateProxyPreset('proxy')" title="只开启系统代理" aria-label="系统代理">
-                        <img src="logo-mark.png" alt=""><span>P</span>
-                    </button>
-                    <button class="proxy-mode-button" data-preset="tun" onclick="activateProxyPreset('tun')" title="只开启 TUN 隧道" aria-label="TUN">
-                        <img src="logo-mark.png" alt=""><span>T</span>
-                    </button>
-                    <button class="proxy-mode-button" data-preset="proxy_tun" onclick="activateProxyPreset('proxy_tun')" title="同时开启系统代理与 TUN" aria-label="系统代理和 TUN">
-                        <img src="logo-mark.png" alt=""><span>PT</span>
-                    </button>
+                    <div class="selected-node-meta-row">
+                        <div id="selectedNodeGroupDisplay" class="selected-node-group-display">来源组: --</div>
+                        <div id="selectedNodeProtocolDisplay" class="selected-node-protocol-display">协议 --</div>
+                    </div>
+                    <div class="selected-node-main-row">
+                        <div id="selectedNodeDisplay" class="selected-node-display">当前节点: 正在加载...</div>
+                        <div class="proxy-mode-strip" aria-label="代理模式">
+                            <button class="proxy-mode-button" data-preset="direct" onclick="activateProxyPreset('direct')" title="直连" aria-label="直连">
+                                <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14"></path><path d="m13 7 5 5-5 5"></path></svg>
+                            </button>
+                            <button class="proxy-mode-button" data-preset="proxy" onclick="activateProxyPreset('proxy')" title="代理" aria-label="代理">
+                                <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16"></path><path d="M12 4a12 12 0 0 1 0 16"></path><path d="M12 4a12 12 0 0 0 0 16"></path></svg>
+                            </button>
+                            <button class="proxy-mode-button" data-preset="tun" onclick="activateProxyPreset('tun')" title="TUN" aria-label="TUN">
+                                <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7v5c0 5-3.4 8.4-8 9-4.6-.6-8-4-8-9V7l8-4Z"></path><path d="M9 12h6"></path></svg>
+                            </button>
+                            <button class="proxy-mode-button" data-preset="proxy_tun" onclick="activateProxyPreset('proxy_tun')" title="代理+TUN" aria-label="代理+TUN">
+                                <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7v5c0 5-3.4 8.4-8 9-4.6-.6-8-4-8-9V7l8-4Z"></path><path d="M8 12h8"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
 
-        <div class="tabs" aria-label="主导航">
-            <button class="tab-btn active" onclick="handleBottomTabClick('nodes')" title="节点选择" aria-label="节点选择">
-                <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.5"></rect><path d="M9 7h.01M15 17h.01"></path><path d="M8 12h8"></path></svg>
-            </button>
-            <button class="tab-btn" onclick="handleBottomTabClick('dashboard')" title="数据看板" aria-label="数据看板">
-                <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M8 16v-5"></path><path d="M12 16V8"></path><path d="M16 16v-3"></path></svg>
-            </button>
-            <button class="tab-btn" onclick="handleBottomTabClick('sitecheck')" title="测试网站" aria-label="测试网站">
-                <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16"></path><path d="M12 4a12 12 0 0 1 0 16"></path><path d="M12 4a12 12 0 0 0 0 16"></path></svg>
-            </button>
-            <button class="tab-btn" onclick="handleBottomTabClick('help')" title="帮助中心" aria-label="帮助中心">
-                <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9a3 3 0 1 1 5.3 1.9c-1.2.8-2.3 1.5-2.3 3.1"></path><path d="M12 18h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
-            </button>
-            <button class="tab-btn" onclick="handleBottomTabClick('settings')" title="系统设置" aria-label="系统设置">
-                <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3"></path><path d="M12 18v3"></path><path d="m4.9 4.9 2.1 2.1"></path><path d="m17 17 2.1 2.1"></path><path d="M3 12h3"></path><path d="M18 12h3"></path><path d="m4.9 19.1 2.1-2.1"></path><path d="m17 7 2.1-2.1"></path><circle cx="12" cy="12" r="3"></circle></svg>
-            </button>
-        </div>
         <button class="tabs-expand-button" id="tabsExpandButton" onclick="expandBottomTabs()" title="展开标签" aria-label="展开标签">
             <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"></path></svg>
         </button>
@@ -87,7 +118,7 @@
                                 <select id="aggregateSelect" onchange="switchAggregateGroup(this.value)" style="display:none;"></select>
                                 <button class="btn-update icon-button" id="btnUpdate" onclick="updateSupplier()" title="更新全部订阅">↻</button>
                                 <button class="btn-primary" id="btnTestAll" onclick="testAll()">极速测速</button>
-                                <button class="btn-ghost direct-button" id="btnDirect" onclick="activateProxyPreset('direct')" title="关闭系统代理与 TUN，保留当前节点选择">关闭代理/TUN模式</button>
+                                <button class="btn-ghost direct-button" id="btnDirect" onclick="activateProxyPreset('direct')" title="切换为直连">直连</button>
                             </div>
                         </div>
                     </div>
@@ -143,8 +174,8 @@
                                     <span class="auto-select-inline-label">自动启动</span>
                                     <select id="autoSelectStartupMode" data-auto-select-action="startup-mode" style="min-width:140px;">
                                         <option value="none">不自动启动</option>
-                                        <option value="proxy">系统代理（关闭 TUN）</option>
-                                        <option value="tun">TUN（关闭系统代理）</option>
+                                        <option value="proxy">系统代理</option>
+                                        <option value="tun">TUN</option>
                                         <option value="proxy_tun">代理+TUN</option>
                                     </select>
                                 </div>
@@ -198,7 +229,7 @@
                                         <option value="exclude_protocol">不使用协议</option>
                                     </select>
                                     <input type="text" id="autoSelectRuleValue" placeholder="多个值用逗号分隔，如 美国,日本">
-                                    <button class="btn-success auto-select-draw-rule" onclick="addAutoSelectRule()">补牌</button>
+                                    <button class="btn-success auto-select-draw-rule" onclick="addAutoSelectRule()">添加</button>
                                 </div>
                                 <div id="autoSelectRulePicker" class="auto-select-picker"></div>
                                 <div class="auto-select-rule-toolbar">
@@ -248,6 +279,7 @@
                     <table class="log-table">
                         <thead>
                             <tr>
+                                <th>日期</th>
                                 <th>开始</th>
                                 <th>结束</th>
                                 <th>持续</th>
@@ -259,7 +291,7 @@
                             </tr>
                         </thead>
                         <tbody id="dashboardHistory">
-                            <tr><td colspan="8" style="text-align:center;color:var(--text-sub);">暂无记录</td></tr>
+                            <tr><td colspan="9" style="text-align:center;color:var(--text-sub);">暂无记录</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -299,7 +331,6 @@
                 <section class="help-hero">
                     <div>
                         <h2>帮助中心</h2>
-                        <p>从导入订阅、选择节点、开启系统代理，到防止 DNS / IP 泄露，这里放常用操作和排查要点。</p>
                     </div>
                     <div class="help-status">
                         <span>本地控制面板</span>
@@ -378,9 +409,15 @@
 
         <!-- Tab 4: System Settings -->
         <div id="tab-settings" class="tab-content">
+            <div class="settings-subtabs" role="tablist" aria-label="设置分类">
+                <button class="settings-subtab active" data-settings-tab="run" onclick="showSettingsSubtab('run')">运行</button>
+                <button class="settings-subtab" data-settings-tab="prefs" onclick="showSettingsSubtab('prefs')">偏好</button>
+                <button class="settings-subtab" data-settings-tab="entry" onclick="showSettingsSubtab('entry')">入口</button>
+                <button class="settings-subtab" data-settings-tab="manage" onclick="showSettingsSubtab('manage')">管理</button>
+            </div>
             <div class="settings-layout">
                 <section class="settings-column">
-                    <div class="settings-panel settings-hero-panel">
+                    <div class="settings-panel settings-hero-panel settings-centered-panel" data-settings-section="run">
                         <div class="settings-panel-heading">
                             <div>
                                 <h3>运行模式</h3>
@@ -419,7 +456,7 @@
                         </div>
                     </div>
 
-                    <div class="settings-panel">
+                    <div class="settings-panel settings-centered-panel" data-settings-section="prefs">
                         <div class="settings-panel-heading">
                             <div>
                                 <h3>系统偏好</h3>
@@ -482,17 +519,7 @@
                 </div>
 
                 <aside class="settings-side">
-                    <div class="settings-panel">
-                        <div class="settings-panel-heading">
-                            <div>
-                                <h3>订阅流量</h3>
-                                <p>当前来源组的套餐余量和到期信息。</p>
-                            </div>
-                        </div>
-                        <div class="supplier-traffic settings-traffic" id="supplierTraffic"></div>
-                    </div>
-
-                    <div class="settings-panel">
+                    <div class="settings-panel" data-settings-section="entry">
                         <div class="settings-panel-heading">
                             <div>
                                 <h3>入口操作</h3>
@@ -515,7 +542,7 @@
                         </div>
                     </div>
 
-                    <div class="settings-panel">
+                    <div class="settings-panel" data-settings-section="manage">
                         <div class="settings-panel-heading">
                             <div>
                                 <h3>高级管理</h3>
@@ -526,6 +553,10 @@
                             <button class="settings-management-button primary" onclick="openRuleModal()">
                                 <span>规则分流管理</span>
                                 <small>路由组、单条规则和命令行规则</small>
+                            </button>
+                            <button class="settings-management-button" onclick="sniffDirectDomains(this)">
+                                <span>嗅探直连域名</span>
+                                <small>自动识别中国大陆网站并加入直连规则</small>
                             </button>
                             <button class="settings-management-button" onclick="openDNSModal()">
                                 <span>DNS 规则管理</span>
@@ -592,7 +623,7 @@
 
     <div class="modal-overlay" id="autoSelectRuleModal">
         <div class="modal auto-select-rule-modal">
-            <h2>规则牌</h2>
+            <h2>筛选规则</h2>
             <div class="auto-select-rule-modal-body">
                 <label class="auto-select-field">
                     <span>牌型</span>
@@ -606,62 +637,63 @@
             </div>
             <div class="action-bar">
                 <button class="btn-ghost" onclick="closeAutoSelectRuleModal()">关闭</button>
-                <button class="btn-delete" onclick="discardEditingAutoSelectRule()">弃牌</button>
+                <button class="btn-delete" onclick="discardEditingAutoSelectRule()">弃置</button>
                 <button class="btn-primary" onclick="saveEditingAutoSelectRule()">保存</button>
             </div>
         </div>
     </div>
 
     <div class="modal-overlay" id="ruleModal">
-        <div class="modal" style="width: min(860px, 100%);">
+        <div class="modal rule-modal management-modal" style="width: min(900px, 100%);">
             <h2>规则组管理</h2>
-            <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
-                <select id="ruleGroupSelect" style="min-width:180px;" onchange="selectRuleGroup(this.value)"></select>
-                <input type="text" id="ruleGroupName" placeholder="规则组名称"
-                    style="flex:1;min-width:160px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
-                <select id="ruleGroupAction" style="min-width:110px;">
-                    <option value="direct">直连</option>
-                    <option value="proxy">代理</option>
-                    <option value="reject">拦截</option>
-                </select>
-                <button class="btn-success" onclick="addRuleGroup()">新建组</button>
-                <button class="btn-delete" onclick="deleteRuleGroup()">删除组</button>
-            </div>
-            <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
-                <select id="ruleType" style="min-width:120px;">
-                    <option value="domain_suffix">域名后缀</option>
-                    <option value="domain_keyword">域名关键字</option>
-                    <option value="domain">完整域名</option>
-                </select>
-                <input type="text" id="ruleValue" placeholder="例如: google.com"
-                    style="flex:1;min-width:220px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
-                <button class="btn-success" onclick="addRule()">添加规则</button>
-            </div>
-            <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
-                <input type="text" id="ruleSearch" placeholder="搜索全部规则，确认是否已存在..." oninput="renderRules()"
-                    style="flex:1;min-width:220px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
-                <span id="ruleSearchInfo" style="color:var(--text-sub);font-size:12px;"></span>
-            </div>
-            <div id="ruleList"
-                style="max-height: 300px; overflow-y: auto; margin-bottom: 14px; border: 1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 10px; background: rgba(255,255,255,0.02);">
-            </div>
-            <div
-                style="margin-bottom:14px;border:1px solid rgba(148,163,184,0.18);border-radius:12px;padding:12px;background:rgba(255,255,255,0.02);">
-                <div style="font-size:14px;font-weight:600;margin-bottom:10px;color:var(--accent);">命令行进程规则</div>
-                <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
-                    <select id="cmdRuleType" style="min-width:120px;">
-                        <option value="prefix">命令前缀</option>
-                        <option value="exact">完整命令</option>
-                    </select>
-                    <input type="text" id="cmdRulePattern" placeholder="例如: go test"
-                        style="flex:1;min-width:260px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
-                    <select id="cmdRuleAction" style="min-width:110px;">
+            <div class="modal-scroll rule-modal-scroll">
+                <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+                    <select id="ruleGroupSelect" style="min-width:180px;" onchange="selectRuleGroup(this.value)"></select>
+                    <input type="text" id="ruleGroupName" placeholder="规则组名称"
+                        style="flex:1;min-width:160px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                    <select id="ruleGroupAction" style="min-width:110px;">
                         <option value="direct">直连</option>
                         <option value="proxy">代理</option>
+                        <option value="reject">拦截</option>
                     </select>
-                    <button class="btn-success" onclick="addCmdRule()">添加命令</button>
+                    <button class="btn-success" onclick="addRuleGroup()">新建组</button>
+                    <button class="btn-delete" onclick="deleteRuleGroup()">删除组</button>
                 </div>
-                <div id="cmdRuleList" style="max-height:180px;overflow-y:auto;"></div>
+                <div id="ruleGroupTags" class="rule-group-tags"></div>
+                <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+                    <select id="ruleType" style="min-width:120px;">
+                        <option value="domain_suffix">域名后缀</option>
+                        <option value="domain_keyword">域名关键字</option>
+                        <option value="domain">完整域名</option>
+                    </select>
+                    <input type="text" id="ruleValue" placeholder="例如: google.com"
+                        style="flex:1;min-width:220px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                    <button class="btn-success" onclick="addRule()">添加规则</button>
+                    <button class="btn-ghost" onclick="sniffDirectDomains(this)">嗅探直连</button>
+                </div>
+                <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+                    <input type="text" id="ruleSearch" placeholder="搜索全部规则，确认是否已存在..." oninput="renderRules()"
+                        style="flex:1;min-width:220px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                    <span id="ruleSearchInfo" style="color:var(--text-sub);font-size:12px;"></span>
+                </div>
+                <div id="ruleList" class="rule-list-scroll"></div>
+                <div class="cmd-rule-panel">
+                    <div style="font-size:14px;font-weight:600;margin-bottom:10px;color:var(--accent);">命令行进程规则</div>
+                    <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
+                        <select id="cmdRuleType" style="min-width:120px;">
+                            <option value="prefix">命令前缀</option>
+                            <option value="exact">完整命令</option>
+                        </select>
+                        <input type="text" id="cmdRulePattern" placeholder="例如: go test"
+                            style="flex:1;min-width:260px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
+                        <select id="cmdRuleAction" style="min-width:110px;">
+                            <option value="direct">直连</option>
+                            <option value="proxy">代理</option>
+                        </select>
+                        <button class="btn-success" onclick="addCmdRule()">添加命令</button>
+                    </div>
+                    <div id="cmdRuleList" class="cmd-rule-list"></div>
+                </div>
             </div>
             <div class="action-bar">
                 <button class="btn-ghost" onclick="resetRulesToDefault()">恢复默认规则组</button>
@@ -672,7 +704,7 @@
     </div>
 
     <div class="modal-overlay" id="dnsModal">
-        <div class="modal dns-modal" style="width: min(860px, 100%);">
+        <div class="modal dns-modal management-modal" style="width: min(900px, 100%);">
             <h2>DNS 规则管理</h2>
 
             <div class="modal-scroll dns-modal-scroll">
@@ -736,7 +768,7 @@
     </div>
 
     <div class="modal-overlay" id="aggGroupModal">
-        <div class="modal" style="width: min(800px, 100%);">
+        <div class="modal agg-modal management-modal" style="width: min(900px, 100%);">
             <h2>聚合分组管理</h2>
             <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
                 <select id="aggModeSelect" onchange="onAggModeChange(this.value)" style="min-width:200px;"></select>

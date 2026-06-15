@@ -1,11 +1,88 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_windows/webview_windows.dart';
 import 'package:window_manager/window_manager.dart';
 
 const _defaultWebUIURL = 'http://127.0.0.1:10809/';
+const _desktopScrollFallbackDelay = Duration(milliseconds: 45);
+const _backendWatchInterval = Duration(seconds: 15);
+const _backendWatchTimeout = Duration(seconds: 4);
+const _backendWatchMaxMisses = 4;
+const _desktopScrollFallbackScript = r'''
+(() => {
+  if (window.__wingDesktopScrollFallbackInstalled) return true;
+  window.__wingDesktopScrollFallbackInstalled = true;
+  window.__wingDesktopLastScrollAt = 0;
+
+  const scrollableOverflow = value => /(auto|scroll|overlay)/.test(value || '');
+  const canScroll = (element, axis, delta) => {
+    if (!element) return false;
+    const root = document.scrollingElement || document.documentElement;
+    const isRoot = element === root || element === document.documentElement || element === document.body;
+    if (!isRoot) {
+      const style = getComputedStyle(element);
+      const overflow = axis === 'y' ? style.overflowY : style.overflowX;
+      if (!scrollableOverflow(overflow)) return false;
+    }
+
+    const maxScroll = axis === 'y'
+      ? element.scrollHeight - element.clientHeight
+      : element.scrollWidth - element.clientWidth;
+    if (maxScroll <= 1) return false;
+
+    const current = axis === 'y' ? element.scrollTop : element.scrollLeft;
+    if (delta < 0) return current > 0;
+    if (delta > 0) return current < maxScroll - 1;
+    return true;
+  };
+
+  const findScrollTarget = (start, axis, delta) => {
+    let element = start;
+    while (element && element !== document.body) {
+      if (canScroll(element, axis, delta)) return element;
+      element = element.parentElement;
+    }
+
+    const root = document.scrollingElement || document.documentElement;
+    return canScroll(root, axis, delta) ? root : null;
+  };
+
+  document.addEventListener('scroll', () => {
+    window.__wingDesktopLastScrollAt = performance.now();
+  }, true);
+
+  window.__wingDesktopScrollFallback = ({ x, y, dx, dy }) => {
+    const now = performance.now();
+    if (now - (window.__wingDesktopLastScrollAt || 0) < 120) return false;
+
+    const target = document.elementFromPoint(x, y);
+    if (!target) return false;
+    if (target.closest('input, textarea, select, [contenteditable="true"]')) return false;
+
+    const horizontalIntent = Math.abs(dx) > Math.abs(dy);
+    const axis = horizontalIntent ? 'x' : 'y';
+    const amount = horizontalIntent ? dx : dy;
+    if (Math.abs(amount) < 1) return false;
+
+    const scrollTarget = findScrollTarget(target, axis, amount);
+    if (!scrollTarget) return false;
+
+    if (axis === 'x') {
+      scrollTarget.scrollBy({ left: amount, behavior: 'auto' });
+    } else {
+      scrollTarget.scrollBy({ top: amount, behavior: 'auto' });
+    }
+    window.__wingDesktopLastScrollAt = performance.now();
+    return true;
+  };
+  return true;
+})();
+''';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -85,6 +162,9 @@ class _WingWebViewState extends State<WingWebView> {
   final WebviewController _controller = WebviewController();
   final List<StreamSubscription<Object?>> _subscriptions = [];
 
+  Timer? _backendWatchTimer;
+  int _backendWatchMisses = 0;
+  bool _closingForBackendExit = false;
   bool _webViewReady = false;
   bool _connecting = true;
   String? _error;
@@ -115,6 +195,7 @@ class _WingWebViewState extends State<WingWebView> {
       await _controller.setPopupWindowPolicy(
         WebviewPopupWindowPolicy.sameWindow,
       );
+      await _installDesktopScrollFallback();
       await _controller.loadUrl(widget.initialUrl);
 
       if (!mounted) {
@@ -124,10 +205,95 @@ class _WingWebViewState extends State<WingWebView> {
         _webViewReady = true;
         _connecting = false;
       });
+      _startBackendWatchdog();
     } on PlatformException catch (e) {
       _showError(e.message ?? e.code);
     } catch (e) {
       _showError(e.toString());
+    }
+  }
+
+  void _startBackendWatchdog() {
+    _backendWatchTimer?.cancel();
+    _backendWatchMisses = 0;
+    _backendWatchTimer = Timer.periodic(_backendWatchInterval, (_) {
+      unawaited(_checkBackendAlive());
+    });
+  }
+
+  Future<void> _checkBackendAlive() async {
+    if (!_webViewReady || _closingForBackendExit) {
+      return;
+    }
+    final alive = await _probeBackend();
+    if (!mounted || _closingForBackendExit) {
+      return;
+    }
+    if (alive) {
+      _backendWatchMisses = 0;
+      return;
+    }
+
+    _backendWatchMisses += 1;
+    if (_backendWatchMisses >= _backendWatchMaxMisses) {
+      _closingForBackendExit = true;
+      await windowManager.close();
+    }
+  }
+
+  Future<bool> _probeBackend() async {
+    final client = HttpClient()..connectionTimeout = _backendWatchTimeout;
+    try {
+      final statusUri = Uri.parse(widget.initialUrl).resolve('/api/status');
+      final request = await client.getUrl(statusUri).timeout(
+        _backendWatchTimeout,
+      );
+      request.headers.set('X-Wing-Request', 'webui');
+      final response = await request.close().timeout(_backendWatchTimeout);
+      await response.drain<void>();
+      return response.statusCode == HttpStatus.ok;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> _installDesktopScrollFallback() async {
+    await _controller.addScriptToExecuteOnDocumentCreated(
+      _desktopScrollFallbackScript,
+    );
+  }
+
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_controller.value.isInitialized) {
+      return;
+    }
+    final position = event.localPosition;
+    final delta = event.scrollDelta;
+    Timer(_desktopScrollFallbackDelay, () {
+      _runDesktopScrollFallback(position, delta);
+    });
+  }
+
+  Future<void> _runDesktopScrollFallback(Offset position, Offset delta) async {
+    if (!_controller.value.isInitialized) {
+      return;
+    }
+    final payload = jsonEncode({
+      'x': position.dx,
+      'y': position.dy,
+      'dx': delta.dx,
+      'dy': delta.dy,
+    });
+    try {
+      await _controller.executeScript(
+        'window.__wingDesktopScrollFallback && '
+        'window.__wingDesktopScrollFallback($payload);',
+      );
+    } catch (_) {
+      // Ignore transient navigation/disposal races; native WebView scrolling
+      // still gets the original pointer event.
     }
   }
 
@@ -156,7 +322,13 @@ class _WingWebViewState extends State<WingWebView> {
       body: Stack(
         children: [
           if (_webViewReady)
-            Webview(_controller, permissionRequested: _onPermissionRequested)
+            Listener(
+              onPointerSignal: _handlePointerSignal,
+              child: Webview(
+                _controller,
+                permissionRequested: _onPermissionRequested,
+              ),
+            )
           else
             _ConnectionStateView(
               connecting: _connecting,
@@ -183,6 +355,7 @@ class _WingWebViewState extends State<WingWebView> {
 
   @override
   void dispose() {
+    _backendWatchTimer?.cancel();
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }

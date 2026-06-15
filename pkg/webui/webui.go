@@ -30,6 +30,7 @@ import (
 	"wing/protocol"
 
 	"github.com/getlantern/systray"
+	"github.com/sagernet/sing/common/metadata"
 	"github.com/skip2/go-qrcode"
 )
 
@@ -56,6 +57,8 @@ const AggregateGroupsFile = "aggregate_groups.json"
 const SiteTestTargetsFile = "site_test_targets.json"
 const AutoSelectConfigFile = "auto_select_config.json"
 const siteTestTimeout = 25 * time.Second
+const defaultUpdateLatestURL = "https://api.github.com/repos/Ethan-Wanng/high-mae/releases/latest"
+const updateCacheTTL = 30 * time.Minute
 
 type SiteTestTarget struct {
 	ID       string `json:"id"`
@@ -135,6 +138,7 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/delete_supplier", deleteSupplierHandler)
 	api("/api/rules", rulesHandler)
 	api("/api/rules/reset_default", resetRulesHandler)
+	api("/api/sniff_direct_domains", sniffDirectDomainsHandler)
 	api("/api/cmd_rules", cmdRulesHandler)
 	api("/api/set_node_group", setNodeGroupHandler)
 	api("/api/all_nodes_all_subs", getAllNodesAllSubsHandler)
@@ -155,9 +159,40 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/privacy", privacyToggleHandler)
 	api("/api/system_config", systemConfigHandler)
 	api("/api/restart_admin", restartAdminHandler)
+	api("/api/app_update", appUpdateHandler)
+	api("/api/app_update/open", appUpdateOpenHandler)
 
 	return mux
 }
+
+type appUpdateInfo struct {
+	OK             bool   `json:"ok"`
+	Available      bool   `json:"available"`
+	CurrentVersion string `json:"currentVersion"`
+	LatestVersion  string `json:"latestVersion,omitempty"`
+	Name           string `json:"name,omitempty"`
+	PageURL        string `json:"pageUrl,omitempty"`
+	DownloadURL    string `json:"downloadUrl,omitempty"`
+	Message        string `json:"msg,omitempty"`
+	Error          string `json:"error,omitempty"`
+	CheckedAt      string `json:"checkedAt,omitempty"`
+}
+
+type githubReleaseInfo struct {
+	TagName string `json:"tag_name"`
+	Name    string `json:"name"`
+	HTMLURL string `json:"html_url"`
+	Assets  []struct {
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
+	} `json:"assets"`
+}
+
+var (
+	appUpdateMu        sync.Mutex
+	appUpdateCache     appUpdateInfo
+	appUpdateCacheTime time.Time
+)
 
 const (
 	apiRequestHeader      = "X-Wing-Request"
@@ -471,6 +506,136 @@ func resetRulesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "groups": routing.RuleGroups})
+}
+
+func sniffDirectDomainsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	candidates := directSniffCandidates()
+	added := make([]string, 0, len(candidates))
+	groups := append([]routing.RuleGroup(nil), routing.RuleGroups...)
+	sniffIdx := -1
+	for i := range groups {
+		if groups[i].ID == "direct_sniff" || groups[i].Name == "嗅探到规则" {
+			sniffIdx = i
+			break
+		}
+	}
+	if sniffIdx < 0 {
+		groups = append(groups, routing.RuleGroup{ID: "direct_sniff", Name: "嗅探到规则", Action: "direct"})
+		sniffIdx = len(groups) - 1
+	}
+	groups[sniffIdx].ID = "direct_sniff"
+	groups[sniffIdx].Name = "嗅探到规则"
+	groups[sniffIdx].Action = "direct"
+
+	sniffSeen := map[string]bool{}
+	for _, rule := range groups[sniffIdx].Rules {
+		if rule.Type == "domain_suffix" || rule.Type == "domain" {
+			sniffSeen[strings.ToLower(strings.TrimSpace(rule.Value))] = true
+		}
+	}
+
+	for _, domain := range candidates {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if domain == "" || sniffSeen[domain] || !looksMainlandDirectDomain(domain) {
+			continue
+		}
+		if !probeDirectDomain(domain, 2400*time.Millisecond) {
+			continue
+		}
+		groups[sniffIdx].Rules = append(groups[sniffIdx].Rules, routing.CustomRule{
+			Type:  "domain_suffix",
+			Value: domain,
+		})
+		sniffSeen[domain] = true
+		added = append(added, domain)
+	}
+
+	if err := routing.SaveRuleGroups(groups); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "保存嗅探规则失败"})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":     true,
+		"added":  added,
+		"groups": routing.RuleGroups,
+	})
+}
+
+func directSniffCandidates() []string {
+	ordered := []string{
+		"baidu.com",
+		"qq.com",
+		"bilibili.com",
+		"zhihu.com",
+		"weibo.com",
+		"jd.com",
+		"taobao.com",
+		"tmall.com",
+		"aliyun.com",
+		"mi.com",
+		"163.com",
+		"360.cn",
+		"gov.cn",
+		"china.com.cn",
+	}
+	for _, target := range readSiteTestTargets() {
+		parsed, err := url.Parse(target.URL)
+		if err != nil {
+			continue
+		}
+		host := strings.ToLower(parsed.Hostname())
+		if host != "" {
+			ordered = append(ordered, host)
+		}
+	}
+	unique := make([]string, 0, len(ordered))
+	seen := map[string]bool{}
+	for _, domain := range ordered {
+		domain = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(domain)), "www.")
+		if domain == "" || seen[domain] {
+			continue
+		}
+		seen[domain] = true
+		unique = append(unique, domain)
+	}
+	return unique
+}
+
+func looksMainlandDirectDomain(domain string) bool {
+	if strings.HasSuffix(domain, ".cn") {
+		return true
+	}
+	known := []string{
+		"baidu.com", "qq.com", "bilibili.com", "zhihu.com", "weibo.com", "jd.com",
+		"taobao.com", "tmall.com", "aliyun.com", "mi.com", "163.com",
+	}
+	for _, suffix := range known {
+		if domain == suffix || strings.HasSuffix(domain, "."+suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func probeDirectDomain(domain string, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(domain, "443"))
+	if err != nil {
+		conn, err = dialer.DialContext(ctx, "tcp", net.JoinHostPort(domain, "80"))
+	}
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func cmdRulesHandler(w http.ResponseWriter, r *http.Request) {
@@ -1056,7 +1221,13 @@ func testSingleHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lat, err := proxy.FastTCPPing(targetNode)
+	var lat int64
+	var err error
+	if r.URL.Query().Get("current") == "1" && isCurrentActiveNode(targetNode) {
+		lat, err = testActiveProxyLatency(8 * time.Second)
+	} else {
+		lat, err = proxy.FastTCPPing(targetNode)
+	}
 	if err != nil {
 		lat = -1
 	}
@@ -1103,7 +1274,14 @@ func speedtestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, cleanup, err := proxy.CreateTempHTTPClient(node)
+	var client *http.Client
+	var cleanup func()
+	var err error
+	if r.URL.Query().Get("current") == "1" && isCurrentActiveNode(node) {
+		client, err = activeProxyHTTPClient()
+	} else {
+		client, cleanup, err = proxy.CreateTempHTTPClient(node)
+	}
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "stage": "create_client", "error": err.Error()})
@@ -1150,6 +1328,51 @@ func speedtestHandler(w http.ResponseWriter, r *http.Request) {
 		"duration": sample.duration,
 		"target":   lastTarget,
 	})
+}
+
+func isCurrentActiveNode(node protocol.Node) bool {
+	common.ClientMu.RLock()
+	defer common.ClientMu.RUnlock()
+	return common.ActiveClient != nil && common.ActiveNodeName != "" && common.ActiveNodeName == node.Name
+}
+
+func activeProxyHTTPClient() (*http.Client, error) {
+	common.ClientMu.RLock()
+	client := common.ActiveClient
+	common.ClientMu.RUnlock()
+	if client == nil {
+		return nil, errors.New("当前没有正在工作的节点连接")
+	}
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return client.CreateProxy(ctx, metadata.ParseSocksaddr(addr))
+		},
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          4,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   8 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	return &http.Client{Transport: transport}, nil
+}
+
+func testActiveProxyLatency(timeout time.Duration) (int64, error) {
+	common.ClientMu.RLock()
+	client := common.ActiveClient
+	common.ClientMu.RUnlock()
+	if client == nil {
+		return -1, errors.New("当前没有正在工作的节点连接")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	start := time.Now()
+	conn, err := client.CreateProxy(ctx, metadata.ParseSocksaddr("www.gstatic.com:80"))
+	if err != nil {
+		return -1, err
+	}
+	_ = conn.Close()
+	return time.Since(start).Milliseconds(), nil
 }
 
 func runBandwidthSample(client *http.Client, targetURL string, timeout time.Duration) (bandwidthSample, error) {
@@ -2280,6 +2503,271 @@ func privacyToggleHandler(w http.ResponseWriter, r *http.Request) {
 		stats.ClearConnLogs()
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"enabled": common.PrivacyMode})
+}
+
+func appUpdateHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	info := cachedAppUpdateInfo()
+	json.NewEncoder(w).Encode(info)
+}
+
+func cachedAppUpdateInfo() appUpdateInfo {
+	appUpdateMu.Lock()
+	defer appUpdateMu.Unlock()
+
+	if !appUpdateCacheTime.IsZero() && time.Since(appUpdateCacheTime) < updateCacheTTL {
+		return appUpdateCache
+	}
+
+	info := fetchAppUpdateInfo()
+	appUpdateCache = info
+	appUpdateCacheTime = time.Now()
+	return info
+}
+
+func fetchAppUpdateInfo() appUpdateInfo {
+	info := appUpdateInfo{
+		CurrentVersion: common.AppVersion,
+		CheckedAt:      time.Now().Format(time.RFC3339),
+	}
+
+	latestURL := strings.TrimSpace(os.Getenv("WING_UPDATE_LATEST_URL"))
+	if latestURL == "" {
+		latestURL = defaultUpdateLatestURL
+	}
+
+	req, err := http.NewRequest(http.MethodGet, latestURL, nil)
+	if err != nil {
+		info.Error = err.Error()
+		return info
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "wing/"+common.AppVersion)
+
+	client := &http.Client{Timeout: 8 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		info.Error = err.Error()
+		return info
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		info.Error = fmt.Sprintf("GitHub releases returned %s", res.Status)
+		return info
+	}
+
+	var release githubReleaseInfo
+	if err := json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&release); err != nil {
+		info.Error = err.Error()
+		return info
+	}
+
+	latestVersion := normalizeVersionLabel(release.TagName)
+	if latestVersion == "" {
+		latestVersion = normalizeVersionLabel(release.Name)
+	}
+	if latestVersion == "" {
+		info.Error = "latest release has no version tag"
+		return info
+	}
+
+	info.OK = true
+	info.LatestVersion = latestVersion
+	info.Name = release.Name
+	info.PageURL = release.HTMLURL
+	info.DownloadURL = selectUpdateDownloadURL(release)
+	if overrideURL := strings.TrimSpace(os.Getenv("WING_UPDATE_DOWNLOAD_URL")); overrideURL != "" {
+		info.DownloadURL = overrideURL
+	}
+	info.Available = compareVersionLabel(latestVersion, common.AppVersion) > 0
+	if !info.Available {
+		info.Message = "当前已是最新版本"
+	}
+	return info
+}
+
+func appUpdateOpenHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		URL string `json:"url"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req)
+	target := strings.TrimSpace(req.URL)
+	if target == "" {
+		info := cachedAppUpdateInfo()
+		target = firstNonEmptyString(info.DownloadURL, info.PageURL)
+	}
+	if !isAllowedUpdateURL(target) {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "更新下载链接无效"})
+		return
+	}
+	if err := openExternalUpdateURL(target); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "打开更新下载页失败: " + err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+}
+
+func selectUpdateDownloadURL(release githubReleaseInfo) string {
+	if len(release.Assets) == 0 {
+		return release.HTMLURL
+	}
+
+	osName := runtime.GOOS
+	archName := runtime.GOARCH
+	bestScore := -1
+	bestURL := ""
+	for _, asset := range release.Assets {
+		name := strings.ToLower(asset.Name)
+		if asset.BrowserDownloadURL == "" {
+			continue
+		}
+		score := 0
+		if strings.Contains(name, osName) {
+			score += 20
+		}
+		if osName == "windows" && strings.Contains(name, "win") {
+			score += 14
+		}
+		if archMatchesAssetName(archName, name) {
+			score += 10
+		}
+		if strings.Contains(name, "setup") || strings.Contains(name, "installer") || strings.HasSuffix(name, ".exe") || strings.HasSuffix(name, ".msi") {
+			score += 4
+		}
+		if strings.HasSuffix(name, ".zip") || strings.HasSuffix(name, ".pkg") || strings.HasSuffix(name, ".run") || strings.HasSuffix(name, ".apk") || strings.HasSuffix(name, ".ipa") {
+			score += 2
+		}
+		if score > bestScore {
+			bestScore = score
+			bestURL = asset.BrowserDownloadURL
+		}
+	}
+	if bestURL != "" {
+		return bestURL
+	}
+	return release.HTMLURL
+}
+
+func archMatchesAssetName(arch, name string) bool {
+	switch arch {
+	case "amd64":
+		return strings.Contains(name, "x64") || strings.Contains(name, "amd64")
+	case "arm64":
+		return strings.Contains(name, "arm64") || strings.Contains(name, "aarch64")
+	default:
+		return strings.Contains(name, arch)
+	}
+}
+
+func normalizeVersionLabel(value string) string {
+	value = strings.TrimSpace(strings.TrimLeft(value, "vV"))
+	if value == "" {
+		return ""
+	}
+	parts := versionNumberParts(value)
+	if len(parts) == 0 {
+		return ""
+	}
+	labels := make([]string, 0, len(parts))
+	for _, part := range parts {
+		labels = append(labels, strconv.Itoa(part))
+	}
+	return strings.Join(labels, ".")
+}
+
+func compareVersionLabel(a, b string) int {
+	left := versionNumberParts(a)
+	right := versionNumberParts(b)
+	maxLen := len(left)
+	if len(right) > maxLen {
+		maxLen = len(right)
+	}
+	for i := 0; i < maxLen; i++ {
+		var lv, rv int
+		if i < len(left) {
+			lv = left[i]
+		}
+		if i < len(right) {
+			rv = right[i]
+		}
+		if lv > rv {
+			return 1
+		}
+		if lv < rv {
+			return -1
+		}
+	}
+	return 0
+}
+
+func versionNumberParts(value string) []int {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r < '0' || r > '9'
+	})
+	parts := make([]int, 0, len(fields))
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		part, err := strconv.Atoi(field)
+		if err != nil {
+			continue
+		}
+		parts = append(parts, part)
+		if len(parts) >= 4 {
+			break
+		}
+	}
+	return parts
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func isAllowedUpdateURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "github.com" ||
+		host == "objects.githubusercontent.com" ||
+		host == "github-releases.githubusercontent.com"
+}
+
+func openExternalUpdateURL(target string) error {
+	switch runtime.GOOS {
+	case "windows":
+		_, err := utils.RunHiddenCommand("rundll32", "url.dll,FileProtocolHandler", target)
+		return err
+	case "darwin":
+		_, err := utils.RunHiddenCommand("open", target)
+		return err
+	default:
+		_, err := utils.RunHiddenCommand("xdg-open", target)
+		return err
+	}
 }
 
 func historyHandler(w http.ResponseWriter, r *http.Request) {

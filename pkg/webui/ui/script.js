@@ -34,6 +34,10 @@ let nodeGroupAnimationSeq = 0;
 let autoSelectEditingRuleId = "";
 let autoSelectLastDrawnRuleId = "";
 let lastConnectionStatus = {};
+let appUpdateInfo = null;
+let appUpdateNoticeShown = false;
+let islandIdleTimer = null;
+let currentSettingsSubtab = 'run';
 
 applyThemeMode(localStorage.getItem('wing_theme_mode') || 'system');
 let shareQRCodeURL = "";
@@ -243,7 +247,12 @@ function initDesktopWheelDamping() {
         return true;
     };
 
-    const findScrollTarget = (start, axis, delta) => {
+    const findScrollTarget = (start, axis, delta, event) => {
+        const path = typeof event?.composedPath === 'function' ? event.composedPath() : [];
+        for (const item of path) {
+            if (item instanceof Element && canScroll(item, axis, delta)) return item;
+        }
+
         let element = start;
         while (element && element !== document.body) {
             if (canScroll(element, axis, delta)) return element;
@@ -259,20 +268,20 @@ function initDesktopWheelDamping() {
         const target = event.target instanceof Element ? event.target : null;
         if (!target) return;
         if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
-        if (target.closest('.auto-select-site-list, .auto-select-picker, .auto-select-rule-list, .auto-select-discard-stack, .auto-node-list, .node-detail-body, .modal-scroll, .dns-modal-scroll')) return;
 
         const delta = normalizeWheelDelta(event);
         const largestDelta = Math.max(Math.abs(delta.x), Math.abs(delta.y));
-        if (event.deltaMode === 0 && largestDelta < trackpadThreshold) return;
+        const isPreciseWheel = event.deltaMode === 0 && largestDelta < trackpadThreshold;
 
         const horizontalIntent = event.shiftKey || Math.abs(delta.x) > Math.abs(delta.y);
         const axis = horizontalIntent ? 'x' : 'y';
+        const scale = isPreciseWheel ? 1 : wheelScale;
         const amount = axis === 'x'
-            ? (delta.x || delta.y) * wheelScale
-            : delta.y * wheelScale;
+            ? (delta.x || delta.y) * scale
+            : delta.y * scale;
         if (Math.abs(amount) < 1) return;
 
-        const scrollTarget = findScrollTarget(target, axis, amount);
+        const scrollTarget = findScrollTarget(target, axis, amount, event);
         if (!scrollTarget) return;
 
         event.preventDefault();
@@ -341,22 +350,16 @@ function updateConnectionState(status = {}) {
     const proxyOn = !!status.proxy;
     const tunOn = !!status.tun;
     let state = 'direct';
-    let label = '代理/TUN 已关闭';
     if (proxyOn && tunOn) {
         state = 'proxy_tun';
-        label = '系统代理 + TUN';
     } else if (proxyOn) {
         state = 'proxy';
-        label = '系统代理已开启';
     } else if (tunOn) {
         state = 'tun';
-        label = 'TUN 隧道已开启';
     }
     document.body.dataset.networkState = state;
     const card = document.getElementById('connectionCard');
     if (card) card.dataset.state = state;
-    const labelEl = document.getElementById('statusModeLabel');
-    if (labelEl) labelEl.textContent = label;
     document.querySelectorAll('.proxy-mode-button').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.preset === state);
     });
@@ -365,10 +368,28 @@ function updateConnectionState(status = {}) {
 function updateConnectionNodeSummary() {
     const activeNode = allNodesList.find(n => n.active);
     const nodeDisplayEl = document.getElementById('selectedNodeDisplay');
+    const islandNameEl = document.getElementById('islandNodeName');
+    const islandLabelEl = document.getElementById('islandNodeLabel');
     if (nodeDisplayEl) {
         nodeDisplayEl.textContent = activeNode ? activeNode.name : (freeTrafficState?.active ? '免费流量' : '未选择节点');
     }
+    if (islandNameEl) {
+        islandNameEl.textContent = activeNode ? activeNode.name : (freeTrafficState?.active ? '免费流量' : '未选择节点');
+    }
+    const protocolEl = document.getElementById('selectedNodeProtocolDisplay');
+    if (protocolEl) {
+        protocolEl.textContent = activeNode ? `协议 ${displayProtocolName(activeNode)}` : (freeTrafficState?.active ? '协议 FREE' : '协议 --');
+    }
+    if (islandLabelEl) {
+        const protocol = activeNode ? displayProtocolName(activeNode) : (freeTrafficState?.active ? 'FREE' : '--');
+        islandLabelEl.textContent = `${currentNodeGroupLabel(activeNode)} · ${protocol}`;
+    }
     renderSelectedNodeGroup(activeNode);
+}
+
+function displayProtocolName(node) {
+    const type = String(node?.type || '').trim();
+    return type ? type.toUpperCase() : '--';
 }
 
 function handleBottomTabClick(tabId) {
@@ -382,15 +403,59 @@ function handleBottomTabClick(tabId) {
 function collapseBottomTabs() {
     bottomTabsCollapsed = true;
     document.body.classList.add('tabs-collapsed');
-    document.querySelector('.tabs')?.setAttribute('aria-hidden', 'true');
     document.getElementById('tabsExpandButton')?.setAttribute('aria-expanded', 'false');
 }
 
 function expandBottomTabs() {
     bottomTabsCollapsed = false;
     document.body.classList.remove('tabs-collapsed');
-    document.querySelector('.tabs')?.removeAttribute('aria-hidden');
     document.getElementById('tabsExpandButton')?.setAttribute('aria-expanded', 'true');
+}
+
+function initIslandBehavior() {
+    updateIslandScrollState();
+    wakeIsland();
+    ['mousemove', 'pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(eventName => {
+        window.addEventListener(eventName, wakeIsland, { passive: true });
+    });
+    window.addEventListener('scroll', () => {
+        updateIslandScrollState();
+        wakeIsland();
+    }, { passive: true });
+    document.addEventListener('click', event => {
+        if (!event.target?.closest?.('#islandCenter')) {
+            document.body.classList.remove('island-node-expanded');
+        }
+    });
+}
+
+function wakeIsland() {
+    document.body.classList.remove('island-idle');
+    if (islandIdleTimer) clearTimeout(islandIdleTimer);
+    islandIdleTimer = setTimeout(() => {
+        document.body.classList.add('island-idle');
+    }, 2600);
+}
+
+function updateIslandScrollState() {
+    const scrolled = (document.scrollingElement?.scrollTop || window.scrollY || 0) > 24;
+    document.body.classList.toggle('is-scrolled', scrolled);
+}
+
+function toggleIslandNodeModes(event) {
+    event?.stopPropagation?.();
+    document.body.classList.toggle('island-node-expanded');
+    wakeIsland();
+}
+
+function showSettingsSubtab(tab = 'run') {
+    currentSettingsSubtab = ['run', 'prefs', 'entry', 'manage'].includes(tab) ? tab : 'run';
+    document.querySelectorAll('.settings-subtab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.settingsTab === currentSettingsSubtab);
+    });
+    document.querySelectorAll('[data-settings-section]').forEach(section => {
+        section.classList.toggle('settings-section-hidden', section.dataset.settingsSection !== currentSettingsSubtab);
+    });
 }
 
 function showTab(tabId) {
@@ -476,13 +541,14 @@ function renderNodes(options = {}) {
     });
     const selectedNodes = selectedGroup ? filterNodeRows(allNodesList.filter(n => n.fileName === selectedGroup.fileName), keyword) : [];
     const groupList = groups.filter(g => !keyword || g.name.toLowerCase().includes(keyword) || (selectedGroup && g.fileName === selectedGroup.fileName));
+    const selectedGroupTraffic = selectedGroup?.type === 'subscription' ? supplierTrafficInline(selectedGroup, { compact: false }) : '';
 
     grid.innerHTML = `
         <section class="node-card-table">
             <div class="node-card-table-header">
                 <div>
-                    <div class="node-card-table-title">${nodeGroupMode === "aggregate" ? "聚合组牌推" : "订阅组牌推"}</div>
-                    <div class="node-card-table-subtitle">${groupList.length} 张来源牌${keyword ? " · 已按搜索过滤" : ""}</div>
+                    <div class="node-card-table-title">${nodeGroupMode === "aggregate" ? "聚合组" : "订阅组"}</div>
+                    ${keyword ? `<div class="node-card-table-subtitle">已按搜索过滤</div>` : ''}
                 </div>
                 <div class="node-card-table-actions">${selectedGroup ? renderSelectedGroupActions(selectedGroup) : ''}</div>
             </div>
@@ -490,8 +556,8 @@ function renderNodes(options = {}) {
             <div class="node-deck-window">
                 <div class="node-detail-header">
                     <div>
-                        <div class="node-detail-title">${selectedGroup ? escapeHTML(selectedGroup.name) : "未展开组"}</div>
-                        <div class="node-detail-subtitle">${selectedGroup ? `${selectedNodes.length} 个节点${keyword ? "匹配当前搜索" : ""}` : "点击上方来源牌展开节点"}</div>
+                        <div class="node-detail-title">${selectedGroup ? `${escapeHTML(selectedGroup.name)}${selectedGroupTraffic}` : "未展开组"}</div>
+                        <div class="node-detail-subtitle">${selectedGroup ? `${selectedNodes.length} 个节点${keyword ? "匹配当前搜索" : ""}` : "点击上方订阅组展开节点"}</div>
                     </div>
                 </div>
                 <div class="node-detail-body"></div>
@@ -507,9 +573,10 @@ function renderNodes(options = {}) {
         item.className = `source-push-card ${isSelected ? 'selected' : ''} ${showActive ? 'active' : ''}`;
         item.dataset.fileName = group.fileName;
         item.onclick = () => selectNodeGroup(group.fileName);
+        const traffic = group.type === 'subscription' ? supplierTrafficInline(group, { compact: true }) : '';
         item.innerHTML = `
             <span class="source-card-shine"></span>
-            <span class="node-group-name">${escapeHTML(group.name)}</span>
+            <span class="node-group-name"><span class="node-group-name-text">${escapeHTML(group.name)}</span>${traffic}</span>
             <span class="node-group-meta">${showActive ? '当前 · ' : ''}${group.count || 0} 节点</span>
         `;
         list.appendChild(item);
@@ -517,7 +584,7 @@ function renderNodes(options = {}) {
 
     const body = grid.querySelector('.node-detail-body');
     if (!selectedGroup) {
-        body.innerHTML = '<div class="empty-state">点击上方来源牌展开节点列表。</div>';
+        body.innerHTML = '<div class="empty-state">点击上方订阅组展开节点列表。</div>';
         return;
     }
     if (!selectedNodes.length) {
@@ -736,7 +803,7 @@ async function loadAggregateGroups() {
     try {
         const res = await fetch('/api/aggregate_groups');
         const groups = await res.json();
-        aggregateGroupsCache = groups || [];
+        aggregateGroupsCache = Array.isArray(groups) ? groups : [];
         const sel = document.getElementById('aggregateSelect');
         if (sel) {
             sel.innerHTML = '';
@@ -846,12 +913,28 @@ function renderFreeTrafficState(state) {
 
     const activeNodeEl = document.getElementById('selectedNodeDisplay');
     if (activeNodeEl && state.active) {
-        activeNodeEl.textContent = '当前节点: 免费流量';
+        activeNodeEl.textContent = '免费流量';
     }
     const groupEl = document.getElementById('selectedNodeGroupDisplay');
     if (groupEl && state.active) {
         groupEl.textContent = '来源组: 免费流量';
     }
+    const protocolEl = document.getElementById('selectedNodeProtocolDisplay');
+    if (protocolEl && state.active) {
+        protocolEl.textContent = '协议 FREE';
+    }
+    if (state.active) {
+        document.getElementById('islandNodeLabel')?.replaceChildren(document.createTextNode('免费流量 · FREE'));
+        document.getElementById('islandNodeName')?.replaceChildren(document.createTextNode('免费流量'));
+    }
+}
+
+function supplierTrafficInline(supplier, options = {}) {
+    if (!supplier?.traffic || !supplier.traffic.total) return '';
+    const t = supplier.traffic;
+    const remaining = options.compact ? formatBytesCompact(t.remaining || 0) : formatBytes(t.remaining || 0);
+    const total = options.compact ? formatBytesCompact(t.total || 0) : formatBytes(t.total || 0);
+    return `<span class="source-traffic-inline">${remaining} / ${total}</span>`;
 }
 
 async function useFreeTraffic() {
@@ -882,7 +965,7 @@ async function useFreeTraffic() {
 
 async function selectDirect() {
     const btn = document.getElementById('btnDirect');
-    const oldText = btn?.textContent || '关闭代理/TUN模式';
+    const oldText = btn?.textContent || '直连';
     if (btn) {
         btn.disabled = true;
         btn.textContent = '切换中';
@@ -918,6 +1001,65 @@ function showToast(msg, type = 'info', duration = 4000) {
         toast.classList.add('fade-out');
         setTimeout(() => toast.remove(), 350);
     }, duration);
+}
+
+function renderAppUpdateButton(info) {
+    const button = document.getElementById('appUpdateButton');
+    if (!button) return;
+    const available = !!info?.available && !!(info.downloadUrl || info.pageUrl);
+    button.hidden = !available;
+    if (!available) return;
+    const label = button.querySelector('span:last-child');
+    if (label) {
+        label.textContent = info.latestVersion ? `下载 ${info.latestVersion}` : '下载更新';
+    }
+    button.title = info.latestVersion
+        ? `发现新版本 ${info.latestVersion}，点击下载`
+        : '发现新版本，点击下载';
+}
+
+async function checkAppUpdate(options = {}) {
+    try {
+        const res = await fetch('/api/app_update');
+        const info = await res.json().catch(() => ({}));
+        appUpdateInfo = info;
+        renderAppUpdateButton(info);
+        if (info?.available && !appUpdateNoticeShown) {
+            appUpdateNoticeShown = true;
+            const versionText = info.latestVersion ? ` ${info.latestVersion}` : '';
+            showToast(`发现新版本${versionText}，可在左上角下载。`, 'info', 5200);
+        }
+    } catch(e) {
+        if (!options.silent) {
+            showToast('更新检查失败', 'warning', 2200);
+        }
+    }
+}
+
+async function openAppUpdate() {
+    if (!appUpdateInfo?.available) {
+        await checkAppUpdate({ silent: true });
+    }
+    const target = appUpdateInfo?.downloadUrl || appUpdateInfo?.pageUrl || '';
+    if (!target) {
+        showToast('暂未找到可下载的新版本', 'warning');
+        return;
+    }
+    try {
+        const res = await fetch('/api/app_update/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: target })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+            throw new Error(data.msg || 'open failed');
+        }
+        showToast('已打开更新下载页', 'success', 2200);
+    } catch(e) {
+        window.open(target, '_blank', 'noopener');
+        showToast('已尝试打开更新下载页', 'info', 2200);
+    }
 }
 
 async function importSubscription() {
@@ -1138,8 +1280,7 @@ function renderSelectedNodeGroup(activeNode) {
     const groupEl = document.getElementById('selectedNodeGroupDisplay');
     if (!groupEl) return;
     if (activeNode) {
-        const isAggregate = aggregateGroupsCache.some(g => g.fileName === activeNode.fileName);
-        const groupType = isAggregate ? '聚合组' : '订阅组';
+        const groupType = currentNodeGroupType(activeNode);
         const sourceName = activeNode.sourceFile && activeNode.sourceFile !== activeNode.fileName
             ? supplierNameByFile(activeNode.sourceFile)
             : '';
@@ -1151,6 +1292,21 @@ function renderSelectedNodeGroup(activeNode) {
     } else {
         groupEl.textContent = '未选择来源组';
     }
+}
+
+function currentNodeGroupType(activeNode) {
+    if (!activeNode) return freeTrafficState?.active ? '免费流量' : '订阅组';
+    const aggregateGroups = Array.isArray(aggregateGroupsCache) ? aggregateGroupsCache : [];
+    return aggregateGroups.some(g => g.fileName === activeNode.fileName) ? '聚合组' : '订阅组';
+}
+
+function currentNodeGroupLabel(activeNode) {
+    if (!activeNode) return freeTrafficState?.active ? '免费流量' : '未选择来源组';
+    const sourceName = activeNode.sourceFile && activeNode.sourceFile !== activeNode.fileName
+        ? supplierNameByFile(activeNode.sourceFile)
+        : '';
+    const name = sourceName || activeNode.group || '--';
+    return `${currentNodeGroupType(activeNode)} / ${name}`;
 }
 
 
@@ -1198,7 +1354,9 @@ async function testSingle(idx) {
     const latEl = document.getElementById('lat-' + idx);
     latEl.textContent = '检测中';
     latEl.className = 'latency unknown';
-    await fetch('/api/test_single?idx=' + idx, { method: 'POST' });
+    const node = allNodesList.find(n => n.index === idx);
+    const current = node?.active ? '&current=1' : '';
+    await fetch('/api/test_single?idx=' + idx + current, { method: 'POST' });
     loadNodes();
 }
 
@@ -1248,11 +1406,27 @@ function formatBytes(bytes) {
     return (bytes / 1024 / 1024 / 1024 / 1024).toFixed(2) + ' TB';
 }
 
+function formatBytesCompact(bytes) {
+    if (!bytes || bytes < 0) return '0B';
+    if (bytes < 1024) return bytes.toFixed(0) + 'B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0) + 'K';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0) + 'M';
+    if (bytes < 1024 * 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 * 1024 ? 1 : 0) + 'G';
+    return (bytes / 1024 / 1024 / 1024 / 1024).toFixed(1) + 'T';
+}
+
 function formatTime(value) {
     if (!value) return '--';
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return '--';
     return d.toLocaleTimeString();
+}
+
+function formatDate(value) {
+    if (!value) return '--';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '--';
+    return d.toLocaleDateString();
 }
 
 async function loadDashboard() {
@@ -1312,11 +1486,12 @@ function renderDashboardHistory(sessions) {
     if (sessions?.current) rows.push(sessions.current);
     rows.push(...(sessions?.history || []));
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-sub);">暂无记录</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-sub);">暂无记录</td></tr>';
         return;
     }
     tbody.innerHTML = rows.map(log => `
         <tr>
+            <td>${formatDate(log.startTime)}</td>
             <td>${formatTime(log.startTime)}</td>
             <td>${log.endTime ? formatTime(log.endTime) : '进行中'}</td>
             <td>${log.duration || '--'}</td>
@@ -1922,7 +2097,7 @@ function renderAutoSelectConfig() {
         }
     }
     if (!autoSelectConfig.rules.length) {
-        listEl.innerHTML = '<div class="auto-select-empty">暂无筛选规则，补一张规则牌开始过滤候选节点。</div>';
+        listEl.innerHTML = '<div class="auto-select-empty">暂无筛选规则，添加规则开始过滤候选节点。</div>';
         renderAutoSelectRulePicker();
         renderAutoSelectDiscardPile(discardEl);
         scheduleCustomSelectSync();
@@ -2001,13 +2176,13 @@ function renderAutoSelectDiscardPile(container) {
     const pile = autoSelectConfig.discardedRules || [];
     if (!pile.length) {
         container.innerHTML = `
-            <div class="auto-select-discard-title">弃牌堆</div>
-            <div class="auto-select-discard-empty">暂无弃牌</div>
+            <div class="auto-select-discard-title">弃置区</div>
+            <div class="auto-select-discard-empty">暂无弃置规则</div>
         `;
         return;
     }
     container.innerHTML = `
-        <div class="auto-select-discard-title">弃牌堆 <span>${pile.length} 张</span></div>
+        <div class="auto-select-discard-title">弃置区 <span>${pile.length} 条</span></div>
         <div class="auto-select-discard-stack">
             ${pile.map((rule, index) => renderAutoSelectDiscardCard(rule, index)).join('')}
         </div>
@@ -2017,7 +2192,7 @@ function renderAutoSelectDiscardPile(container) {
 function renderAutoSelectDiscardCard(rule, index) {
     const detail = autoSelectRuleDetail(rule);
     return `
-        <button type="button" class="auto-select-rule-card discarded" data-auto-select-action="restore-discarded-rule" data-discard-index="${index}" title="${escapeAttr(detail)}" aria-label="查看弃牌：${escapeAttr(autoSelectRuleLabel(rule))}" style="--discard-index:${index}">
+        <button type="button" class="auto-select-rule-card discarded" data-auto-select-action="restore-discarded-rule" data-discard-index="${index}" title="${escapeAttr(detail)}" aria-label="查看弃置：${escapeAttr(autoSelectRuleLabel(rule))}" style="--discard-index:${index}">
             <span class="auto-select-rule-rank">${escapeHTML(autoSelectRuleCardRank(rule.type))}</span>
             <span class="auto-select-rule-suit"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
             <span class="auto-select-rule-title">${escapeHTML(autoSelectRuleLabel(rule))}</span>
@@ -2182,9 +2357,11 @@ function renderAutoSelectRulePicker() {
     const values = selectableAutoSelectValues(type);
     if (!autoSelectRuleUsesPicker(type) || !values.length) {
         picker.innerHTML = '';
+        picker.hidden = true;
         input.style.display = '';
         return;
     }
+    picker.hidden = false;
     input.style.display = 'none';
     const selected = new Set(splitAutoSelectValues(input.value));
     picker.innerHTML = values.map(value => `
@@ -2301,9 +2478,11 @@ function renderAutoSelectRuleModalPicker(type = '') {
     if (!autoSelectRuleUsesPicker(currentType) || !options.length) {
         valueWrap.style.display = '';
         picker.innerHTML = '';
+        picker.hidden = true;
         return;
     }
     valueWrap.style.display = 'none';
+    picker.hidden = false;
     const selected = new Set(splitAutoSelectValues(valueEl.value));
     picker.innerHTML = options.map(value => `
         <label class="auto-select-check auto-select-modal-check">
@@ -2344,7 +2523,7 @@ function saveEditingAutoSelectRule() {
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     closeAutoSelectRuleModal();
     renderAutoSelectConfig();
-    showToast('规则牌已更新', 'success', 1800);
+    showToast('规则已更新', 'success', 1800);
 }
 
 function discardEditingAutoSelectRule() {
@@ -2352,7 +2531,7 @@ function discardEditingAutoSelectRule() {
     const encodedId = encodeURIComponent(autoSelectEditingRuleId);
     closeAutoSelectRuleModal();
     deleteAutoSelectRule(encodedId);
-    showToast('规则牌已弃牌', 'success', 1800);
+    showToast('规则已弃置', 'success', 1800);
 }
 
 function deleteAutoSelectRule(encodedId) {
@@ -2376,7 +2555,7 @@ async function clearAutoSelectRules() {
     autoSelectConfig.rules = [];
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
-    showToast('规则牌已全部弃牌', 'success');
+    showToast('规则已全部弃置', 'success');
 }
 
 function pushAutoSelectDiscardedRules(rules) {
@@ -2405,7 +2584,7 @@ function restoreAutoSelectDiscardedRule(indexValue) {
     const rule = discarded[index];
     if (!rule) return;
     const detail = autoSelectRuleDetail(rule);
-    if (!confirm('查看弃牌内容：\n\n' + detail + '\n\n是否重新启用这张规则牌？')) {
+    if (!confirm('查看弃置内容：\n\n' + detail + '\n\n是否重新启用这张规则？')) {
         return;
     }
     autoSelectConfig.discardedRules = discarded.filter((_, itemIndex) => itemIndex !== index);
@@ -2421,7 +2600,7 @@ function restoreAutoSelectDiscardedRule(indexValue) {
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: false });
     renderAutoSelectConfig();
     scheduleAutoSelectRuleChangeRestart();
-    showToast('规则牌已重新启用', 'success', 1800);
+    showToast('规则已重新启用', 'success', 1800);
 }
 
 function autoSelectScopeName(scope) {
@@ -2855,8 +3034,8 @@ async function ensureAutoSelectNetworkMode() {
     if (mode === 'none') return;
     await loadStatus();
     const modeLabel = {
-        proxy: '系统代理（关闭 TUN）',
-        tun: 'TUN（关闭系统代理）',
+        proxy: '系统代理',
+        tun: 'TUN',
         proxy_tun: '代理+TUN'
     }[mode] || '';
     if (modeLabel) showToast('自动选择已开启，正在切换到 ' + modeLabel, 'info', 1800);
@@ -2897,7 +3076,9 @@ async function testSpeed(idx) {
     speedEl.innerHTML = '<span class="spin">🚀</span> 测速中...';
     speedEl.style.color = 'var(--text-sub)';
     try {
-        const res = await fetch('/api/speedtest?idx=' + idx, { method: 'POST' });
+        const targetNode = allNodesList.find(n => n.index === idx);
+        const current = targetNode?.active ? '&current=1' : '';
+        const res = await fetch('/api/speedtest?idx=' + idx + current, { method: 'POST' });
         const data = await res.json();
         if (!res.ok || !data.ok) {
             let msg = data.error || '测速失败';
@@ -2908,8 +3089,7 @@ async function testSpeed(idx) {
         }
         speedEl.textContent = '↓ ' + formatSpeed(data.speed);
         speedEl.style.color = 'var(--success)';
-        const node = allNodesList.find(n => n.index === idx);
-        if (node) node.speed = Number(data.speed) || 0;
+        if (targetNode) targetNode.speed = Number(data.speed) || 0;
     } catch(e) {
         speedEl.textContent = '❌ 测速失败';
         speedEl.style.color = 'var(--danger)';
@@ -3599,12 +3779,30 @@ function updateRuleValue(gIdx, rIdx, value) {
     renderRuleGroups();
 }
 
-function ruleEditControls(gIdx, rIdx, r) {
+function updateSearchRuleType(gIdx, rIdx, type) {
+    const group = ruleGroups[gIdx];
+    if (!group || !group.rules || !group.rules[rIdx]) return;
+    group.rules[rIdx].type = type;
+    renderRules();
+    showToast('规则类型已更新，保存后生效', 'success', 1200);
+}
+
+function updateSearchRuleValue(gIdx, rIdx, value) {
+    const group = ruleGroups[gIdx];
+    if (!group || !group.rules || !group.rules[rIdx]) return;
+    group.rules[rIdx].value = value.trim();
+    renderRules();
+    showToast('规则已更新，保存后生效', 'success', 1200);
+}
+
+function ruleEditControls(gIdx, rIdx, r, options = {}) {
+    const typeHandler = options.search ? 'updateSearchRuleType' : 'updateRuleType';
+    const valueHandler = options.search ? 'updateSearchRuleValue' : 'updateRuleValue';
     return `
-        <select onchange="updateRuleType(${gIdx}, ${rIdx}, this.value)" style="min-width:112px;padding:5px 8px;border-radius:8px;font-size:12px;margin-right:8px;">
+        <select onchange="${typeHandler}(${gIdx}, ${rIdx}, this.value)" style="min-width:112px;padding:5px 8px;border-radius:8px;font-size:12px;margin-right:8px;">
             ${ruleTypeOptions(r.type)}
         </select>
-        <input type="text" value="${escapeAttr(r.value)}" onblur="updateRuleValue(${gIdx}, ${rIdx}, this.value)" onkeydown="if(event.key==='Enter') this.blur()" style="min-width:220px;max-width:420px;width:38vw;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:6px 9px;border-radius:8px;outline:none;font-size:13px;">
+        <input type="text" value="${escapeAttr(r.value)}" onblur="${valueHandler}(${gIdx}, ${rIdx}, this.value)" onkeydown="if(event.key==='Enter') this.blur()" style="min-width:220px;max-width:420px;width:38vw;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:6px 9px;border-radius:8px;outline:none;font-size:13px;">
     `;
 }
 
@@ -4150,7 +4348,33 @@ function renderRuleGroups() {
     const group = selectedRuleGroup();
     document.getElementById('ruleGroupName').value = group ? group.name : '';
     populateRuleGroupActionSelect(group ? group.action : 'direct');
+    renderRuleGroupTags();
     renderRules();
+}
+
+function isSniffedRuleGroup(group) {
+    return group?.id === 'direct_sniff' || group?.name === '嗅探到规则';
+}
+
+function sniffedRuleGroupIndex() {
+    return ruleGroups.findIndex(isSniffedRuleGroup);
+}
+
+function renderRuleGroupTags() {
+    const wrap = document.getElementById('ruleGroupTags');
+    if (!wrap) return;
+    const sniffIdx = sniffedRuleGroupIndex();
+    if (sniffIdx < 0) {
+        wrap.innerHTML = '';
+        return;
+    }
+    const group = ruleGroups[sniffIdx];
+    const count = group?.rules?.length || 0;
+    wrap.innerHTML = `
+        <button type="button" class="rule-group-tag ${currentRuleGroupIndex === sniffIdx ? 'active' : ''}" onclick="selectRuleGroup(${sniffIdx})">
+            嗅探到规则 <span>${count}</span>
+        </button>
+    `;
 }
 
 function syncRuleGroupForm() {
@@ -4188,7 +4412,7 @@ function renderRules() {
                         <div style="display:flex;justify-content:space-between;align-items:center;font-size:14px;padding:0 10px;">
                             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;">
                                 <span style="background:rgba(99,102,241,0.15);padding:2px 6px;border-radius:4px;font-size:11px;margin-right:6px;color:var(--accent);">${g.name}</span>
-                                ${ruleEditControls(gIdx, rIdx, r)}
+                                ${ruleEditControls(gIdx, rIdx, r, { search: true })}
                                 <span class="rule-action-badge" style="color:${actionColor};font-weight:bold;margin-left:8px;font-size:12px;cursor:pointer;border:1px solid ${actionColor}33;padding:2px 8px;border-radius:10px;background:${actionColor}11;display:inline-flex;align-items:center;gap:4px;user-select:none;transition:all 0.2s;" onclick="toggleSearchRuleActionSelector(${gIdx}, ${rIdx}, event)">
                                     ${actionName(effectiveAction)} ▾
                                 </span>
@@ -4390,6 +4614,42 @@ async function resetRulesToDefault() {
         showToast('规则组已恢复默认', 'success');
     } catch(e) {
         showToast('恢复默认规则失败', 'error');
+    }
+}
+
+async function sniffDirectDomains(button) {
+    const oldHTML = button?.innerHTML;
+    if (button) {
+        button.disabled = true;
+        button.textContent = '嗅探中...';
+    }
+    try {
+        const res = await fetch('/api/sniff_direct_domains', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+            throw new Error(data.msg || '嗅探失败');
+        }
+        if (Array.isArray(data.groups)) {
+            ruleGroups = data.groups;
+            const sniffIdx = sniffedRuleGroupIndex();
+            if (sniffIdx >= 0) {
+                currentRuleGroupIndex = sniffIdx;
+                const searchEl = document.getElementById('ruleSearch');
+                if (searchEl) searchEl.value = '';
+            }
+            renderRuleGroups();
+        } else {
+            await openRuleModal();
+        }
+        const added = Array.isArray(data.added) ? data.added : [];
+        showToast(added.length ? `已添加 ${added.length} 条直连规则` : '未发现需要新增的直连规则', added.length ? 'success' : 'info');
+    } catch(e) {
+        showToast(e.message || '嗅探直连域名失败', 'error');
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = oldHTML || '嗅探直连';
+        }
     }
 }
 
@@ -4736,7 +4996,10 @@ async function submitAggAction() {
 
 window.onload = async () => {
     initDesktopWheelDamping();
+    initIslandBehavior();
     initCustomSelects();
+    showSettingsSubtab(currentSettingsSubtab);
+    checkAppUpdate({ silent: true });
     await loadSystemConfig();
     await loadAutoSelectConfig();
     await loadStatus();

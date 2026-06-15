@@ -109,7 +109,7 @@ func onReady() {
 				}
 				stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
 			case <-mAbout.ClickedCh:
-				aboutMsg := "wing v1.0.3 - 桌面代理客户端\n\n" +
+				aboutMsg := "wing v" + common.AppVersion + " - 桌面代理客户端\n\n" +
 					"wing 是基于 Flutter + Go 的代理客户端，集成 sing-box、Mieru Client 与本地 Web 控制面板，支持节点订阅、测速、规则分流、自动选点、隧道连接、DNS 分流与 WebRTC 防泄漏。\n\n" +
 					"协议支持：Hysteria2、TUIC、VLESS、VMess、Trojan、Shadowsocks、AnyTLS、Naive、Mieru、HTTP/SOCKS 等。\n\n" +
 					"桌面交互：左键点击托盘可快速唤起 Flutter 控制面板，右键点击托盘可打开菜单并安全退出；桌面窗口会后台预热以减少首次打开等待。\n\n" +
