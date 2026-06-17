@@ -42,6 +42,7 @@ const minUpdateIntervalMinutes int64 = 15
 var (
 	OnSubscriptionNodesUpdated func(fileName string, oldNodes []protocol.Node, newNodes []protocol.Node)
 	OnSubscriptionDeleted      func(fileName string, oldNodes []protocol.Node)
+	autoUpdateOnce             sync.Once
 )
 
 type SubscriptionTraffic struct {
@@ -909,11 +910,13 @@ func UpdateAllSubscriptions() {
 
 // StartAutoUpdateSubscriptions 启动后台自动更新任务
 func StartAutoUpdateSubscriptions() {
-	ticker := time.NewTicker(5 * time.Minute)
-	utils.SafeGo("subscription auto update", func() {
-		for range ticker.C {
-			UpdateDueSubscriptionsSilently()
-		}
+	autoUpdateOnce.Do(func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		utils.SafeGo("subscription auto update", func() {
+			for range ticker.C {
+				UpdateDueSubscriptionsSilently()
+			}
+		})
 	})
 }
 

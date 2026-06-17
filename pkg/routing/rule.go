@@ -440,7 +440,3 @@ func isBingRedirectProtectedHost(host string) bool {
 func ShouldDirect(hostPort string) bool {
 	return EvaluateRouting(hostPort) == "direct"
 }
-
-func StartAnyTLSHttpServer() {
-	// 占位，稍后通过 import 修复或完全移除
-}

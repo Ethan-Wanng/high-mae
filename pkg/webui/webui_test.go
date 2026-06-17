@@ -158,6 +158,58 @@ func TestResetRulesHandlerRestoresDefaultRulesWithoutBingDirect(t *testing.T) {
 	}
 }
 
+func TestDirectRuleAlreadyCoversSniffDomain(t *testing.T) {
+	groups := []routing.RuleGroup{
+		{
+			ID:     "direct",
+			Name:   "直连组",
+			Action: "direct",
+			Rules: []routing.CustomRule{
+				{Type: "domain_suffix", Value: "www.baidu.com"},
+				{Type: "domain", Value: "chat.example.com"},
+			},
+		},
+		{
+			ID:     "proxy",
+			Name:   "代理组",
+			Action: "proxy",
+			Rules: []routing.CustomRule{
+				{Type: "domain_suffix", Value: "qq.com"},
+				{Type: "domain", Value: "bilibili.com", Action: "direct"},
+			},
+		},
+		{
+			ID:     "override",
+			Name:   "覆盖组",
+			Action: "direct",
+			Rules: []routing.CustomRule{
+				{Type: "domain_suffix", Value: "zhihu.com", Action: "proxy"},
+			},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		domain string
+		want   bool
+	}{
+		{name: "direct suffix with www variant", domain: "baidu.com", want: true},
+		{name: "direct exact", domain: "chat.example.com", want: true},
+		{name: "rule action direct overrides proxy group", domain: "bilibili.com", want: true},
+		{name: "proxy group does not count", domain: "qq.com", want: false},
+		{name: "rule action proxy overrides direct group", domain: "zhihu.com", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := directRuleAlreadyCoversDomain(groups, tt.domain)
+			if got != tt.want {
+				t.Fatalf("directRuleAlreadyCoversDomain(%q) = %v, want %v", tt.domain, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunSiteTestsRunsTargetsSequentially(t *testing.T) {
 	var active int32
 	var maxActive int32

@@ -46,6 +46,7 @@
     --accent: #0088df;
     --accent-2: #174a8d;
     --accent-hover: #00a5ef;
+    --success: #047857;
     --shadow: 0 24px 70px rgba(18, 71, 122, 0.16);
     --shadow-soft: 0 12px 32px rgba(18, 71, 122, 0.10);
 }
@@ -71,6 +72,7 @@
         --accent: #0088df;
         --accent-2: #174a8d;
         --accent-hover: #00a5ef;
+        --success: #047857;
         --shadow: 0 24px 70px rgba(18, 71, 122, 0.16);
         --shadow-soft: 0 12px 32px rgba(18, 71, 122, 0.10);
     }
@@ -5690,7 +5692,7 @@ body.tabs-collapsed .connection-card .connection-orb {
     }
 }
 
-/* ── 1.0.4.1 interaction polish: sticky island, compact settings, rectangular cards ── */
+/* ── 1.0.4.5 interaction polish: sticky island, compact settings, rectangular cards ── */
 .container {
     padding-top: 0;
 }
@@ -5703,6 +5705,9 @@ body.tabs-collapsed .connection-card .connection-orb {
     grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr);
     flex-wrap: nowrap;
     align-items: center;
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
 }
 
 .header-left {
@@ -5815,7 +5820,7 @@ body.tabs-collapsed .connection-card .connection-orb {
 
 .is-scrolled .island-node-summary:hover span,
 .island-node-expanded .island-node-summary span {
-    display: block;
+    display: none;
 }
 
 .is-scrolled .island-center:hover .tabs,
@@ -6022,8 +6027,17 @@ body.tabs-collapsed .tabs-expand-button {
 }
 
 :root[data-theme="light"] .source-traffic-inline {
-    color: #0f7f54;
+    color: #065f46;
     background: rgba(24, 201, 129, 0.14);
+}
+
+:root[data-theme="light"] .latency.good,
+:root[data-theme="light"] .log-node-direct,
+:root[data-theme="light"] .auto-select-choice-card.selected::after,
+:root[data-theme="light"] .rule-action-badge,
+:root[data-theme="light"] .source-push-card.active .node-group-count,
+:root[data-theme="light"] [style*="var(--success)"] {
+    color: #047857 !important;
 }
 
 :root[data-theme="light"] .rule-item-container,
@@ -6057,6 +6071,20 @@ body.tabs-collapsed .tabs-expand-button {
     :root[data-theme="system"] .auto-node-item {
         background: rgba(255, 255, 255, 0.48) !important;
         border-color: rgba(27, 105, 162, 0.14) !important;
+    }
+
+    :root[data-theme="system"] .source-traffic-inline {
+        color: #065f46;
+        background: rgba(24, 201, 129, 0.14);
+    }
+
+    :root[data-theme="system"] .latency.good,
+    :root[data-theme="system"] .log-node-direct,
+    :root[data-theme="system"] .auto-select-choice-card.selected::after,
+    :root[data-theme="system"] .rule-action-badge,
+    :root[data-theme="system"] .source-push-card.active .node-group-count,
+    :root[data-theme="system"] [style*="var(--success)"] {
+        color: #047857 !important;
     }
 }
 
@@ -6215,6 +6243,7 @@ body.is-scrolled .island-center:not(:hover):not(:focus-within) .island-node-summ
 body.is-scrolled .island-center:not(:hover):not(:focus-within) .island-node-summary strong {
     display: block;
     font-size: 11px;
+    text-align: center;
 }
 
 body:not(.is-scrolled) .island-center .island-node-summary,
@@ -6323,12 +6352,13 @@ body:not(.is-scrolled) .island-center .island-mode-strip {
 }
 
 .island-node-summary span {
-    display: block;
-    font-size: 11px;
+    display: none !important;
 }
 
 .island-node-summary strong {
     font-size: 10px;
+    text-align: center;
+    display: block;
 }
 
 .island-center:not(:hover) .island-node-summary,
@@ -6344,7 +6374,7 @@ body:not(.is-scrolled) .island-center .island-mode-strip {
 .is-scrolled .island-node-summary span,
 .is-scrolled .island-node-summary:hover span,
 .island-node-expanded .island-node-summary span {
-    display: block;
+    display: none !important;
 }
 
 .is-scrolled .island-center .tabs,
@@ -6367,6 +6397,1043 @@ body.tabs-collapsed .tabs {
 
 .island-mode-strip {
     top: calc(100% + 6px);
+}
+
+/* Keep the island visually centered and prevent tab icons from leaking to its sides. */
+.island-center,
+.island-center:hover,
+.island-node-expanded .island-center,
+body.is-scrolled .island-center:not(:hover):not(:focus-within),
+:root[data-theme="light"] .island-center,
+:root[data-theme="light"] .island-center:hover,
+:root[data-theme="light"] .island-node-expanded .island-center {
+    position: fixed;
+    top: 22px;
+    left: 50%;
+    right: auto;
+    justify-self: auto;
+    margin: 0;
+    transform: translateX(-50%);
+    transform-origin: center top;
+}
+
+.status-cluster {
+    position: fixed;
+    top: 24px;
+    right: 36px;
+    z-index: 920;
+    width: auto;
+    min-width: 0;
+}
+
+.island-center .tabs,
+.island-center:hover .tabs,
+.island-node-expanded .island-center .tabs,
+body.is-scrolled .island-center .tabs,
+body.tabs-collapsed .tabs {
+    position: static !important;
+    inset: auto !important;
+    left: auto !important;
+    right: auto !important;
+    top: auto !important;
+    bottom: auto !important;
+    width: 34px !important;
+    min-width: 34px !important;
+    max-width: 34px !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    transform: none !important;
+}
+
+.island-center .tab-btn,
+.island-center .tab-btn.active {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    flex: 0 0 34px;
+    display: inline-grid !important;
+    place-items: center;
+    padding: 0;
+    margin: 0;
+    line-height: 1;
+}
+
+.island-center .tab-icon {
+    display: block;
+    margin: auto;
+}
+
+.island-center .tab-btn:not(.active),
+.island-center:hover .tab-btn:not(.active),
+.island-node-expanded .island-center .tab-btn:not(.active),
+body.is-scrolled .island-center .tab-btn:not(.active) {
+    display: none !important;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] .island-center,
+    :root[data-theme="system"] .island-center:hover,
+    :root[data-theme="system"] .island-node-expanded .island-center {
+        position: fixed;
+        top: 22px;
+        left: 50%;
+        right: auto;
+        justify-self: auto;
+        margin: 0;
+        transform: translateX(-50%);
+        transform-origin: center top;
+    }
+}
+
+@media (max-width: 760px) {
+    .island-center,
+    .island-center:hover,
+    .island-node-expanded .island-center,
+    body.is-scrolled .island-center:not(:hover):not(:focus-within) {
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+    }
+
+    .status-cluster {
+        display: none;
+    }
+}
+
+/* Center the connection card content and stack mode actions below the node name. */
+.connection-card,
+body:not(.tabs-collapsed) .connection-card,
+body.tabs-collapsed .connection-card {
+    grid-template-columns: auto minmax(0, 460px);
+    grid-template-rows: auto;
+    justify-content: center;
+    align-content: center;
+    align-items: center;
+}
+
+body:not(.tabs-collapsed) .connection-card .connection-orb,
+body.tabs-collapsed .connection-card .connection-orb {
+    display: grid;
+}
+
+.connection-copy {
+    align-self: center;
+    display: grid;
+    align-content: center;
+    justify-items: start;
+    gap: 8px;
+}
+
+.selected-node-meta-row,
+.selected-node-main-row {
+    width: 100%;
+    justify-content: flex-start;
+}
+
+.selected-node-meta-row {
+    margin-bottom: 0;
+}
+
+.selected-node-main-row {
+    display: grid;
+    justify-items: start;
+    gap: 8px;
+}
+
+.connection-copy .selected-node-display {
+    max-width: 100%;
+    text-align: left;
+}
+
+.connection-card .proxy-mode-strip {
+    margin-left: 0;
+    justify-self: start;
+}
+
+@media (max-width: 760px) {
+    .connection-card,
+    body:not(.tabs-collapsed) .connection-card,
+    body.tabs-collapsed .connection-card {
+        grid-template-columns: minmax(0, 1fr);
+        justify-items: center;
+        text-align: center;
+    }
+
+    .connection-copy,
+    .selected-node-meta-row,
+    .selected-node-main-row,
+    .connection-card .proxy-mode-strip {
+        justify-items: center;
+        justify-content: center;
+    }
+
+    .connection-copy .selected-node-display {
+        text-align: center;
+    }
+}
+
+.source-card-deck {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 12px;
+    overflow: visible !important;
+    scroll-snap-type: none;
+}
+
+.source-push-card {
+    flex: 0 1 clamp(142px, 15vw, 188px) !important;
+    width: clamp(142px, 15vw, 188px);
+    max-width: 188px;
+    min-height: 72px;
+    scroll-snap-align: none;
+}
+
+@media (max-width: 640px) {
+    .source-push-card {
+        flex-basis: calc(50% - 6px) !important;
+        width: calc(50% - 6px);
+        max-width: none;
+    }
+}
+
+/* Island navigation states: quiet when collapsed, icon row with active state only when expanded. */
+.island-center {
+    --island-accent: #8aa4b8;
+    --island-border: rgba(138, 164, 184, 0.30);
+    --island-glow: rgba(8, 24, 42, 0.34);
+    --island-bg:
+        linear-gradient(180deg, rgba(8, 20, 36, 0.84), rgba(3, 10, 22, 0.76)),
+        rgba(255, 255, 255, 0.025);
+    width: 92px;
+    min-width: 92px;
+    height: 46px;
+    padding-inline: 12px;
+    background: var(--island-bg) !important;
+    border-color: var(--island-border) !important;
+    box-shadow: 0 16px 42px var(--island-glow), inset 0 1px 0 rgba(255,255,255,0.10) !important;
+}
+
+body[data-network-state="proxy"] .island-center {
+    --island-accent: #00b8ff;
+    --island-border: rgba(88, 213, 255, 0.36);
+    --island-glow: rgba(0, 184, 255, 0.25);
+    --island-bg:
+        linear-gradient(180deg, rgba(10, 43, 72, 0.86), rgba(2, 18, 36, 0.78)),
+        rgba(0, 184, 255, 0.06);
+}
+
+body[data-network-state="tun"] .island-center {
+    --island-accent: #f6d44d;
+    --island-border: rgba(246, 212, 77, 0.42);
+    --island-glow: rgba(246, 212, 77, 0.18);
+    --island-bg:
+        linear-gradient(180deg, rgba(72, 55, 10, 0.82), rgba(26, 19, 5, 0.78)),
+        rgba(246, 212, 77, 0.07);
+}
+
+body[data-network-state="proxy_tun"] .island-center {
+    --island-accent: #a78bfa;
+    --island-border: rgba(167, 139, 250, 0.44);
+    --island-glow: rgba(139, 92, 246, 0.25);
+    --island-bg:
+        linear-gradient(180deg, rgba(48, 32, 95, 0.84), rgba(15, 9, 34, 0.78)),
+        rgba(139, 92, 246, 0.08);
+}
+
+.island-center:hover,
+.island-center:focus-within,
+.island-node-expanded .island-center {
+    width: 244px;
+    min-width: 244px;
+    padding-inline: 8px;
+}
+
+.island-center .tabs {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.island-center:hover .tabs,
+.island-center:focus-within .tabs,
+.island-node-expanded .island-center .tabs {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    gap: 6px;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.island-center .tab-btn {
+    color: color-mix(in srgb, var(--island-accent) 72%, var(--text-sub));
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+}
+
+.island-center:not(:hover):not(:focus-within) .tab-btn.active {
+    color: color-mix(in srgb, var(--island-accent) 80%, var(--text-sub)) !important;
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+}
+
+.island-center .tab-btn::after {
+    content: attr(aria-label);
+    display: none;
+    max-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 0;
+    line-height: 0;
+}
+
+.island-center:not(:hover):not(:focus-within) .tab-btn,
+.island-center .tab-btn:not(.active) {
+    display: none !important;
+}
+
+.island-center:hover .tab-btn,
+.island-center:focus-within .tab-btn,
+.island-node-expanded .island-center .tab-btn,
+.island-node-expanded .island-center:not(:hover):not(:focus-within) .tab-btn {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    display: inline-grid !important;
+    place-items: center;
+    gap: 0;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.island-center:hover .tab-btn::after,
+.island-center:focus-within .tab-btn::after,
+.island-node-expanded .island-center .tab-btn::after {
+    display: none;
+    max-width: 0;
+}
+
+.island-center:hover .tab-btn.active,
+.island-center:focus-within .tab-btn.active,
+.island-node-expanded .island-center .tab-btn.active {
+    color: #00111f !important;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--island-accent) 88%, #ffffff 12%), color-mix(in srgb, var(--island-accent) 64%, #0278df 36%)) !important;
+    border-color: transparent !important;
+    box-shadow: 0 8px 22px color-mix(in srgb, var(--island-accent) 34%, transparent) !important;
+}
+
+.island-center .island-node-summary,
+.island-center .island-mode-strip {
+    display: none !important;
+}
+
+body.tabs-collapsed .container {
+    width: 100%;
+    max-width: none;
+    min-height: calc(100vh - 40px);
+    display: grid;
+    grid-template-rows: 1fr;
+    padding: 0;
+}
+
+body.tabs-collapsed .header {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    width: auto;
+    margin: 0;
+}
+
+body.tabs-collapsed .connection-stage {
+    grid-row: 1;
+    min-height: calc(100vh - 40px);
+    padding: 0;
+    place-items: center;
+}
+
+body.tabs-collapsed .connection-card {
+    width: min(720px, calc(100vw - 48px));
+}
+
+.tabs-expand-button {
+    display: none !important;
+}
+
+body.tabs-collapsed .island-center:not(:hover):not(:focus-within) .tabs {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+body.tabs-collapsed .island-center:hover .tabs,
+body.tabs-collapsed .island-center:focus-within .tabs,
+body.tabs-collapsed.island-node-expanded .island-center .tabs {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+}
+
+body.tabs-collapsed .island-center:not(:hover):not(:focus-within) .tab-btn {
+    display: none !important;
+}
+
+body.is-scrolled .island-center:not(:hover):not(:focus-within) {
+    width: clamp(220px, 28vw, 360px);
+    min-width: clamp(220px, 28vw, 360px);
+    padding-inline: 16px;
+}
+
+body.is-scrolled .island-center:not(:hover):not(:focus-within) .tabs {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+body.is-scrolled .island-center:not(:hover):not(:focus-within) .island-node-summary {
+    width: 100%;
+    min-width: 0;
+    display: grid !important;
+    place-items: center;
+    padding: 0;
+    margin: 0;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: color-mix(in srgb, var(--island-accent) 36%, var(--text-main));
+}
+
+body.is-scrolled .island-center:not(:hover):not(:focus-within) .island-node-summary span {
+    display: none !important;
+}
+
+body.is-scrolled .island-center:not(:hover):not(:focus-within) .island-node-summary strong {
+    display: block !important;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 850;
+    line-height: 1;
+}
+
+body.is-scrolled[data-network-state="direct"] .island-center:not(:hover):not(:focus-within) {
+    width: clamp(220px, 28vw, 360px);
+    min-width: clamp(220px, 28vw, 360px);
+    padding-inline: 16px;
+}
+
+body.is-scrolled[data-network-state="direct"] .island-center:not(:hover):not(:focus-within) .island-node-summary {
+    display: grid !important;
+}
+
+body.is-scrolled .island-center:hover,
+body.is-scrolled .island-center:focus-within,
+body.is-scrolled.island-node-expanded .island-center {
+    width: 244px;
+    min-width: 244px;
+    padding-inline: 8px;
+}
+
+body.is-scrolled .island-center:hover .island-node-summary,
+body.is-scrolled .island-center:focus-within .island-node-summary,
+body.is-scrolled.island-node-expanded .island-center .island-node-summary {
+    display: grid !important;
+}
+
+body.is-scrolled .island-center:hover .tabs,
+body.is-scrolled .island-center:focus-within .tabs,
+body.is-scrolled.island-node-expanded .island-center .tabs {
+    display: inline-flex !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    gap: 6px;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: none !important;
+}
+
+body.is-scrolled .island-center:hover .tab-btn,
+body.is-scrolled .island-center:focus-within .tab-btn,
+body.is-scrolled.island-node-expanded .island-center .tab-btn,
+body.is-scrolled .island-center:hover .tab-btn:not(.active),
+body.is-scrolled .island-center:focus-within .tab-btn:not(.active),
+body.is-scrolled.island-node-expanded .island-center .tab-btn:not(.active) {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    display: inline-grid !important;
+    place-items: center;
+}
+
+.island-center:hover .tab-btn:not(.active),
+.island-center:focus-within .tab-btn:not(.active),
+.island-node-expanded .island-center .tab-btn:not(.active),
+body.tabs-collapsed .island-center:hover .tab-btn:not(.active),
+body.tabs-collapsed .island-center:focus-within .tab-btn:not(.active),
+body.tabs-collapsed.island-node-expanded .island-center .tab-btn:not(.active) {
+    display: inline-grid !important;
+}
+
+body[data-network-state="direct"] {
+    --island-accent: #8aa4b8;
+    --island-border: rgba(138, 164, 184, 0.30);
+    --island-glow: rgba(8, 24, 42, 0.34);
+    --island-bg:
+        linear-gradient(180deg, rgba(8, 20, 36, 0.84), rgba(3, 10, 22, 0.76)),
+        rgba(255, 255, 255, 0.025);
+    background:
+        radial-gradient(circle at 12% 14%, rgba(125, 156, 184, 0.12), transparent 30%),
+        linear-gradient(145deg, rgba(2, 8, 18, 0.98), rgba(8, 18, 32, 0.96));
+}
+
+body[data-network-state="proxy"] {
+    --island-accent: #00b8ff;
+    --island-border: rgba(88, 213, 255, 0.36);
+    --island-glow: rgba(0, 184, 255, 0.25);
+    --island-bg:
+        linear-gradient(180deg, rgba(10, 43, 72, 0.86), rgba(2, 18, 36, 0.78)),
+        rgba(0, 184, 255, 0.06);
+    background:
+        radial-gradient(circle at 16% 16%, rgba(0, 184, 255, 0.22), transparent 32%),
+        linear-gradient(145deg, rgba(1, 12, 28, 0.98), rgba(6, 36, 68, 0.96));
+}
+
+body[data-network-state="tun"] {
+    --island-accent: #f6d44d;
+    --island-border: rgba(246, 212, 77, 0.42);
+    --island-glow: rgba(246, 212, 77, 0.18);
+    --island-bg:
+        linear-gradient(180deg, rgba(72, 55, 10, 0.82), rgba(26, 19, 5, 0.78)),
+        rgba(246, 212, 77, 0.07);
+    background:
+        radial-gradient(circle at 16% 16%, rgba(246, 212, 77, 0.18), transparent 30%),
+        linear-gradient(145deg, rgba(18, 13, 4, 0.98), rgba(46, 35, 8, 0.96));
+}
+
+body[data-network-state="proxy_tun"] {
+    --island-accent: #a78bfa;
+    --island-border: rgba(167, 139, 250, 0.44);
+    --island-glow: rgba(139, 92, 246, 0.25);
+    --island-bg:
+        linear-gradient(180deg, rgba(48, 32, 95, 0.84), rgba(15, 9, 34, 0.78)),
+        rgba(139, 92, 246, 0.08);
+    background:
+        radial-gradient(circle at 16% 16%, rgba(167, 139, 250, 0.22), transparent 32%),
+        linear-gradient(145deg, rgba(10, 6, 24, 0.98), rgba(32, 20, 72, 0.96));
+}
+
+body[data-network-state] .header {
+    background: var(--island-bg) !important;
+    border-color: var(--island-border) !important;
+    box-shadow: 0 18px 54px var(--island-glow) !important;
+}
+
+body.tabs-collapsed[data-network-state] .header {
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--island-accent) 14%, rgba(8, 20, 36, 0.92)), rgba(3, 10, 22, 0.74)) !important;
+}
+
+.island-center:hover,
+.island-center:focus-within,
+body.is-scrolled .island-center:hover,
+body.is-scrolled .island-center:focus-within {
+    width: clamp(430px, 44vw, 560px);
+    min-width: clamp(430px, 44vw, 560px);
+    grid-template-columns: auto minmax(130px, 1fr);
+    column-gap: 10px;
+    padding-inline: 10px;
+}
+
+.island-center:hover .tabs,
+.island-center:focus-within .tabs,
+body.is-scrolled .island-center:hover .tabs,
+body.is-scrolled .island-center:focus-within .tabs {
+    display: inline-flex !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    gap: 6px;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: none !important;
+}
+
+body:not(.is-scrolled) .island-center:hover .island-node-summary,
+body:not(.is-scrolled) .island-center:focus-within .island-node-summary,
+body.is-scrolled .island-center:hover .island-node-summary,
+body.is-scrolled .island-center:focus-within .island-node-summary {
+    width: 100%;
+    min-width: 0;
+    display: grid !important;
+    place-items: center;
+    padding: 0 6px 0 2px;
+    margin: 0;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+body:not(.is-scrolled) .island-center:hover .island-node-summary span,
+body:not(.is-scrolled) .island-center:focus-within .island-node-summary span,
+body.is-scrolled .island-center:hover .island-node-summary span,
+body.is-scrolled .island-center:focus-within .island-node-summary span {
+    display: none !important;
+}
+
+body:not(.is-scrolled) .island-center:hover .island-node-summary strong,
+body:not(.is-scrolled) .island-center:focus-within .island-node-summary strong,
+body.is-scrolled .island-center:hover .island-node-summary strong,
+body.is-scrolled .island-center:focus-within .island-node-summary strong {
+    display: block !important;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 850;
+    line-height: 1;
+}
+
+body.island-mode-expanded .island-mode-strip {
+    position: fixed;
+    top: 74px;
+    left: calc(50% + 116px);
+    right: auto;
+    display: inline-flex !important;
+    transform: translateX(-50%);
+    z-index: 940;
+}
+
+body.island-hovered .island-center {
+    width: clamp(430px, 44vw, 560px);
+    min-width: clamp(430px, 44vw, 560px);
+    grid-template-columns: auto minmax(130px, 1fr);
+    column-gap: 10px;
+    padding-inline: 10px;
+}
+
+body.island-hovered .island-center .tabs {
+    display: inline-flex !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    gap: 6px;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: none !important;
+}
+
+body.island-hovered .island-center .tab-btn,
+body.island-hovered .island-center .tab-btn:not(.active) {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    display: inline-grid !important;
+    place-items: center;
+}
+
+body.island-hovered .island-center .island-node-summary {
+    width: 100%;
+    min-width: 0;
+    display: grid !important;
+    place-items: center;
+    padding: 0 6px 0 2px;
+    margin: 0;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+body.island-hovered .island-center .island-node-summary span {
+    display: none !important;
+}
+
+body.island-hovered .island-center .island-node-summary strong {
+    display: block !important;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 850;
+    line-height: 1;
+}
+
+/* ── Island shape lock: only empty, icons, icons+node, and icons+node+mode strip. ── */
+body .island-center {
+    display: grid !important;
+    place-items: center;
+    overflow: visible;
+}
+
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) {
+    width: 92px !important;
+    min-width: 92px !important;
+    max-width: 92px !important;
+    height: 46px !important;
+    min-height: 46px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 1fr !important;
+    padding: 6px 12px !important;
+    border-radius: 999px !important;
+}
+
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .tabs {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .tab-btn,
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-node-summary {
+    display: none !important;
+}
+
+body:not(.is-scrolled).island-hovered .island-center,
+body:not(.is-scrolled) .island-center:hover,
+body:not(.is-scrolled) .island-center:focus-within {
+    width: 252px !important;
+    min-width: 252px !important;
+    max-width: 252px !important;
+    height: auto !important;
+    min-height: 72px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 34px 22px !important;
+    row-gap: 4px !important;
+    padding: 6px 9px !important;
+    border-radius: 24px !important;
+}
+
+body:not(.is-scrolled).island-hovered .island-center .island-node-summary,
+body:not(.is-scrolled) .island-center:hover .island-node-summary,
+body:not(.is-scrolled) .island-center:focus-within .island-node-summary {
+    display: none !important;
+}
+
+body.is-scrolled.island-hovered .island-center,
+body.is-scrolled .island-center:hover,
+body.is-scrolled .island-center:focus-within,
+body.is-scrolled.island-mode-expanded .island-center {
+    width: 292px !important;
+    min-width: 292px !important;
+    max-width: min(292px, calc(100vw - 28px)) !important;
+    height: auto !important;
+    min-height: 104px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 34px 22px auto !important;
+    row-gap: 5px !important;
+    padding: 7px 10px 8px !important;
+    border-radius: 24px !important;
+}
+
+body.island-hovered .island-center .tabs,
+body .island-center:hover .tabs,
+body .island-center:focus-within .tabs {
+    display: inline-flex !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    justify-content: center !important;
+    gap: 6px !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: none !important;
+}
+
+body.island-hovered .island-center .tab-btn,
+body.island-hovered .island-center .tab-btn:not(.active),
+body .island-center:hover .tab-btn,
+body .island-center:hover .tab-btn:not(.active),
+body .island-center:focus-within .tab-btn,
+body .island-center:focus-within .tab-btn:not(.active) {
+    width: 34px !important;
+    min-width: 34px !important;
+    height: 34px !important;
+    display: inline-grid !important;
+    place-items: center !important;
+}
+
+body.is-scrolled.island-hovered .island-center .island-node-summary,
+body.is-scrolled .island-center:hover .island-node-summary,
+body.is-scrolled .island-center:focus-within .island-node-summary,
+body.is-scrolled.island-mode-expanded .island-center .island-node-summary {
+    grid-row: 3 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 20px !important;
+    display: grid !important;
+    place-items: center !important;
+    padding: 0 4px !important;
+    margin: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+body.is-scrolled.island-hovered .island-center .island-node-summary span,
+body.is-scrolled .island-center:hover .island-node-summary span,
+body.is-scrolled .island-center:focus-within .island-node-summary span,
+body.is-scrolled.island-mode-expanded .island-center .island-node-summary span {
+    display: none !important;
+}
+
+body.is-scrolled.island-hovered .island-center .island-node-summary strong,
+body.is-scrolled .island-center:hover .island-node-summary strong,
+body.is-scrolled .island-center:focus-within .island-node-summary strong,
+body.is-scrolled.island-mode-expanded .island-center .island-node-summary strong {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-align: center !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 12px !important;
+    font-weight: 850 !important;
+    line-height: 1 !important;
+}
+
+body.island-mode-expanded .island-mode-strip {
+    position: fixed !important;
+    top: 108px !important;
+    left: 50% !important;
+    right: auto !important;
+    display: inline-flex !important;
+    transform: translateX(-50%) !important;
+    z-index: 940 !important;
+}
+
+/* ── Single top capsule: collapse the outer tray and move speed into the island. ── */
+body .header,
+body.tabs-collapsed .header,
+body[data-network-state] .header,
+body.tabs-collapsed[data-network-state] .header {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    pointer-events: none;
+    z-index: 930;
+}
+
+body .header-left,
+body .status-cluster {
+    display: none !important;
+}
+
+body .island-center,
+body .island-center:hover,
+body .island-center:focus-within,
+body.is-scrolled .island-center:not(:hover):not(:focus-within),
+body.is-scrolled .island-center:hover,
+body.is-scrolled .island-center:focus-within,
+:root[data-theme="light"] body .island-center,
+:root[data-theme="light"] body .island-center:hover {
+    top: 0 !important;
+    pointer-events: auto;
+}
+
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) {
+    width: 156px !important;
+    min-width: 156px !important;
+    max-width: 156px !important;
+}
+
+body .island-speed-monitor {
+    height: 24px;
+    min-width: 106px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
+    margin: 0;
+    border: 0 !important;
+    border-radius: 999px;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: var(--text-main);
+    font-size: 12px;
+    font-weight: 850;
+    line-height: 1;
+    letter-spacing: 0;
+    white-space: nowrap;
+}
+
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-speed-monitor {
+    display: inline-grid !important;
+}
+
+body:not(.is-scrolled).island-hovered .island-center .island-speed-monitor,
+body:not(.is-scrolled) .island-center:hover .island-speed-monitor,
+body:not(.is-scrolled) .island-center:focus-within .island-speed-monitor {
+    grid-row: 2 !important;
+    display: inline-grid !important;
+    justify-self: center;
+    height: 22px;
+    min-width: 120px;
+    color: var(--text-sub);
+    font-size: 11px;
+}
+
+body.is-scrolled.island-hovered .island-center .island-speed-monitor,
+body.is-scrolled .island-center:hover .island-speed-monitor,
+body.is-scrolled .island-center:focus-within .island-speed-monitor,
+body.is-scrolled.island-mode-expanded .island-center .island-speed-monitor {
+    grid-row: 2 !important;
+    display: inline-grid !important;
+    justify-self: center;
+    height: 22px;
+    min-width: 120px;
+    color: var(--text-sub);
+    font-size: 11px;
+}
+
+body.island-mode-expanded .island-mode-strip {
+    top: 86px !important;
+    pointer-events: auto !important;
+}
+
+body.island-mode-expanded .island-mode-strip .island-mode-button,
+body.island-mode-expanded .island-mode-strip .proxy-mode-button {
+    pointer-events: auto !important;
+    cursor: pointer;
+}
+
+body:not(.is-scrolled).island-hovered .island-center {
+    width: 252px;
+    min-width: 252px;
+    max-width: 252px;
+    min-height: 46px;
+    grid-template-columns: 1fr;
+    grid-template-rows: 34px;
+    row-gap: 0;
+    padding: 6px 9px;
+}
+
+body:not(.is-scrolled).island-hovered .island-center .island-node-summary {
+    display: none !important;
+}
+
+body.is-scrolled.island-hovered .island-center {
+    width: 292px;
+    min-width: 292px;
+    max-width: min(292px, calc(100vw - 28px));
+    min-height: 78px;
+    height: auto;
+    grid-template-columns: 1fr;
+    grid-template-rows: 34px auto;
+    row-gap: 5px;
+    padding: 7px 10px 8px;
+    border-radius: 24px;
+}
+
+body.is-scrolled.island-hovered .island-center .tabs,
+body:not(.is-scrolled).island-hovered .island-center .tabs {
+    justify-content: center;
+}
+
+body.is-scrolled.island-hovered .island-center .island-node-summary {
+    grid-row: 2;
+    min-height: 20px;
+    padding: 0 4px;
+}
+
+body.is-scrolled.island-hovered .island-center .island-node-summary strong {
+    font-size: 12px;
+}
+
+body.island-mode-expanded .island-mode-strip {
+    top: 108px;
+    left: 50%;
+}
+
+body[data-network-state] .header {
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--island-accent) 16%, rgba(8, 20, 36, 0.92)), rgba(3, 10, 22, 0.74)) !important;
+    border-color: var(--island-border) !important;
+    box-shadow: 0 18px 54px var(--island-glow) !important;
+}
+
+body[data-network-state] .speed-monitor {
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--island-accent) 18%, rgba(7, 26, 54, 0.84)), rgba(2, 10, 24, 0.72)) !important;
+    border-color: var(--island-border) !important;
+    box-shadow: 0 14px 34px var(--island-glow), inset 0 1px 0 rgba(255,255,255,0.10) !important;
+}
+
+:root[data-theme="light"] .island-center,
+:root[data-theme="light"] .header,
+:root[data-theme="light"] .status-cluster,
+:root[data-theme="light"] .speed-monitor {
+    transform-origin: center top;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] .island-center,
+    :root[data-theme="system"] .header,
+    :root[data-theme="system"] .status-cluster,
+    :root[data-theme="system"] .speed-monitor {
+        transform-origin: center top;
+    }
+}
+
+@media (max-width: 860px) {
+    .island-center:hover,
+    .island-center:focus-within,
+    .island-node-expanded .island-center {
+        width: min(244px, calc(100vw - 28px));
+        min-width: min(244px, calc(100vw - 28px));
+    }
+
+    .island-center:hover .tab-btn,
+    .island-center:focus-within .tab-btn,
+    .island-node-expanded .island-center .tab-btn {
+        min-width: 34px;
+        padding-inline: 0;
+    }
+
+    .island-center:hover .tab-btn::after,
+    .island-center:focus-within .tab-btn::after,
+    .island-node-expanded .island-center .tab-btn::after {
+        max-width: 0;
+    }
 }
 
 /* ── Theme-aware scrollbars ── */
@@ -6489,4 +7556,542 @@ body.tabs-collapsed .tabs {
         background: rgba(0, 136, 223, 0.10) !important;
         border-color: rgba(0, 136, 223, 0.20) !important;
     }
+}
+
+/* Final island interaction lock. */
+body .status-cluster .speed-monitor {
+    display: none !important;
+}
+
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-speed-monitor {
+    grid-row: 1 !important;
+    grid-column: 1 !important;
+    place-self: center !important;
+    height: 24px !important;
+    margin: 0 !important;
+}
+
+body:not(.is-scrolled).island-hovered .island-center,
+body:not(.is-scrolled) .island-center:hover,
+body:not(.is-scrolled) .island-center:focus-within {
+    width: 252px !important;
+    min-width: 252px !important;
+    max-width: min(252px, calc(100vw - 28px)) !important;
+    height: auto !important;
+    min-height: 72px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 34px 22px !important;
+    row-gap: 4px !important;
+    padding: 6px 9px !important;
+    border-radius: 24px !important;
+}
+
+body:not(.is-scrolled).island-hovered .island-center .island-speed-monitor,
+body:not(.is-scrolled) .island-center:hover .island-speed-monitor,
+body:not(.is-scrolled) .island-center:focus-within .island-speed-monitor {
+    grid-row: 2 !important;
+    display: inline-grid !important;
+    place-items: center !important;
+    justify-self: center !important;
+    align-self: center !important;
+    height: 22px !important;
+    min-width: 120px !important;
+    margin: 0 !important;
+    color: var(--text-sub) !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+}
+
+body:not(.is-scrolled).island-hovered .island-center .island-node-summary,
+body:not(.is-scrolled) .island-center:hover .island-node-summary,
+body:not(.is-scrolled) .island-center:focus-within .island-node-summary {
+    display: none !important;
+}
+
+body.is-scrolled.island-hovered .island-center,
+body.is-scrolled .island-center:hover,
+body.is-scrolled .island-center:focus-within,
+body.is-scrolled.island-mode-expanded .island-center {
+    width: 292px !important;
+    min-width: 292px !important;
+    max-width: min(292px, calc(100vw - 28px)) !important;
+    height: auto !important;
+    min-height: 104px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 34px 22px auto !important;
+    row-gap: 5px !important;
+    padding: 7px 10px 8px !important;
+    border-radius: 24px !important;
+}
+
+body.is-scrolled.island-hovered .island-center .island-speed-monitor,
+body.is-scrolled .island-center:hover .island-speed-monitor,
+body.is-scrolled .island-center:focus-within .island-speed-monitor,
+body.is-scrolled.island-mode-expanded .island-center .island-speed-monitor {
+    grid-row: 2 !important;
+    display: inline-grid !important;
+    place-items: center !important;
+    justify-self: center !important;
+    align-self: center !important;
+    height: 22px !important;
+    min-width: 120px !important;
+    margin: 0 !important;
+    color: var(--text-sub) !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+}
+
+body.is-scrolled.island-hovered .island-center .island-node-summary,
+body.is-scrolled .island-center:hover .island-node-summary,
+body.is-scrolled .island-center:focus-within .island-node-summary,
+body.is-scrolled.island-mode-expanded .island-center .island-node-summary {
+    grid-row: 3 !important;
+    display: grid !important;
+    place-items: center !important;
+    width: 100% !important;
+    min-height: 20px !important;
+    padding: 0 4px !important;
+    margin: 0 !important;
+}
+
+body.island-mode-expanded .island-mode-strip {
+    position: fixed !important;
+    top: 112px !important;
+    left: 50% !important;
+    right: auto !important;
+    display: inline-flex !important;
+    transform: translateX(-50%) !important;
+    z-index: 1200 !important;
+    pointer-events: auto !important;
+}
+
+body.island-mode-expanded .island-mode-strip,
+body.island-mode-expanded .island-mode-strip * {
+    visibility: visible !important;
+}
+
+body.island-mode-expanded .island-mode-strip .island-mode-button,
+body.island-mode-expanded .island-mode-strip .proxy-mode-button {
+    pointer-events: auto !important;
+    cursor: pointer !important;
+}
+
+/* Flatten the selected-node hero card without removing its content. */
+body .connection-stage,
+body.tabs-collapsed .connection-stage {
+    display: grid !important;
+    min-height: 148px !important;
+    height: auto !important;
+    padding: 6px 0 18px !important;
+    margin: 0 !important;
+    place-items: center !important;
+    overflow: visible !important;
+}
+
+body .connection-card,
+body.tabs-collapsed .connection-card,
+body:not(.tabs-collapsed) .connection-card,
+body[data-network-state] .connection-card,
+:root[data-theme="light"] body .connection-card {
+    display: grid !important;
+    width: min(720px, calc(100vw - 32px)) !important;
+    min-height: 142px !important;
+    padding: 18px !important;
+    border: 0 !important;
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    overflow: visible !important;
+}
+
+body .connection-card::before {
+    display: none !important;
+}
+
+body .connection-orb {
+    background: rgba(5, 18, 36, 0.38) !important;
+    border-color: rgba(91, 197, 255, 0.16) !important;
+    box-shadow: none !important;
+}
+
+body .island-center .island-speed-monitor {
+    display: none !important;
+}
+
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) {
+    width: 292px !important;
+    min-width: 292px !important;
+    max-width: min(292px, calc(100vw - 28px)) !important;
+    height: 46px !important;
+    min-height: 46px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 1fr !important;
+    padding: 6px 14px !important;
+}
+
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-node-summary {
+    grid-row: 1 !important;
+    grid-column: 1 !important;
+    display: grid !important;
+    place-items: center !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 24px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    pointer-events: auto !important;
+}
+
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-node-summary span {
+    display: none !important;
+}
+
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-node-summary strong {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-align: center !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    color: var(--text-main) !important;
+    font-size: 12px !important;
+    font-weight: 850 !important;
+    line-height: 1 !important;
+}
+
+body:not(.is-scrolled).island-hovered .island-center,
+body:not(.is-scrolled) .island-center:hover,
+body:not(.is-scrolled) .island-center:focus-within {
+    width: 292px !important;
+    min-width: 292px !important;
+    max-width: min(292px, calc(100vw - 28px)) !important;
+    min-height: 78px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 34px auto !important;
+    row-gap: 5px !important;
+    padding: 7px 10px 8px !important;
+    border-radius: 24px !important;
+}
+
+body:not(.is-scrolled).island-hovered .island-center .island-node-summary,
+body:not(.is-scrolled) .island-center:hover .island-node-summary,
+body:not(.is-scrolled) .island-center:focus-within .island-node-summary,
+body.is-scrolled.island-hovered .island-center .island-node-summary,
+body.is-scrolled .island-center:hover .island-node-summary,
+body.is-scrolled .island-center:focus-within .island-node-summary,
+body.is-scrolled.island-mode-expanded .island-center .island-node-summary {
+    display: grid !important;
+    grid-row: 2 !important;
+    place-items: center !important;
+    width: 100% !important;
+    min-height: 22px !important;
+    padding: 0 4px !important;
+    margin: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    pointer-events: auto !important;
+}
+
+body:not(.is-scrolled).island-hovered .island-center .island-node-summary span,
+body:not(.is-scrolled) .island-center:hover .island-node-summary span,
+body:not(.is-scrolled) .island-center:focus-within .island-node-summary span,
+body.is-scrolled.island-hovered .island-center .island-node-summary span,
+body.is-scrolled .island-center:hover .island-node-summary span,
+body.is-scrolled .island-center:focus-within .island-node-summary span,
+body.is-scrolled.island-mode-expanded .island-center .island-node-summary span {
+    display: none !important;
+}
+
+body:not(.is-scrolled).island-hovered .island-center .island-node-summary strong,
+body:not(.is-scrolled) .island-center:hover .island-node-summary strong,
+body:not(.is-scrolled) .island-center:focus-within .island-node-summary strong,
+body.is-scrolled.island-hovered .island-center .island-node-summary strong,
+body.is-scrolled .island-center:hover .island-node-summary strong,
+body.is-scrolled .island-center:focus-within .island-node-summary strong,
+body.is-scrolled.island-mode-expanded .island-center .island-node-summary strong {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-align: center !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 12px !important;
+    font-weight: 850 !important;
+    line-height: 1 !important;
+}
+
+body.is-scrolled.island-hovered .island-center,
+body.is-scrolled .island-center:hover,
+body.is-scrolled .island-center:focus-within,
+body.is-scrolled.island-mode-expanded .island-center {
+    min-height: 78px !important;
+    grid-template-rows: 34px auto !important;
+}
+
+body.island-mode-expanded .island-mode-strip {
+    top: 86px !important;
+}
+
+body .island-center .island-speed-monitor,
+body:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-speed-monitor,
+body:not(.is-scrolled).island-hovered .island-center .island-speed-monitor,
+body:not(.is-scrolled) .island-center:hover .island-speed-monitor,
+body:not(.is-scrolled) .island-center:focus-within .island-speed-monitor,
+body.is-scrolled.island-hovered .island-center .island-speed-monitor,
+body.is-scrolled .island-center:hover .island-speed-monitor,
+body.is-scrolled .island-center:focus-within .island-speed-monitor,
+body.is-scrolled.island-mode-expanded .island-center .island-speed-monitor {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+/* Home keeps the flat node entry; tabs move the node name into the island. */
+body.tabs-collapsed .connection-stage {
+    display: grid !important;
+    min-height: calc(100vh - 80px) !important;
+    height: auto !important;
+    padding: 6px 0 18px !important;
+    place-items: center !important;
+}
+
+body:not(.tabs-collapsed) .connection-stage {
+    display: none !important;
+    min-height: 0 !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+}
+
+body.tabs-collapsed:not(.island-hovered) .island-center:not(:hover):not(:focus-within) {
+    width: 92px !important;
+    min-width: 92px !important;
+    max-width: 92px !important;
+    height: 46px !important;
+    min-height: 46px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 1fr !important;
+    padding: 6px 12px !important;
+}
+
+body.tabs-collapsed:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-node-summary,
+body.tabs-collapsed:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .tab-btn,
+body.tabs-collapsed:not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-speed-monitor {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+body.tabs-collapsed.island-hovered .island-center,
+body.tabs-collapsed .island-center:hover,
+body.tabs-collapsed .island-center:focus-within {
+    width: 252px !important;
+    min-width: 252px !important;
+    max-width: min(252px, calc(100vw - 28px)) !important;
+    min-height: 46px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 34px !important;
+    row-gap: 0 !important;
+    padding: 6px 9px !important;
+}
+
+body.tabs-collapsed.island-hovered .island-center .island-node-summary,
+body.tabs-collapsed .island-center:hover .island-node-summary,
+body.tabs-collapsed .island-center:focus-within .island-node-summary,
+body.tabs-collapsed.island-mode-expanded .island-center .island-node-summary {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+body:not(.tabs-collapsed):not(.island-hovered) .island-center:not(:hover):not(:focus-within) {
+    width: 292px !important;
+    min-width: 292px !important;
+    max-width: min(292px, calc(100vw - 28px)) !important;
+}
+
+body:not(.tabs-collapsed):not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-node-summary {
+    display: grid !important;
+    pointer-events: auto !important;
+}
+
+/* Speed belongs in the island after entering tabs; the home island stays empty. */
+body.tabs-collapsed .island-center .island-speed-monitor {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+body:not(.tabs-collapsed) .island-center .island-speed-monitor,
+body:not(.tabs-collapsed):not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-speed-monitor,
+body:not(.tabs-collapsed).island-hovered .island-center .island-speed-monitor,
+body:not(.tabs-collapsed) .island-center:hover .island-speed-monitor,
+body:not(.tabs-collapsed) .island-center:focus-within .island-speed-monitor {
+    display: inline-grid !important;
+    place-items: center !important;
+    justify-self: center !important;
+    align-self: center !important;
+    width: auto !important;
+    min-width: 118px !important;
+    height: 18px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: var(--text-sub) !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+    line-height: 1 !important;
+    pointer-events: none !important;
+}
+
+body:not(.tabs-collapsed):not(.island-hovered) .island-center:not(:hover):not(:focus-within) {
+    height: 62px !important;
+    min-height: 62px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto 18px !important;
+    row-gap: 2px !important;
+    padding: 8px 14px !important;
+}
+
+body:not(.tabs-collapsed):not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-node-summary {
+    grid-row: 1 !important;
+}
+
+body:not(.tabs-collapsed):not(.island-hovered) .island-center:not(:hover):not(:focus-within) .island-speed-monitor {
+    grid-row: 2 !important;
+}
+
+body:not(.tabs-collapsed).island-hovered .island-center,
+body:not(.tabs-collapsed) .island-center:hover,
+body:not(.tabs-collapsed) .island-center:focus-within,
+body:not(.tabs-collapsed).island-mode-expanded .island-center {
+    min-height: 100px !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 34px auto 18px !important;
+    row-gap: 5px !important;
+}
+
+body:not(.tabs-collapsed).island-hovered .island-center .island-node-summary,
+body:not(.tabs-collapsed) .island-center:hover .island-node-summary,
+body:not(.tabs-collapsed) .island-center:focus-within .island-node-summary,
+body:not(.tabs-collapsed).island-mode-expanded .island-center .island-node-summary {
+    grid-row: 2 !important;
+}
+
+body:not(.tabs-collapsed).island-hovered .island-center .island-speed-monitor,
+body:not(.tabs-collapsed) .island-center:hover .island-speed-monitor,
+body:not(.tabs-collapsed) .island-center:focus-within .island-speed-monitor,
+body:not(.tabs-collapsed).island-mode-expanded .island-center .island-speed-monitor {
+    grid-row: 3 !important;
+}
+
+body:not(.tabs-collapsed).island-mode-expanded .island-mode-strip {
+    top: 108px !important;
+}
+
+/* Floating labels for island navigation icons; avoids native title tooltips. */
+body.island-hovered .island-center,
+body .island-center:hover,
+body .island-center:focus-within,
+body.island-mode-expanded .island-center,
+body.island-hovered .island-center .tabs,
+body .island-center:hover .tabs,
+body .island-center:focus-within .tabs,
+body.island-mode-expanded .island-center .tabs {
+    overflow: visible !important;
+}
+
+body.island-hovered .island-center .tab-btn,
+body .island-center:hover .tab-btn,
+body .island-center:focus-within .tab-btn,
+body.island-mode-expanded .island-center .tab-btn {
+    position: relative !important;
+}
+
+body.island-hovered .island-center .tab-btn::after,
+body .island-center:hover .tab-btn::after,
+body .island-center:focus-within .tab-btn::after,
+body.island-mode-expanded .island-center .tab-btn::after {
+    position: absolute !important;
+    left: 50% !important;
+    top: calc(100% + 7px) !important;
+    z-index: 30 !important;
+    display: block !important;
+    width: max-content !important;
+    max-width: 76px !important;
+    padding: 4px 7px !important;
+    border: 1px solid rgba(91, 197, 255, 0.22) !important;
+    border-radius: 7px !important;
+    background: rgba(6, 18, 34, 0.94) !important;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22) !important;
+    color: var(--text-main) !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+    line-height: 1 !important;
+    overflow: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    text-align: center !important;
+    text-overflow: ellipsis !important;
+    transform: translate(-50%, -3px) !important;
+    transition: opacity 0.14s ease, transform 0.14s ease !important;
+    white-space: nowrap !important;
+}
+
+body.island-hovered .island-center .tab-btn::before,
+body .island-center:hover .tab-btn::before,
+body .island-center:focus-within .tab-btn::before,
+body.island-mode-expanded .island-center .tab-btn::before {
+    content: "" !important;
+    position: absolute !important;
+    left: 50% !important;
+    top: calc(100% + 2px) !important;
+    z-index: 31 !important;
+    width: 7px !important;
+    height: 7px !important;
+    border-left: 1px solid rgba(91, 197, 255, 0.22) !important;
+    border-top: 1px solid rgba(91, 197, 255, 0.22) !important;
+    background: rgba(6, 18, 34, 0.94) !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translate(-50%, -2px) rotate(45deg) !important;
+    transition: opacity 0.14s ease, transform 0.14s ease !important;
+}
+
+body.island-hovered .island-center .tab-btn:hover::after,
+body.island-hovered .island-center .tab-btn:focus-visible::after,
+body .island-center:hover .tab-btn:hover::after,
+body .island-center:hover .tab-btn:focus-visible::after,
+body .island-center:focus-within .tab-btn:hover::after,
+body .island-center:focus-within .tab-btn:focus-visible::after,
+body.island-mode-expanded .island-center .tab-btn:hover::after,
+body.island-mode-expanded .island-center .tab-btn:focus-visible::after,
+body.island-hovered .island-center .tab-btn:hover::before,
+body.island-hovered .island-center .tab-btn:focus-visible::before,
+body .island-center:hover .tab-btn:hover::before,
+body .island-center:hover .tab-btn:focus-visible::before,
+body .island-center:focus-within .tab-btn:hover::before,
+body .island-center:focus-within .tab-btn:focus-visible::before,
+body.island-mode-expanded .island-center .tab-btn:hover::before,
+body.island-mode-expanded .island-center .tab-btn:focus-visible::before {
+    opacity: 1 !important;
+    transform: translate(-50%, 0) !important;
+}
+
+body.island-hovered .island-center .tab-btn:hover::before,
+body.island-hovered .island-center .tab-btn:focus-visible::before,
+body .island-center:hover .tab-btn:hover::before,
+body .island-center:hover .tab-btn:focus-visible::before,
+body .island-center:focus-within .tab-btn:hover::before,
+body .island-center:focus-within .tab-btn:focus-visible::before,
+body.island-mode-expanded .island-center .tab-btn:hover::before,
+body.island-mode-expanded .island-center .tab-btn:focus-visible::before {
+    transform: translate(-50%, 0) rotate(45deg) !important;
 }

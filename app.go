@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,8 +30,28 @@ func ShowFlutterWindow() {
 	startFlutterWindow(true)
 }
 
+func ShowFlutterWindowWhenWebUIReady() {
+	waitForWebUIReady(5 * time.Second)
+	ShowFlutterWindow()
+}
+
 func PreloadFlutterWindow() {
 	startFlutterWindow(false)
+}
+
+func waitForWebUIReady(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for {
+		conn, err := net.DialTimeout("tcp", "127.0.0.1:10809", 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(120 * time.Millisecond)
+	}
 }
 
 func startFlutterWindow(show bool) {

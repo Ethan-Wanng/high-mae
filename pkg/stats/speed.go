@@ -3,6 +3,7 @@ package stats
 import (
 	"fmt"
 	"github.com/getlantern/systray"
+	"sync"
 	"sync/atomic"
 	"time"
 	"wing/pkg/common"
@@ -24,9 +25,16 @@ func formatSpeed(bytes uint64) string {
 }
 
 var (
+	speedMu         sync.RWMutex
 	CurrentSpeedIn  string = "0 B/s"
 	CurrentSpeedOut string = "0 B/s"
 )
+
+func GetCurrentSpeeds() (in string, out string) {
+	speedMu.RLock()
+	defer speedMu.RUnlock()
+	return CurrentSpeedIn, CurrentSpeedOut
+}
 
 func StartNetSpeedMonitor(menuItem *systray.MenuItem) {
 	var lastIn, lastOut uint64
@@ -46,11 +54,15 @@ func StartNetSpeedMonitor(menuItem *systray.MenuItem) {
 			speedOut = 0
 		}
 
-		CurrentSpeedIn = formatSpeed(speedIn)
-		CurrentSpeedOut = formatSpeed(speedOut)
+		currentIn := formatSpeed(speedIn)
+		currentOut := formatSpeed(speedOut)
+		speedMu.Lock()
+		CurrentSpeedIn = currentIn
+		CurrentSpeedOut = currentOut
+		speedMu.Unlock()
 
 		if menuItem != nil {
-			menuItem.SetTitle(fmt.Sprintf("🚀 实时网速: ↑ %s  ↓ %s", CurrentSpeedOut, CurrentSpeedIn))
+			menuItem.SetTitle(fmt.Sprintf("🚀 实时网速: ↑ %s  ↓ %s", currentOut, currentIn))
 		}
 
 		lastIn = in

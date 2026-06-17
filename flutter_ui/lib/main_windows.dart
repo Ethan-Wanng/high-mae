@@ -9,7 +9,7 @@ import 'package:webview_windows/webview_windows.dart';
 import 'package:window_manager/window_manager.dart';
 
 const _defaultWebUIURL = 'http://127.0.0.1:10809/';
-const _desktopScrollFallbackDelay = Duration(milliseconds: 45);
+const _desktopScrollFallbackDelay = Duration(milliseconds: 30);
 const _backendWatchInterval = Duration(seconds: 15);
 const _backendWatchTimeout = Duration(seconds: 4);
 const _backendWatchMaxMisses = 4;
@@ -18,6 +18,8 @@ const _desktopScrollFallbackScript = r'''
   if (window.__wingDesktopScrollFallbackInstalled) return true;
   window.__wingDesktopScrollFallbackInstalled = true;
   window.__wingDesktopLastScrollAt = 0;
+  window.__wingDesktopScrollAnimations = new WeakMap();
+  const fallbackScale = 0.24;
 
   const scrollableOverflow = value => /(auto|scroll|overlay)/.test(value || '');
   const canScroll = (element, axis, delta) => {
@@ -52,6 +54,48 @@ const _desktopScrollFallbackScript = r'''
     return canScroll(root, axis, delta) ? root : null;
   };
 
+  const currentScroll = (element, axis) => axis === 'y' ? element.scrollTop : element.scrollLeft;
+  const maxScroll = (element, axis) => axis === 'y'
+    ? element.scrollHeight - element.clientHeight
+    : element.scrollWidth - element.clientWidth;
+  const setScroll = (element, axis, value) => {
+    if (axis === 'x') {
+      element.scrollLeft = value;
+    } else {
+      element.scrollTop = value;
+    }
+  };
+
+  const animateScroll = (element, axis, delta) => {
+    const current = currentScroll(element, axis);
+    const state = window.__wingDesktopScrollAnimations.get(element) || {};
+    const active = state[axis];
+    const target = Math.max(0, Math.min(maxScroll(element, axis), (active?.target ?? current) + delta));
+    if (Math.abs(target - current) < 0.5) return true;
+    if (active?.frame) cancelAnimationFrame(active.frame);
+
+    const from = current;
+    const start = performance.now();
+    const duration = Math.min(190, Math.max(120, Math.abs(target - from) * 0.85));
+    const animation = { target, frame: 0 };
+    state[axis] = animation;
+    window.__wingDesktopScrollAnimations.set(element, state);
+
+    const tick = now => {
+      const progress = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setScroll(element, axis, from + (target - from) * eased);
+      if (progress < 1) {
+        animation.frame = requestAnimationFrame(tick);
+        return;
+      }
+      setScroll(element, axis, target);
+      if (state[axis] === animation) delete state[axis];
+    };
+    animation.frame = requestAnimationFrame(tick);
+    return true;
+  };
+
   document.addEventListener('scroll', () => {
     window.__wingDesktopLastScrollAt = performance.now();
   }, true);
@@ -66,17 +110,13 @@ const _desktopScrollFallbackScript = r'''
 
     const horizontalIntent = Math.abs(dx) > Math.abs(dy);
     const axis = horizontalIntent ? 'x' : 'y';
-    const amount = horizontalIntent ? dx : dy;
+    const amount = (horizontalIntent ? dx : dy) * fallbackScale;
     if (Math.abs(amount) < 1) return false;
 
     const scrollTarget = findScrollTarget(target, axis, amount);
     if (!scrollTarget) return false;
 
-    if (axis === 'x') {
-      scrollTarget.scrollBy({ left: amount, behavior: 'auto' });
-    } else {
-      scrollTarget.scrollBy({ top: amount, behavior: 'auto' });
-    }
+    animateScroll(scrollTarget, axis, amount);
     window.__wingDesktopLastScrollAt = performance.now();
     return true;
   };
@@ -245,9 +285,9 @@ class _WingWebViewState extends State<WingWebView> {
     final client = HttpClient()..connectionTimeout = _backendWatchTimeout;
     try {
       final statusUri = Uri.parse(widget.initialUrl).resolve('/api/status');
-      final request = await client.getUrl(statusUri).timeout(
-        _backendWatchTimeout,
-      );
+      final request = await client
+          .getUrl(statusUri)
+          .timeout(_backendWatchTimeout);
       request.headers.set('X-Wing-Request', 'webui');
       final response = await request.close().timeout(_backendWatchTimeout);
       await response.drain<void>();
@@ -379,6 +419,10 @@ class _ConnectionStateView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (connecting) {
+      return const SizedBox.expand();
+    }
+
     final theme = Theme.of(context);
     return Center(
       child: ConstrainedBox(
@@ -390,24 +434,21 @@ class _ConnectionStateView extends StatelessWidget {
             children: [
               SizedBox.square(
                 dimension: 44,
-                child:
-                    connecting
-                        ? const CircularProgressIndicator(strokeWidth: 3)
-                        : Icon(
-                          Icons.signal_wifi_connected_no_internet_4,
-                          color: theme.colorScheme.error,
-                          size: 40,
-                        ),
+                child: Icon(
+                  Icons.signal_wifi_connected_no_internet_4,
+                  color: theme.colorScheme.error,
+                  size: 40,
+                ),
               ),
               const SizedBox(height: 20),
               Text(
-                connecting ? '正在打开控制面板' : '控制面板启动失败',
+                '控制面板启动失败',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.titleLarge,
               ),
               const SizedBox(height: 10),
               Text(
-                connecting ? '请稍候，正在准备本地服务。' : (error ?? '未知错误'),
+                error ?? '未知错误',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: Colors.white70,

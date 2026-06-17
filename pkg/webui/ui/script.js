@@ -7,7 +7,7 @@ let ruleGroups = [];
 let cmdRules = [];
 let currentRuleGroupIndex = 0;
 let activeTab = "nodes";
-let bottomTabsCollapsed = false;
+let bottomTabsCollapsed = true;
 let lastDashboardPoll = 0;
 let nodeGroupMode = "subscription";
 let selectedNodeGroupFile = "";
@@ -212,9 +212,11 @@ function initDesktopWheelDamping() {
     const finePointer = window.matchMedia?.('(pointer: fine)').matches ?? true;
     if (!finePointer) return;
 
-    const wheelScale = 0.42;
+    const wheelScale = 0.24;
+    const preciseWheelScale = 0.72;
     const trackpadThreshold = 48;
     const lineHeight = 16;
+    const scrollAnimations = new WeakMap();
 
     const normalizeWheelDelta = event => {
         if (event.deltaMode === 1) {
@@ -263,6 +265,47 @@ function initDesktopWheelDamping() {
         return canScroll(root, axis, delta) ? root : null;
     };
 
+    const scrollPosition = (element, axis) => axis === 'y' ? element.scrollTop : element.scrollLeft;
+
+    const setScrollPosition = (element, axis, value) => {
+        if (axis === 'y') element.scrollTop = value;
+        else element.scrollLeft = value;
+    };
+
+    const maxScrollFor = (element, axis) => axis === 'y'
+        ? element.scrollHeight - element.clientHeight
+        : element.scrollWidth - element.clientWidth;
+
+    const animateScroll = (element, axis, delta) => {
+        const maxScroll = maxScrollFor(element, axis);
+        const current = scrollPosition(element, axis);
+        const state = scrollAnimations.get(element) || {};
+        const active = state[axis];
+        const target = Math.max(0, Math.min(maxScroll, (active?.target ?? current) + delta));
+        if (Math.abs(target - current) < 0.5) return;
+        if (active?.frame) cancelAnimationFrame(active.frame);
+
+        const start = performance.now();
+        const from = current;
+        const duration = Math.min(190, Math.max(120, Math.abs(target - from) * 0.85));
+        const animation = { target, frame: 0 };
+        state[axis] = animation;
+        scrollAnimations.set(element, state);
+
+        const tick = now => {
+            const progress = Math.min(1, (now - start) / duration);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            setScrollPosition(element, axis, from + (target - from) * eased);
+            if (progress < 1) {
+                animation.frame = requestAnimationFrame(tick);
+                return;
+            }
+            setScrollPosition(element, axis, target);
+            if (state[axis] === animation) delete state[axis];
+        };
+        animation.frame = requestAnimationFrame(tick);
+    };
+
     document.addEventListener('wheel', event => {
         if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
         const target = event.target instanceof Element ? event.target : null;
@@ -275,7 +318,7 @@ function initDesktopWheelDamping() {
 
         const horizontalIntent = event.shiftKey || Math.abs(delta.x) > Math.abs(delta.y);
         const axis = horizontalIntent ? 'x' : 'y';
-        const scale = isPreciseWheel ? 1 : wheelScale;
+        const scale = isPreciseWheel ? preciseWheelScale : wheelScale;
         const amount = axis === 'x'
             ? (delta.x || delta.y) * scale
             : delta.y * scale;
@@ -285,11 +328,7 @@ function initDesktopWheelDamping() {
         if (!scrollTarget) return;
 
         event.preventDefault();
-        if (axis === 'x') {
-            scrollTarget.scrollBy({ left: amount, behavior: 'auto' });
-        } else {
-            scrollTarget.scrollBy({ top: amount, behavior: 'auto' });
-        }
+        animateScroll(scrollTarget, axis, amount);
     }, { passive: false });
 }
 
@@ -393,6 +432,9 @@ function displayProtocolName(node) {
 }
 
 function handleBottomTabClick(tabId) {
+    if (document.activeElement?.closest?.('#islandCenter')) {
+        document.activeElement.blur();
+    }
     if (activeTab === tabId && !bottomTabsCollapsed) {
         collapseBottomTabs();
         return;
@@ -415,6 +457,41 @@ function expandBottomTabs() {
 function initIslandBehavior() {
     updateIslandScrollState();
     wakeIsland();
+    const islandCenter = document.getElementById('islandCenter');
+    const islandModeStrip = document.getElementById('islandModeStrip');
+    const speedMonitor = document.getElementById('speedMonitor');
+    if (islandCenter && speedMonitor?.parentElement !== islandCenter) {
+        speedMonitor.classList.add('island-speed-monitor');
+        islandCenter.appendChild(speedMonitor);
+    }
+    if (islandModeStrip && islandModeStrip.parentElement !== document.body) {
+        document.body.appendChild(islandModeStrip);
+    }
+    islandCenter?.addEventListener('mouseenter', () => {
+        document.body.classList.add('island-hovered');
+    });
+    islandCenter?.addEventListener('mouseleave', event => {
+        if (event.relatedTarget?.closest?.('#islandModeStrip')) {
+            return;
+        }
+        if (document.activeElement?.closest?.('#islandCenter')) {
+            document.activeElement.blur();
+        }
+        document.body.classList.remove('island-hovered');
+        document.body.classList.remove('island-node-expanded');
+    });
+    islandModeStrip?.addEventListener('mouseenter', () => {
+        if (document.body.classList.contains('island-mode-expanded')) {
+            document.body.classList.add('island-hovered');
+        }
+    });
+    islandModeStrip?.addEventListener('mouseleave', event => {
+        if (event.relatedTarget?.closest?.('#islandCenter')) {
+            return;
+        }
+        document.body.classList.remove('island-hovered');
+        document.body.classList.remove('island-mode-expanded');
+    });
     ['mousemove', 'pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(eventName => {
         window.addEventListener(eventName, wakeIsland, { passive: true });
     });
@@ -423,8 +500,9 @@ function initIslandBehavior() {
         wakeIsland();
     }, { passive: true });
     document.addEventListener('click', event => {
-        if (!event.target?.closest?.('#islandCenter')) {
+        if (!event.target?.closest?.('#islandCenter, #islandModeStrip')) {
             document.body.classList.remove('island-node-expanded');
+            document.body.classList.remove('island-mode-expanded');
         }
     });
 }
@@ -444,7 +522,7 @@ function updateIslandScrollState() {
 
 function toggleIslandNodeModes(event) {
     event?.stopPropagation?.();
-    document.body.classList.toggle('island-node-expanded');
+    document.body.classList.toggle('island-mode-expanded');
     wakeIsland();
 }
 
@@ -458,8 +536,10 @@ function showSettingsSubtab(tab = 'run') {
     });
 }
 
-function showTab(tabId) {
-    expandBottomTabs();
+function showTab(tabId, options = {}) {
+    if (options.expand !== false) {
+        expandBottomTabs();
+    }
     activeTab = tabId;
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -573,7 +653,7 @@ function renderNodes(options = {}) {
         item.className = `source-push-card ${isSelected ? 'selected' : ''} ${showActive ? 'active' : ''}`;
         item.dataset.fileName = group.fileName;
         item.onclick = () => selectNodeGroup(group.fileName);
-        const traffic = group.type === 'subscription' ? supplierTrafficInline(group, { compact: true }) : '';
+        const traffic = '';
         item.innerHTML = `
             <span class="source-card-shine"></span>
             <span class="node-group-name"><span class="node-group-name-text">${escapeHTML(group.name)}</span>${traffic}</span>
@@ -2126,15 +2206,26 @@ function renderAutoSelectSourceCard({ kind, value, title, meta, selected, index 
     `;
 }
 
+function isAggregateNode(node) {
+    if (!node?.fileName) return false;
+    return aggregateGroupsCache.some(group => group.fileName === node.fileName);
+}
+
+function autoSelectSourceNodes(kind, fileName) {
+    if (!fileName) return [];
+    if (kind === 'subscription') {
+        return (allNodesList || []).filter(node => node.fileName === fileName && !isAggregateNode(node));
+    }
+    return (allNodesList || []).filter(node => node.fileName === fileName);
+}
+
 function autoSelectSourceNodeCount(kind, source) {
     const fileName = source?.fileName || '';
     if (!fileName) return 0;
-    const liveCount = (allNodesList || []).filter(node => {
-        if (kind === 'subscription') return node.fileName === fileName || node.sourceFile === fileName;
-        return node.fileName === fileName;
-    }).length;
+    const liveCount = autoSelectSourceNodes(kind, fileName).length;
     const cachedCount = Number(source?.nodeCount || source?.count || 0);
-    return Math.max(liveCount, Number.isFinite(cachedCount) ? cachedCount : 0);
+    if (allNodesList?.length) return liveCount;
+    return Number.isFinite(cachedCount) ? cachedCount : 0;
 }
 
 function autoSelectSourceMeta(kind, source) {
@@ -2822,12 +2913,12 @@ function autoSelectCandidates(fileName = '') {
     if (scope === 'subscription') {
         const targets = fileName ? [fileName] : selectedSubscriptionFiles();
         if (!targets.length) return [];
-        return (allNodesList || []).filter(n => targets.includes(n.fileName));
+        return targets.flatMap(target => autoSelectSourceNodes('subscription', target));
     }
     if (scope === 'aggregate') {
         const targets = fileName ? [fileName] : selectedAggregateFiles();
         if (!targets.length) return [];
-        return (allNodesList || []).filter(n => targets.includes(n.fileName));
+        return targets.flatMap(target => autoSelectSourceNodes('aggregate', target));
     }
     return [];
 }
@@ -3332,12 +3423,14 @@ async function copyShareModalText() {
 const helpTopics = {
     projectIntro: {
         title: '项目介绍',
-        summary: 'wing 是 Flutter + Go 构建的跨平台代理客户端，核心目标是把节点选择、分流、TUN 和 DNS 管理收进一个轻量控制面板。',
+        summary: 'wing 是 Flutter + Go 构建的跨平台代理客户端，核心目标是把节点选择、分流、TUN 和 DNS 管理收进一个轻量桌面入口。',
         body: `
             <h3>wing 是什么</h3>
             <ul>
                 <li>wing 使用 Go 后端常驻本机，负责代理入口、节点存储、测速、规则分流、DNS、TUN 和系统托盘。</li>
-                <li>桌面端使用 Flutter WebView 承载本机控制面板，移动端使用 Flutter WebView 访问本机、模拟器或局域网控制面板。</li>
+                <li>桌面端使用 Flutter WebView 承载本机控制面板，启动后自动显示；首屏以居中的节点入口卡片作为默认操作入口。</li>
+                <li>顶部灵动岛默认保持收缩，鼠标悬停后展开为纯图标导航，并会随直连、代理、TUN、代理+TUN 状态切换配色。</li>
+                <li>移动端使用 Flutter WebView 访问本机、模拟器或局域网控制面板。</li>
                 <li>控制面板默认只监听 127.0.0.1:10809，不对外网暴露。</li>
             </ul>
             <h3>核心能力</h3>
@@ -3368,7 +3461,7 @@ const helpTopics = {
             <h3>推荐流程</h3>
             <ol>
                 <li>点击顶部“导入订阅”，粘贴订阅链接、单节点链接或配置内容。</li>
-                <li>在“节点选择”中打开订阅组或聚合组，点击节点卡片或表格中的“选择”。</li>
+                <li>在“节点管理”中打开订阅组或聚合组，点击节点卡片或表格中的“选择”。</li>
                 <li>普通浏览器和多数桌面软件可先开启“代理服务”；游戏、命令行、部分不认系统代理的软件建议开启 TUN。</li>
                 <li>先用“极速测速”确认延迟，再用“测试网站”确认目标服务能否访问。</li>
             </ol>
@@ -5010,7 +5103,8 @@ window.onload = async () => {
     scheduleCustomSelectSync();
     scheduleAutoSelectTimer();
 
-    showTab('nodes');
+    showTab('nodes', { expand: false });
+    collapseBottomTabs();
 
     pollTimer = setInterval(() => {
         if (document.hidden) return;

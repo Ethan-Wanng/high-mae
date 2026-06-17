@@ -121,13 +121,13 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// 🚀 TUN Mode IP -> Domain Restore
 	if host, port, err := net.SplitHostPort(targetAddr); err == nil && net.ParseIP(host) != nil {
-		if d, ok := IPToDomainMap.Load(host); ok {
-			domain := strings.TrimSuffix(d.(string), ".")
+		if domain, ok := domainForIP(host); ok {
+			domain = strings.TrimSuffix(domain, ".")
 			targetAddr = net.JoinHostPort(domain, port)
 		}
 	} else if err != nil && net.ParseIP(targetAddr) != nil {
-		if d, ok := IPToDomainMap.Load(targetAddr); ok {
-			targetAddr = strings.TrimSuffix(d.(string), ".")
+		if domain, ok := domainForIP(targetAddr); ok {
+			targetAddr = strings.TrimSuffix(domain, ".")
 		}
 	}
 
@@ -270,4 +270,17 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	io.CopyBuffer(clientConn, upstream, buf)
 	closeBoth()
 	<-uploadDone
+}
+
+func domainForIP(ip string) (string, bool) {
+	value, ok := IPToDomainMap.Load(ip)
+	if !ok {
+		return "", false
+	}
+	entry, ok := value.(ipDomainEntry)
+	if !ok || time.Now().After(entry.expiresAt) {
+		IPToDomainMap.Delete(ip)
+		return "", false
+	}
+	return entry.domain, true
 }

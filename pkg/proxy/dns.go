@@ -45,6 +45,11 @@ type dnsCacheEntry struct {
 	expiresAt time.Time
 }
 
+type ipDomainEntry struct {
+	domain    string
+	expiresAt time.Time
+}
+
 var (
 	GlobalDNSConfig DNSConfig
 	dnsCache        = make(map[string]dnsCacheEntry)
@@ -55,7 +60,18 @@ var (
 const (
 	DNSConfigFile   = "dns_config.json"
 	maxDnsCacheSize = 10000 // DNS 缓存最大条目数，防止无限增长
+	maxDNSTTL       = 3600
 )
+
+func dnsEntryExpiry(ttl uint32, now time.Time) time.Time {
+	if ttl == 0 {
+		ttl = 60
+	}
+	if ttl > maxDNSTTL {
+		ttl = maxDNSTTL
+	}
+	return now.Add(time.Duration(ttl) * time.Second)
+}
 
 func LoadDNSConfig() {
 	data, err := secure.SecureReadFile(DNSConfigFile)
@@ -129,6 +145,14 @@ func MatchDNSRule(domain string) string {
 }
 
 func StartLocalDNS() {
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.2"), Port: 53}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		log.Printf("Failed to start DNS server: %v", err)
+		return
+	}
+	defer conn.Close()
+
 	if GlobalDNSConfig.AutoOverwrite {
 		if common.IsTunModeOn {
 			log.Println("TUN 模式已开启，跳过 DNS 自动覆写到 127.0.0.2")
@@ -137,14 +161,6 @@ func StartLocalDNS() {
 			common.IsSystemDNSHijacked = true
 		}
 	}
-
-	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.2"), Port: 53}
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		log.Printf("Failed to start DNS server: %v", err)
-		return
-	}
-	defer conn.Close()
 
 	log.Printf("DNS server listening on %s", addr.String())
 
@@ -160,6 +176,13 @@ func StartLocalDNS() {
 				}
 			}
 			dnsCacheMu.Unlock()
+			IPToDomainMap.Range(func(key, value any) bool {
+				entry, ok := value.(ipDomainEntry)
+				if !ok || now.After(entry.expiresAt) {
+					IPToDomainMap.Delete(key)
+				}
+				return true
+			})
 		}
 	})
 
@@ -267,19 +290,17 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 	if err := respMsg.Unpack(respData); err == nil && len(respMsg.Answer) > 0 {
 		minTTL := uint32(60) // Default 1 minute
 		first := true
+		now := time.Now()
 		for _, ans := range respMsg.Answer {
 			if first || ans.Header().Ttl < minTTL {
 				minTTL = ans.Header().Ttl
 				first = false
 			}
 			if a, ok := ans.(*dns.A); ok {
-				IPToDomainMap.Store(a.A.String(), domain)
+				IPToDomainMap.Store(a.A.String(), ipDomainEntry{domain: domain, expiresAt: dnsEntryExpiry(ans.Header().Ttl, now)})
 			} else if aaaa, ok := ans.(*dns.AAAA); ok {
-				IPToDomainMap.Store(aaaa.AAAA.String(), domain)
+				IPToDomainMap.Store(aaaa.AAAA.String(), ipDomainEntry{domain: domain, expiresAt: dnsEntryExpiry(ans.Header().Ttl, now)})
 			}
-		}
-		if minTTL > 3600 {
-			minTTL = 3600 // Max 1 hour
 		}
 
 		dnsCacheMu.Lock()
@@ -289,7 +310,7 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 		}
 		dnsCache[cacheKey] = dnsCacheEntry{
 			msg:       respMsg,
-			expiresAt: time.Now().Add(time.Duration(minTTL) * time.Second),
+			expiresAt: dnsEntryExpiry(minTTL, now),
 		}
 		dnsCacheMu.Unlock()
 	}

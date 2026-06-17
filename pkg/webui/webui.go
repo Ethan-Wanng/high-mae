@@ -35,7 +35,8 @@ import (
 )
 
 var (
-	uiServer *http.Server
+	uiServer   *http.Server
+	uiServerMu sync.Mutex
 	// Cache latency to avoid re-testing constantly
 	latencyCache sync.Map
 	speedCache   sync.Map
@@ -268,12 +269,27 @@ func StartWebUI() {
 		common.IsWebRTCPolicyOn = true
 	}
 
+	uiServerMu.Lock()
+	if uiServer != nil {
+		uiServerMu.Unlock()
+		return
+	}
 	uiServer = &http.Server{
 		Addr:    "127.0.0.1:10809",
 		Handler: mux,
 	}
+	server := uiServer
+	uiServerMu.Unlock()
 
-	uiServer.ListenAndServe()
+	err := server.ListenAndServe()
+	uiServerMu.Lock()
+	if uiServer == server {
+		uiServer = nil
+	}
+	uiServerMu.Unlock()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		fmt.Printf("⚠️ Web UI 启动失败: %v\n", err)
+	}
 }
 
 func EnsureStartupState() error {
@@ -533,16 +549,9 @@ func sniffDirectDomainsHandler(w http.ResponseWriter, r *http.Request) {
 	groups[sniffIdx].Name = "嗅探到规则"
 	groups[sniffIdx].Action = "direct"
 
-	sniffSeen := map[string]bool{}
-	for _, rule := range groups[sniffIdx].Rules {
-		if rule.Type == "domain_suffix" || rule.Type == "domain" {
-			sniffSeen[strings.ToLower(strings.TrimSpace(rule.Value))] = true
-		}
-	}
-
 	for _, domain := range candidates {
-		domain = strings.ToLower(strings.TrimSpace(domain))
-		if domain == "" || sniffSeen[domain] || !looksMainlandDirectDomain(domain) {
+		domain = normalizeSniffDomain(domain)
+		if domain == "" || directRuleAlreadyCoversDomain(groups, domain) || !looksMainlandDirectDomain(domain) {
 			continue
 		}
 		if !probeDirectDomain(domain, 2400*time.Millisecond) {
@@ -552,7 +561,6 @@ func sniffDirectDomainsHandler(w http.ResponseWriter, r *http.Request) {
 			Type:  "domain_suffix",
 			Value: domain,
 		})
-		sniffSeen[domain] = true
 		added = append(added, domain)
 	}
 
@@ -605,6 +613,53 @@ func directSniffCandidates() []string {
 		unique = append(unique, domain)
 	}
 	return unique
+}
+
+func directRuleAlreadyCoversDomain(groups []routing.RuleGroup, domain string) bool {
+	domain = normalizeSniffDomain(domain)
+	if domain == "" {
+		return false
+	}
+	for _, group := range groups {
+		groupAction := strings.ToLower(strings.TrimSpace(group.Action))
+		for _, rule := range group.Rules {
+			action := groupAction
+			if strings.TrimSpace(rule.Action) != "" {
+				action = strings.ToLower(strings.TrimSpace(rule.Action))
+			}
+			if action != "direct" {
+				continue
+			}
+			if sniffRuleMatchesDomain(rule, domain) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sniffRuleMatchesDomain(rule routing.CustomRule, domain string) bool {
+	domain = normalizeSniffDomain(domain)
+	value := normalizeSniffDomain(rule.Value)
+	if domain == "" || value == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(rule.Type)) {
+	case "domain", "exact":
+		return domain == value
+	case "domain_keyword", "keyword":
+		return strings.Contains(domain, value)
+	default:
+		return domain == value || strings.HasSuffix(domain, "."+value)
+	}
+}
+
+func normalizeSniffDomain(domain string) string {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	domain = strings.Trim(domain, ".")
+	domain = strings.TrimPrefix(domain, "*.")
+	domain = strings.TrimPrefix(domain, "www.")
+	return domain
 }
 
 func looksMainlandDirectDomain(domain string) bool {
@@ -1523,14 +1578,15 @@ func getStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if tunPending.Load() {
 		tunState = tunPendingState.Load()
 	}
+	speedIn, speedOut := stats.GetCurrentSpeeds()
 	status := map[string]interface{}{
 		"proxy":       common.IsSystemProxyOn,
 		"mode":        common.ProxyMode,
 		"tun":         tunState,
 		"tunnel":      tunState,
 		"webrtc":      common.IsWebRTCPolicyOn,
-		"speedIn":     stats.CurrentSpeedIn,
-		"speedOut":    stats.CurrentSpeedOut,
+		"speedIn":     speedIn,
+		"speedOut":    speedOut,
 		"freeTraffic": freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -2469,6 +2525,7 @@ var startTime = time.Now()
 func getStatsHandler(w http.ResponseWriter, r *http.Request) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
+	speedIn, speedOut := stats.GetCurrentSpeeds()
 
 	stats := map[string]interface{}{
 		"memAlloc":         m.Alloc,
@@ -2476,8 +2533,8 @@ func getStatsHandler(w http.ResponseWriter, r *http.Request) {
 		"heapInuse":        m.HeapInuse,
 		"heapReleased":     m.HeapReleased,
 		"goroutines":       runtime.NumGoroutine(),
-		"speedIn":          stats.CurrentSpeedIn,
-		"speedOut":         stats.CurrentSpeedOut,
+		"speedIn":          speedIn,
+		"speedOut":         speedOut,
 		"activeNodes":      1,
 		"uptime":           time.Since(startTime).Seconds(),
 		"connections":      atomic.LoadInt32(&stats.ActiveConnections),
