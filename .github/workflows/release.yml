@@ -19,7 +19,8 @@ env:
 jobs:
   windows:
     name: Windows installer
-    runs-on: windows-latest
+    # Flutter 3.29.2 expects the VS 2022 Windows desktop toolchain.
+    runs-on: windows-2022
     env:
       # Flutter Windows plugin symlinks fail when Pub cache lives on another drive.
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
