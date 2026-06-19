@@ -36,21 +36,26 @@ function Get-CertificatePath {
     }
 
     $certPath = Join-Path $env:RUNNER_TEMP "wing-signing-cert.pfx"
-    [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
-    return $certPath
+    try {
+        [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String(($env:WINDOWS_CERTIFICATE_BASE64 -replace '\s','')))
+        return $certPath
+    } catch {
+        Write-Warning "Failed to parse WINDOWS_CERTIFICATE_BASE64: $_"
+        return $null
+    }
 }
 
 $signTool = Find-SignTool
 if (-not $signTool) {
     Write-Host "signtool not found; skipping Windows code signing."
-    exit 0
+    return
 }
 
 $certPath = Get-CertificatePath
 $thumbprint = $env:WINDOWS_CERTIFICATE_THUMBPRINT
 if (-not $certPath -and -not $thumbprint) {
     Write-Host "No Windows signing certificate configured; skipping Windows code signing."
-    exit 0
+    return
 }
 
 $timestampURL = if ($env:WINDOWS_TIMESTAMP_URL) { $env:WINDOWS_TIMESTAMP_URL } else { "http://timestamp.digicert.com" }
