@@ -1,10 +1,18 @@
 <p align="center">
-  <img src="assets/logo-mark.png" width="148" alt="wing 软件图标">
+  <img src="pkg/webui/ui/logo-mark-app.png" width="148" alt="wing 彩色渐变软件图标">
 </p>
 
 <h1 align="center">wing</h1>
 
-wing 是一款基于 Flutter + Go 的跨平台代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，把节点订阅、测速、网站可用性测试、自动选点、规则分流、隧道连接、DNS 分流、WebRTC 防泄漏和命令行进程规则收进一个轻量桌面入口。界面采用扁平化布局，随网络状态切换直连、代理、TUN、代理 + TUN 四套配色，安装包和桌面窗口使用彩色渐变 wing 图标，控制面板与托盘图标会随直连、代理、TUN、代理 + TUN 状态切换。
+<p align="center">
+  <img src="pkg/webui/ui/logo-mark-direct-light.png" width="54" alt="浅色直连图标">
+  <img src="pkg/webui/ui/logo-mark-direct-dark.png" width="54" alt="深色直连图标">
+  <img src="pkg/webui/ui/logo-mark-proxy.png" width="54" alt="代理模式图标">
+  <img src="pkg/webui/ui/logo-mark-tun.png" width="54" alt="TUN 模式图标">
+  <img src="pkg/webui/ui/logo-mark-proxy-tun.png" width="54" alt="代理加 TUN 模式图标">
+</p>
+
+wing 是一款基于 Flutter + Go 的跨平台代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，把节点订阅、测速、网站可用性测试、自动选点、规则分流、隧道连接、DNS 分流、WebRTC 防泄漏和命令行进程规则收进一个轻量桌面入口。界面采用扁平化布局，随网络状态切换直连、代理、TUN、代理 + TUN 四套配色；安装包、桌面窗口和搜索入口使用彩色渐变 wing 图标，首页、自动选择入口和托盘图标会按当前模式自动换成对应图标。
 
 ## 核心特性
 
@@ -41,6 +49,10 @@ go test -> 直连
 ### 网络状态颜色
 
 浅色主题会按当前连接状态切换背景色：直连为白色，代理为浅蓝色，TUN 为浅黄色，代理 + TUN 为浅紫色。文字颜色会随背景一起调整，避免浅色背景下看不清。
+
+### 图标对应关系
+
+安装包、桌面快捷方式、开始菜单和窗口右上角使用彩色渐变 wing 图标。运行时图标会跟随模式切换：浅色直连使用黑灰 wing，深色直连使用白色 wing，代理模式使用蓝色 wing，TUN 模式使用黄色 wing，代理 + TUN 模式使用紫色 wing。首页、自动选择和系统托盘保持同一套映射。
 
 ### 安装后没有图标
 
