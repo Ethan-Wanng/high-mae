@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 
 	"wing/pkg/common"
 	"wing/pkg/secure"
@@ -26,7 +27,10 @@ type RuleGroup struct {
 	Rules  []CustomRule `json:"rules"`
 }
 
-var RuleGroups []RuleGroup
+var (
+	ruleMu     sync.RWMutex
+	RuleGroups []RuleGroup
+)
 
 const RuleGroupsFile = "rule_groups.json"
 
@@ -51,16 +55,17 @@ func LoadCmdRules() {
 	if err == nil {
 		var rules []CmdRule
 		if err := json.Unmarshal(data, &rules); err == nil {
-			CmdRules = normalizeCmdRules(rules)
+			setCmdRules(normalizeCmdRules(rules))
 			return
 		}
 	}
-	CmdRules = DefaultCmdRules()
-	_ = SaveCmdRules(CmdRules)
+	defaultRules := DefaultCmdRules()
+	setCmdRules(defaultRules)
+	_ = SaveCmdRules(defaultRules)
 }
 
 func SaveCmdRules(rules []CmdRule) error {
-	rules = normalizeCmdRules(rules)
+	rules = normalizeCmdRules(cloneCmdRules(rules))
 	data, err := json.MarshalIndent(rules, "", "  ")
 	if err != nil {
 		return err
@@ -68,8 +73,29 @@ func SaveCmdRules(rules []CmdRule) error {
 	if err := secure.SecureWriteFile(CmdRulesFile, data); err != nil {
 		return err
 	}
-	CmdRules = rules
+	setCmdRules(rules)
 	return nil
+}
+
+func GetCmdRules() []CmdRule {
+	ruleMu.RLock()
+	defer ruleMu.RUnlock()
+	return cloneCmdRules(CmdRules)
+}
+
+func setCmdRules(rules []CmdRule) {
+	ruleMu.Lock()
+	defer ruleMu.Unlock()
+	CmdRules = cloneCmdRules(rules)
+}
+
+func cloneCmdRules(rules []CmdRule) []CmdRule {
+	if len(rules) == 0 {
+		return nil
+	}
+	out := make([]CmdRule, len(rules))
+	copy(out, rules)
+	return out
 }
 
 func DefaultCmdRules() []CmdRule {
@@ -82,11 +108,12 @@ func EvaluateCmdRouting(cmdline string) (string, bool) {
 	if cmdline == "" {
 		return "", false
 	}
-	if len(CmdRules) == 0 {
-		CmdRules = DefaultCmdRules()
+	rules := GetCmdRules()
+	if len(rules) == 0 {
+		rules = DefaultCmdRules()
 	}
 	variants := commandLineVariants(cmdline)
-	for _, rule := range CmdRules {
+	for _, rule := range rules {
 		if commandLineMatches(variants, rule) {
 			return normalizeRuleAction(rule.Action), true
 		}
@@ -232,14 +259,13 @@ func LoadUserRules() {
 		_ = SaveRuleGroups(groups)
 	}
 	groups = removeLegacyBingDirectDefaults(groups)
-	RuleGroups = normalizeRuleGroups(groups)
-	_ = SaveRuleGroups(RuleGroups)
+	_ = SaveRuleGroups(groups)
 	LoadCmdRules()
 }
 
 func SaveUserRules() error {
-	_ = SaveCmdRules(CmdRules)
-	return SaveRuleGroups(RuleGroups)
+	_ = SaveCmdRules(GetCmdRules())
+	return SaveRuleGroups(GetRuleGroups())
 }
 
 func ReadRuleGroups() ([]RuleGroup, error) {
@@ -266,7 +292,7 @@ func ReadRuleGroups() ([]RuleGroup, error) {
 }
 
 func SaveRuleGroups(groups []RuleGroup) error {
-	groups = normalizeRuleGroups(groups)
+	groups = normalizeRuleGroups(cloneRuleGroups(groups))
 	data, err := json.MarshalIndent(groups, "", "  ")
 	if err != nil {
 		return err
@@ -274,8 +300,35 @@ func SaveRuleGroups(groups []RuleGroup) error {
 	if err := secure.SecureWriteFile(RuleGroupsFile, data); err != nil {
 		return err
 	}
-	RuleGroups = groups
+	setRuleGroups(groups)
 	return nil
+}
+
+func GetRuleGroups() []RuleGroup {
+	ruleMu.RLock()
+	defer ruleMu.RUnlock()
+	return cloneRuleGroups(RuleGroups)
+}
+
+func setRuleGroups(groups []RuleGroup) {
+	ruleMu.Lock()
+	defer ruleMu.Unlock()
+	RuleGroups = cloneRuleGroups(groups)
+}
+
+func cloneRuleGroups(groups []RuleGroup) []RuleGroup {
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make([]RuleGroup, len(groups))
+	for i := range groups {
+		out[i] = groups[i]
+		if len(groups[i].Rules) > 0 {
+			out[i].Rules = make([]CustomRule, len(groups[i].Rules))
+			copy(out[i].Rules, groups[i].Rules)
+		}
+	}
+	return out
 }
 
 func DefaultRuleGroups() []RuleGroup {
@@ -378,8 +431,9 @@ func EvaluateRouting(hostPort string) string {
 	if common.ProxyMode == "Global" {
 		return "proxy"
 	}
-	if len(RuleGroups) == 0 {
-		RuleGroups = normalizeRuleGroups(DefaultRuleGroups())
+	groups := GetRuleGroups()
+	if len(groups) == 0 {
+		groups = normalizeRuleGroups(DefaultRuleGroups())
 	}
 	host, _, err := net.SplitHostPort(hostPort)
 	if err != nil {
@@ -395,7 +449,7 @@ func EvaluateRouting(hostPort string) string {
 		return "reject"
 	}
 
-	for _, group := range RuleGroups {
+	for _, group := range groups {
 		groupAction := normalizeRuleAction(group.Action)
 		for _, r := range group.Rules {
 			value := strings.ToLower(strings.TrimSpace(r.Value))

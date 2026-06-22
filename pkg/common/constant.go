@@ -15,7 +15,7 @@ type GenericClient interface {
 	CreateProxy(ctx context.Context, destination metadata.Socksaddr) (net.Conn, error)
 }
 
-const AppVersion = "1.0.4.5"
+const AppVersion = "1.0.4.7.2"
 
 var LocalHttpPort = "10808"
 
@@ -53,6 +53,8 @@ var (
 	MToggleMode  *systray.MenuItem
 	MToggleTun   *systray.MenuItem
 	MQuit        *systray.MenuItem
+
+	RefreshTrayIcon func()
 
 	NodeMenuItems      []*systray.MenuItem // 保存所有的节点子菜单项，用于动态刷新
 	NodeMenuCancel     context.CancelFunc  // 用于取消旧节点的监听协程，防止内存泄漏

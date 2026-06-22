@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${WING_VERSION:-1.0.4.5}"
-BUILD_NUMBER="${FLUTTER_BUILD_NUMBER:-401}"
+VERSION="${WING_VERSION:-1.0.4.7.2}"
+BUILD_NUMBER="${FLUTTER_BUILD_NUMBER:-4072}"
 DIST="$ROOT/dist"
 APK="$DIST/wing-${VERSION}-android-universal.apk"
 

@@ -4,13 +4,13 @@
 
 <h1 align="center">wing</h1>
 
-wing 是一款基于 Flutter + Go 的跨平台代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，把节点订阅、测速、网站可用性测试、自动选点、规则分流、隧道连接、DNS 分流、WebRTC 防泄漏和命令行进程规则收进一个轻量桌面入口。
+wing 是一款基于 Flutter + Go 的跨平台代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，把节点订阅、测速、网站可用性测试、自动选点、规则分流、隧道连接、DNS 分流、WebRTC 防泄漏和命令行进程规则收进一个轻量桌面入口。界面采用扁平化布局，随网络状态切换直连、代理、TUN、代理 + TUN 四套配色，安装包和桌面窗口使用彩色渐变 wing 图标，控制面板与托盘图标会随直连、代理、TUN、代理 + TUN 状态切换。
 
 ## 核心特性
 
 - 多协议支持：Hysteria2、TUIC、VLESS、VMess、Trojan、Shadowsocks、AnyTLS、Naive、Mieru、HTTP/SOCKS 等。
 - 多入口管理：Flutter 桌面窗口启动后自动显示，Go 系统托盘用于再次唤起窗口、快速切换代理模式、隧道连接和退出；Android/iOS Flutter 壳用于访问本机、模拟器或局域网控制面板。
-- 灵动岛导航：默认以收缩胶囊呈现，鼠标悬停后展开为纯图标标签；当前网络状态会改变灵动岛配色，首屏以居中的节点入口卡片作为默认操作入口。
+- 灵动岛导航：默认以收缩胶囊呈现，鼠标悬停后展开为纯图标标签；当前网络状态会改变界面配色，首屏以居中的节点入口卡片作为默认操作入口。
 - 本地控制面板：默认运行在 `http://127.0.0.1:10809/`，用于订阅导入、节点管理、测速、网站测试、规则管理、DNS 管理和流量统计。
 - 订阅管理：支持为订阅设置自动更新时间间隔，并优化远程订阅更新速度。
 - 免费流量：内置获取免费流量入口，按周限制可用流量，用完后自动停止使用该入口。
@@ -35,6 +35,24 @@ go test -> 直连
 该能力适用于会连接本地 HTTP 代理的 TCP 请求，例如浏览器、`curl -x http://127.0.0.1:10808 ...`、Go 模块下载等。
 
 `ping` 使用 ICMP，不会进入本地 HTTP 代理，因此不能用 `ping youtube.com` 验证命令行规则是否生效。需要接管这类流量时请使用 TUN 模式。
+
+## 帮助中心
+
+### 网络状态颜色
+
+浅色主题会按当前连接状态切换背景色：直连为白色，代理为浅蓝色，TUN 为浅黄色，代理 + TUN 为浅紫色。文字颜色会随背景一起调整，避免浅色背景下看不清。
+
+### 安装后没有图标
+
+Windows 有时会缓存旧快捷方式图标。标准安装包会把 `icon.ico` 安装到程序目录，并让开始菜单、桌面快捷方式和卸载项显式使用它；如果搜索结果仍显示旧图标，可退出 wing 后重新安装，或删除旧的开始菜单快捷方式后再安装一次。
+
+### 开启 TUN 提示权限
+
+TUN 会接管不遵循系统代理的应用流量，因此需要管理员权限安装或调用相关网络能力。普通系统代理、节点管理、测速和网站可用性测试不需要管理员权限。
+
+### 控制面板打不开
+
+确认 `wing.exe` 正在运行，并访问 `http://127.0.0.1:10809/`。如果端口被占用或安全软件拦截，请退出占用端口的程序后重启 wing。
 
 ## 技术架构
 
@@ -83,14 +101,14 @@ go mod download
 双击根目录的 `package-wing.bat` 可以构建并生成给最终用户使用的 Windows 标准安装包：
 
 ```text
-dist/wing-1.0.4.5-windows-x64-setup.exe
+dist/wing-1.0.4.7.2-windows-x64-setup.exe
 ```
 
 命令行方式如下：
 
 ```powershell
 ./scripts/mk.ps1 build  # 构建 Flutter 控制面板与 Go 后端
-./scripts/mk.ps1 package # 构建并生成 dist/wing-1.0.4.5-windows-x64-setup.exe 标准安装包
+./scripts/mk.ps1 package # 构建并生成 dist/wing-1.0.4.7.2-windows-x64-setup.exe 标准安装包
 ./scripts/mk.ps1 installer # 同 package
 ./scripts/mk.ps1 portable # 生成旧版自解压安装包，不建议作为公开 Release 资产
 ./scripts/mk.ps1 backend # 仅构建 Go 后端
@@ -104,7 +122,7 @@ dist/wing-1.0.4.5-windows-x64-setup.exe
 
 - `wing.exe`：Go 后端、系统托盘、本地代理与本地 Web API。
 - `build/bin/flutter_ui/wing_ui.exe`：Flutter 桌面控制面板，会加载 `http://127.0.0.1:10809/`。
-- `dist/wing-1.0.4.5-windows-x64-setup.exe`：标准 Windows 安装包，用户双击后可选择安装目录。
+- `dist/wing-1.0.4.7.2-windows-x64-setup.exe`：标准 Windows 安装包，用户双击后可选择安装目录。
 - `dist/wing-installer.exe`：旧版自解压安装器，仅通过 `portable` 命令生成，公开分发时不推荐使用。
 
 ### 其他平台打包
@@ -129,18 +147,18 @@ bash scripts/package-ios.sh
 可通过环境变量覆盖版本与构建号：
 
 ```bash
-WING_VERSION=1.0.4.5 FLUTTER_BUILD_NUMBER=405 bash scripts/package-android.sh
+WING_VERSION=1.0.4.7.2 FLUTTER_BUILD_NUMBER=4072 bash scripts/package-android.sh
 ```
 
 ### Release 资产
 
 GitHub Actions 的 `release.yml` 会为 `v*` 标签生成并上传以下资产：
 
-- `wing-1.0.4.5-windows-x64-setup.exe`
-- `wing-1.0.4.5-linux-x64.run`
-- `wing-1.0.4.5-macos-x64.pkg`
-- `wing-1.0.4.5-android-universal.apk`
-- `wing-1.0.4.5-ios-unsigned.ipa`
+- `wing-1.0.4.7.2-windows-x64-setup.exe`
+- `wing-1.0.4.7.2-linux-x64.run`
+- `wing-1.0.4.7.2-macos-x64.pkg`
+- `wing-1.0.4.7.2-android-universal.apk`
+- `wing-1.0.4.7.2-ios-unsigned.ipa`
 
 iOS 默认 Release 资产是未签名 IPA，需要 Apple Developer 证书签名后才能真机分发；本地可通过 `IOS_EXPORT_OPTIONS_PLIST=/path/to/ExportOptions.plist bash scripts/package-ios.sh` 生成签名 IPA。Windows 代理软件未签名时仍可能被部分安全软件误报；仓库提供 `scripts/sign-windows.ps1`，在配置代码签名证书后可自动签名 Windows 可执行文件和安装包。
 

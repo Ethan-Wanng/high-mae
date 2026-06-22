@@ -18,6 +18,24 @@ var scriptJS string
 //go:embed ui/logo-mark.png
 var logoMarkPNG []byte
 
+//go:embed ui/logo-mark-app.png
+var logoMarkAppPNG []byte
+
+//go:embed ui/logo-mark-direct-dark.png
+var logoMarkDirectDarkPNG []byte
+
+//go:embed ui/logo-mark-direct-light.png
+var logoMarkDirectLightPNG []byte
+
+//go:embed ui/logo-mark-proxy.png
+var logoMarkProxyPNG []byte
+
+//go:embed ui/logo-mark-tun.png
+var logoMarkTunPNG []byte
+
+//go:embed ui/logo-mark-proxy-tun.png
+var logoMarkProxyTunPNG []byte
+
 func setWebUISecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -47,4 +65,10 @@ func serveLogoMark(w http.ResponseWriter, r *http.Request) {
 	setWebUISecurityHeaders(w)
 	w.Header().Set("Content-Type", "image/png")
 	w.Write(logoMarkPNG)
+}
+
+func servePNGBytes(w http.ResponseWriter, _ *http.Request, data []byte) {
+	setWebUISecurityHeaders(w)
+	w.Header().Set("Content-Type", "image/png")
+	w.Write(data)
 }

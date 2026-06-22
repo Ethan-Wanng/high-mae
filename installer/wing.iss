@@ -1,6 +1,9 @@
 #define MyAppName "wing"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.4.5"
+#define MyAppVersion "1.0.4.7.2"
+#endif
+#ifndef MyAppFileVersion
+#define MyAppFileVersion "1.0.4.72"
 #endif
 #define MyAppPublisher "Ethan-Wanng"
 #define MyAppURL "https://github.com/Ethan-Wanng/high-mae"
@@ -29,12 +32,12 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
-UninstallDisplayIcon={app}\{#MyAppExeName}
-VersionInfoVersion={#MyAppVersion}
+UninstallDisplayIcon={app}\icon.ico
+VersionInfoVersion={#MyAppFileVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=wing Windows installer
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppFileVersion}
 CloseApplications=yes
 RestartApplications=no
 
@@ -43,13 +46,14 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Files]
 Source: "{#SourceRoot}\wing.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\icon.ico"; DestDir: "{app}"; DestName: "icon.ico"; Flags: ignoreversion
 Source: "{#SourceRoot}\libcronet.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\flutter_ui\*"; DestDir: "{app}\flutter_ui"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\wing"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
-Name: "{group}\卸载 wing"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\wing"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{group}\wing"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "EthanWanng.wing"
+Name: "{group}\卸载 wing"; Filename: "{uninstallexe}"; IconFilename: "{app}\icon.ico"
+Name: "{autodesktop}\wing"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "EthanWanng.wing"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "启动 wing"; Flags: nowait postinstall skipifsilent

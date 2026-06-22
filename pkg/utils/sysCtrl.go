@@ -37,6 +37,16 @@ func IsAdmin() bool {
 	return true
 }
 
+func IsSystemLightTheme() bool {
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	value, _, err := k.GetIntegerValue("AppsUseLightTheme")
+	return err == nil && value != 0
+}
+
 func SetSystemProxy(enable bool) {
 	if runtime.GOOS != "windows" {
 		return

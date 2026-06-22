@@ -83,7 +83,9 @@ func SwitchNode(node protocol.Node) {
 
 	ClearNodeClientsCache()
 	if currentBox != nil {
-		currentBox.Close()
+		if err := closeSingBoxInstance("active proxy box", currentBox); err != nil {
+			log.Printf("关闭当前代理引擎失败: %v", err)
+		}
 		currentBox = nil
 	}
 	if cancelAnyTLS != nil {
@@ -91,12 +93,12 @@ func SwitchNode(node protocol.Node) {
 		cancelAnyTLS = nil
 	}
 	if currentMieru != nil {
-		currentMieru.Close()
+		if err := closeMieruRuntime("current mieru client", currentMieru); err != nil {
+			log.Printf("关闭 Mieru 客户端失败: %v", err)
+		}
 		currentMieru = nil
 	}
-	if closer, ok := oldClient.(io.Closer); ok {
-		_ = closer.Close()
-	}
+	_ = closeGenericClient("old active client", oldClient)
 	restartTunAfterNodeSwitch()
 }
 
@@ -509,7 +511,7 @@ func (s *SingBoxAdapter) CreateProxy(ctx context.Context, dest metadata.Socksadd
 
 func (s *SingBoxAdapter) Close() error {
 	if s != nil && s.Instance != nil {
-		s.Instance.Close()
+		return closeSingBoxInstance("sing-box adapter", s.Instance)
 	}
 	return nil
 }
@@ -528,18 +530,68 @@ type anytlsCloserAdapter struct {
 
 func (a *anytlsCloserAdapter) Close() error {
 	a.cancel()
-	if closer, ok := a.GenericClient.(io.Closer); ok {
-		return closer.Close()
+	return closeGenericClient("anytls adapter", a.GenericClient)
+}
+
+func closeSingBoxInstance(name string, b *box.Box) (err error) {
+	if b == nil {
+		return nil
 	}
-	return nil
+	defer func() {
+		if r := recover(); r != nil {
+			utils.WriteCrashLog(name, r)
+			err = fmt.Errorf("%s close panic: %v", name, r)
+		}
+	}()
+	return b.Close()
+}
+
+func startSingBoxInstance(name string, b *box.Box) (err error) {
+	if b == nil {
+		return fmt.Errorf("%s is nil", name)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			utils.WriteCrashLog(name, r)
+			err = fmt.Errorf("%s start panic: %v", name, r)
+		}
+	}()
+	return b.Start()
+}
+
+func closeGenericClient(name string, client common.GenericClient) (err error) {
+	closer, ok := client.(io.Closer)
+	if !ok || closer == nil {
+		return nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			utils.WriteCrashLog(name, r)
+			err = fmt.Errorf("%s close panic: %v", name, r)
+		}
+	}()
+	return closer.Close()
+}
+
+func closeMieruRuntime(name string, client mieruRuntime) (err error) {
+	if client == nil {
+		return nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			utils.WriteCrashLog(name, r)
+			err = fmt.Errorf("%s close panic: %v", name, r)
+		}
+	}()
+	return client.Close()
 }
 
 func ClearNodeClientsCache() {
 	nodeClientsMu.Lock()
 	defer nodeClientsMu.Unlock()
 	for name, client := range nodeClients {
-		if closer, ok := client.(io.Closer); ok {
-			closer.Close()
+		if err := closeGenericClient("cached route client "+name, client); err != nil {
+			log.Printf("关闭规则缓存节点 %s 失败: %v", name, err)
 		}
 		delete(nodeClients, name)
 	}
@@ -636,8 +688,10 @@ func CreateNodeClientWithResolvedIP(node protocol.Node, newIP string) (common.Ge
 	if err != nil {
 		return nil, err
 	}
-	if err := b.Start(); err != nil {
-		b.Close()
+	if err := startSingBoxInstance("node client", b); err != nil {
+		if closeErr := closeSingBoxInstance("failed node client", b); closeErr != nil {
+			log.Printf("启动失败后关闭节点代理引擎失败: %v", closeErr)
+		}
 		return nil, err
 	}
 	return &SingBoxAdapter{Instance: b}, nil
