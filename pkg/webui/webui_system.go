@@ -87,6 +87,9 @@ func systemConfigHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if common.RefreshTrayIcon != nil {
+			common.RefreshTrayIcon()
+		}
 
 		// Apply port change if changed
 		if oldPort != portStr {

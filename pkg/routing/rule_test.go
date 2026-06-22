@@ -152,3 +152,43 @@ func TestRemoveLegacyBingDirectDefaultsKeepsExplicitActions(t *testing.T) {
 		}
 	}
 }
+
+func TestRuleGroupSnapshotsAreIsolated(t *testing.T) {
+	oldRules := GetRuleGroups()
+	oldMode := common.ProxyMode
+	defer func() {
+		setRuleGroups(oldRules)
+		common.ProxyMode = oldMode
+	}()
+
+	common.ProxyMode = "Rule"
+	setRuleGroups([]RuleGroup{
+		{
+			ID:     "direct",
+			Name:   "Direct",
+			Action: "direct",
+			Rules:  []CustomRule{{Type: "domain", Value: "example.com"}},
+		},
+	})
+
+	snapshot := GetRuleGroups()
+	snapshot[0].Rules[0].Value = "mutated.example"
+
+	if got := EvaluateRouting("example.com:443"); got != "direct" {
+		t.Fatalf("EvaluateRouting after snapshot mutation = %q, want direct", got)
+	}
+}
+
+func TestCmdRuleSnapshotsAreIsolated(t *testing.T) {
+	oldRules := GetCmdRules()
+	defer setCmdRules(oldRules)
+
+	setCmdRules([]CmdRule{{Pattern: "curl https://example.com", Type: "prefix", Action: "direct"}})
+	snapshot := GetCmdRules()
+	snapshot[0].Pattern = "mutated"
+
+	action, matched := EvaluateCmdRouting("curl https://example.com/path")
+	if !matched || action != "direct" {
+		t.Fatalf("EvaluateCmdRouting after snapshot mutation = %q/%v, want direct/true", action, matched)
+	}
+}

@@ -60,6 +60,9 @@ func ToggleTunMode() string {
 		if common.MToggleTun != nil {
 			common.MToggleTun.SetTitle("🔌 隧道连接: [已关闭]")
 		}
+		if common.RefreshTrayIcon != nil {
+			common.RefreshTrayIcon()
+		}
 		log.Println("TUN 模式已关闭（销毁虚拟网卡，删除路由）")
 		return ""
 	}
@@ -78,6 +81,9 @@ func ToggleTunMode() string {
 	if common.MToggleTun != nil {
 		common.MToggleTun.SetTitle("🟢 隧道连接: [已开启]")
 	}
+	if common.RefreshTrayIcon != nil {
+		common.RefreshTrayIcon()
+	}
 	log.Println("TUN 模式已开启（内置 sing-box TUN，自动路由）")
 	return ""
 }
@@ -91,8 +97,20 @@ func RestartTun(nodeServer, nodeIP string) error {
 		return nil
 	}
 
+	stopTunWatchdogLocked()
 	stopTunLocked()
-	return startTunLocked(nodeIP)
+	if err := startTunLocked(nodeIP); err != nil {
+		common.IsTunModeOn = false
+		if common.MToggleTun != nil {
+			common.MToggleTun.SetTitle("🔌 隧道连接: [已关闭]")
+		}
+		if common.RefreshTrayIcon != nil {
+			common.RefreshTrayIcon()
+		}
+		return err
+	}
+	startTunWatchdogLocked()
+	return nil
 }
 
 // StopTun 停止 TUN（程序退出时由 main.go 调用）
@@ -113,7 +131,7 @@ func StopTun() {
 // stopTunLocked 关闭正在运行的内置 TUN 实例（调用者必须持有 tunMu）
 func stopTunLocked() {
 	if tunBox != nil {
-		if err := tunBox.Close(); err != nil {
+		if err := closeTunBox(tunBox); err != nil {
 			log.Printf("关闭 TUN 实例失败: %v", err)
 		}
 		tunBox = nil
@@ -191,8 +209,10 @@ func startTunLocked(nodeIP string) error {
 		cleanupStartedTunNodeRouteLocked()
 		return fmt.Errorf("创建内置 TUN 引擎失败: %w", err)
 	}
-	if err := b.Start(); err != nil {
-		b.Close()
+	if err := startTunBox(b); err != nil {
+		if closeErr := closeTunBox(b); closeErr != nil {
+			log.Printf("启动失败后关闭 TUN 实例失败: %v", closeErr)
+		}
 		cleanupStartedTunNodeRouteLocked()
 		return fmt.Errorf("启动内置 TUN 引擎失败: %w", err)
 	}
@@ -200,6 +220,29 @@ func startTunLocked(nodeIP string) error {
 	tunBox = b
 	releaseRuntimeMemory()
 	return nil
+}
+
+func startTunBox(b *box.Box) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			utils.WriteCrashLog("tun start", r)
+			err = fmt.Errorf("TUN 引擎启动时发生内部异常: %v", r)
+		}
+	}()
+	return b.Start()
+}
+
+func closeTunBox(b *box.Box) (err error) {
+	if b == nil {
+		return nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			utils.WriteCrashLog("tun close", r)
+			err = fmt.Errorf("TUN 引擎关闭时发生内部异常: %v", r)
+		}
+	}()
+	return b.Close()
 }
 
 func buildTunBoxOptions(nodeIP string) (option.Options, error) {

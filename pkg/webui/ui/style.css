@@ -5692,7 +5692,7 @@ body.tabs-collapsed .connection-card .connection-orb {
     }
 }
 
-/* ── 1.0.4.5 interaction polish: sticky island, compact settings, rectangular cards ── */
+/* ── 1.0.4.7.2 interaction polish: sticky island, compact settings, rectangular cards ── */
 .container {
     padding-top: 0;
 }
@@ -8094,4 +8094,743 @@ body .island-center:focus-within .tab-btn:focus-visible::before,
 body.island-mode-expanded .island-center .tab-btn:hover::before,
 body.island-mode-expanded .island-center .tab-btn:focus-visible::before {
     transform: translate(-50%, 0) rotate(45deg) !important;
+}
+
+/* Flat unified tab tray: one shared surface, no borders or per-tab boxes. */
+body.island-hovered .island-center .tabs,
+body .island-center:hover .tabs,
+body .island-center:focus-within .tabs,
+body.island-mode-expanded .island-center .tabs {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0 !important;
+    padding: 4px 6px !important;
+    border: 0 !important;
+    border-radius: 999px !important;
+    background: rgba(2, 8, 18, 0.82) !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+}
+
+body.island-hovered .island-center .tab-btn,
+body.island-hovered .island-center .tab-btn:not(.active),
+body .island-center:hover .tab-btn,
+body .island-center:hover .tab-btn:not(.active),
+body .island-center:focus-within .tab-btn,
+body .island-center:focus-within .tab-btn:not(.active),
+body.island-mode-expanded .island-center .tab-btn,
+body.island-mode-expanded .island-center .tab-btn:not(.active) {
+    width: 34px !important;
+    min-width: 34px !important;
+    height: 34px !important;
+    display: inline-grid !important;
+    place-items: center !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: color-mix(in srgb, var(--island-accent) 70%, var(--text-sub)) !important;
+}
+
+body.island-hovered .island-center .tab-btn.active,
+body .island-center:hover .tab-btn.active,
+body .island-center:focus-within .tab-btn.active,
+body.island-mode-expanded .island-center .tab-btn.active {
+    background: transparent !important;
+    box-shadow: none !important;
+    color: color-mix(in srgb, var(--island-accent) 88%, #ffffff 12%) !important;
+}
+
+body.island-hovered .island-center .tab-btn + .tab-btn,
+body .island-center:hover .tab-btn + .tab-btn,
+body .island-center:focus-within .tab-btn + .tab-btn,
+body.island-mode-expanded .island-center .tab-btn + .tab-btn {
+    border-left: 0 !important;
+}
+
+body.island-hovered .island-center .tab-btn:hover,
+body .island-center:hover .tab-btn:hover,
+body .island-center:focus-within .tab-btn:hover,
+body.island-mode-expanded .island-center .tab-btn:hover {
+    background: transparent !important;
+    color: color-mix(in srgb, var(--island-accent) 96%, #ffffff 4%) !important;
+}
+
+:root[data-theme="light"] body.island-hovered .island-center .tabs,
+:root[data-theme="light"] body .island-center:hover .tabs,
+:root[data-theme="light"] body .island-center:focus-within .tabs,
+:root[data-theme="light"] body.island-mode-expanded .island-center .tabs {
+    background: rgba(255, 255, 255, 0.72) !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+}
+
+body .brand-badge,
+body .connection-orb,
+body.tabs-collapsed .connection-card .connection-orb,
+body:not(.tabs-collapsed) .connection-card .connection-orb,
+:root[data-theme="light"] body .connection-orb {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+body .brand-mark,
+body .connection-orb img,
+:root[data-theme="light"] body .brand-mark,
+:root[data-theme="light"] body .connection-orb img {
+    filter: none !important;
+}
+
+/* Global flat surfaces: remove visible frame lines across every page. */
+body .header,
+body .controls,
+body .card,
+body .modal,
+body .log-container,
+body .control-card,
+body .node-detail-pane,
+body .node-group-sidebar,
+body .help-card,
+body .help-hero,
+body .help-status,
+body .help-summary-card,
+body .footer,
+body .explorer-card,
+body .layout-side-panel,
+body .layout-main-panel,
+body .node-card-table,
+body .node-card-table-header,
+body .source-card-deck,
+body .source-push-card,
+body .node-group-item,
+body .node-card-front,
+body .node-card-back,
+body .node-card-mark,
+body .node-card-meta span,
+body .node-card-corner,
+body .node-card-peek,
+body .settings-subtabs,
+body .settings-panel,
+body .settings-switch-card,
+body .settings-form-row,
+body .settings-management-button,
+body .system-action-card,
+body .auto-select-panel,
+body .auto-select-section,
+body .auto-select-inline-row,
+body .auto-select-group-list,
+body .auto-select-site-list,
+body .auto-select-choice-card,
+body .auto-select-rule-card,
+body .auto-select-rule-row,
+body .auto-select-picker,
+body .auto-select-check,
+body .auto-node-item,
+body .sitecheck-panel,
+body .site-target-row,
+body .site-result-row,
+body .site-target-category,
+body .site-target-lock,
+body .empty-state,
+body .traffic-pill,
+body .selected-node-display,
+body .selected-node-group-display,
+body .selected-node-protocol-display,
+body .source-traffic-inline,
+body .rule-action-badge,
+body .rule-item-container,
+body .log-table-wrapper,
+body .custom-select-button,
+body .custom-select-menu,
+body .custom-select-option,
+body .tabs-expand-button,
+body input,
+body textarea,
+body select,
+body button {
+    border: 0 !important;
+    border-top: 0 !important;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+    border-left: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+body .card::before,
+body .source-card-shine,
+body .source-push-card::after,
+body .node-card-front::before,
+body .auto-select-choice-card.selected::after,
+body .auto-select-rule-card::before {
+    display: none !important;
+}
+
+body .log-table th,
+body .log-table td,
+body .win-explorer-table th,
+body .win-explorer-table td,
+body .win-explorer-table tr {
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+body .site-result-row.ok,
+body .site-result-row.fail,
+body .source-push-card:hover,
+body .source-push-card.selected,
+body .source-push-card.active,
+body .node-group-item:hover,
+body .node-group-item.selected,
+body .auto-select-section:hover,
+body .auto-select-choice-card:hover,
+body .auto-select-choice-card.selected,
+body .auto-select-rule-card:hover,
+body .auto-select-rule-card.drawn,
+body .auto-node-item:hover,
+body .auto-node-item.active,
+body .card:hover,
+body .card.active,
+body .custom-select.open .custom-select-button,
+body .custom-select-button:hover,
+body input:focus,
+body textarea:focus,
+body select:focus {
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+body .log-container,
+body .explorer-card,
+body .node-card-table,
+body .node-detail-pane,
+body .node-group-sidebar,
+body .settings-panel,
+body .help-hero,
+body .help-card,
+body .sitecheck-panel,
+body .modal {
+    background: rgba(7, 20, 42, 0.34) !important;
+}
+
+body .site-target-row,
+body .site-result-row,
+body .settings-switch-card,
+body .settings-form-row,
+body .settings-management-button,
+body .system-action-card,
+body .auto-select-section,
+body .auto-select-inline-row,
+body .auto-select-choice-card,
+body .auto-select-rule-card,
+body .auto-node-item,
+body .node-group-item,
+body .source-push-card,
+body .empty-state,
+body input,
+body textarea,
+body select,
+body .custom-select-button {
+    background: rgba(255, 255, 255, 0.045) !important;
+}
+
+:root[data-theme="light"] body .log-container,
+:root[data-theme="light"] body .explorer-card,
+:root[data-theme="light"] body .node-card-table,
+:root[data-theme="light"] body .node-detail-pane,
+:root[data-theme="light"] body .node-group-sidebar,
+:root[data-theme="light"] body .settings-panel,
+:root[data-theme="light"] body .help-hero,
+:root[data-theme="light"] body .help-card,
+:root[data-theme="light"] body .sitecheck-panel,
+:root[data-theme="light"] body .modal {
+    background: rgba(255, 255, 255, 0.34) !important;
+}
+
+:root[data-theme="light"] body .site-target-row,
+:root[data-theme="light"] body .site-result-row,
+:root[data-theme="light"] body .settings-switch-card,
+:root[data-theme="light"] body .settings-form-row,
+:root[data-theme="light"] body .settings-management-button,
+:root[data-theme="light"] body .system-action-card,
+:root[data-theme="light"] body .auto-select-section,
+:root[data-theme="light"] body .auto-select-inline-row,
+:root[data-theme="light"] body .auto-select-choice-card,
+:root[data-theme="light"] body .auto-select-rule-card,
+:root[data-theme="light"] body .auto-node-item,
+:root[data-theme="light"] body .node-group-item,
+:root[data-theme="light"] body .source-push-card,
+:root[data-theme="light"] body .empty-state,
+:root[data-theme="light"] body input,
+:root[data-theme="light"] body textarea,
+:root[data-theme="light"] body select,
+:root[data-theme="light"] body .custom-select-button {
+    background: rgba(255, 255, 255, 0.42) !important;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] body .log-container,
+    :root[data-theme="system"] body .explorer-card,
+    :root[data-theme="system"] body .node-card-table,
+    :root[data-theme="system"] body .node-detail-pane,
+    :root[data-theme="system"] body .node-group-sidebar,
+    :root[data-theme="system"] body .settings-panel,
+    :root[data-theme="system"] body .help-hero,
+    :root[data-theme="system"] body .help-card,
+    :root[data-theme="system"] body .sitecheck-panel,
+    :root[data-theme="system"] body .modal {
+        background: rgba(255, 255, 255, 0.34) !important;
+    }
+
+    :root[data-theme="system"] body .site-target-row,
+    :root[data-theme="system"] body .site-result-row,
+    :root[data-theme="system"] body .settings-switch-card,
+    :root[data-theme="system"] body .settings-form-row,
+    :root[data-theme="system"] body .settings-management-button,
+    :root[data-theme="system"] body .system-action-card,
+    :root[data-theme="system"] body .auto-select-section,
+    :root[data-theme="system"] body .auto-select-inline-row,
+    :root[data-theme="system"] body .auto-select-choice-card,
+    :root[data-theme="system"] body .auto-select-rule-card,
+    :root[data-theme="system"] body .auto-node-item,
+    :root[data-theme="system"] body .node-group-item,
+    :root[data-theme="system"] body .source-push-card,
+    :root[data-theme="system"] body .empty-state,
+    :root[data-theme="system"] body input,
+    :root[data-theme="system"] body textarea,
+    :root[data-theme="system"] body select,
+    :root[data-theme="system"] body .custom-select-button {
+        background: rgba(255, 255, 255, 0.42) !important;
+    }
+}
+
+/* Full flat mode: remove box-like fills so surfaces merge with the page. */
+body .island-center,
+body .island-node-summary,
+body .island-mode-strip,
+body .proxy-mode-strip,
+body .proxy-mode-button,
+body .btn-primary,
+body .btn-success,
+body .btn-danger,
+body .btn-ghost,
+body .btn-update,
+body .btn-delete,
+body .btn-mini,
+body .btn-action,
+body .test-btn,
+body .bw-btn,
+body .app-update-button,
+body .node-type,
+body .status-dot,
+body .traffic-pill,
+body .site-target-category,
+body .site-target-lock,
+body .source-traffic-inline,
+body .rule-action-badge,
+body .selected-node-display,
+body .selected-node-group-display,
+body .selected-node-protocol-display,
+body .auto-select-card-mark,
+body .auto-select-card-corner,
+body .auto-select-rule-rank,
+body .auto-select-rule-suit,
+body .node-card-mark,
+body .node-card-corner,
+body .node-card-meta span,
+body .log-container,
+body .explorer-card,
+body .node-card-table,
+body .node-card-table-header,
+body .node-detail-pane,
+body .node-group-sidebar,
+body .settings-panel,
+body .settings-switch-card,
+body .settings-form-row,
+body .settings-management-button,
+body .system-action-card,
+body .help-hero,
+body .help-card,
+body .sitecheck-panel,
+body .site-target-row,
+body .site-result-row,
+body .auto-select-section,
+body .auto-select-inline-row,
+body .auto-select-choice-card,
+body .auto-select-rule-card,
+body .auto-node-item,
+body .node-group-item,
+body .source-push-card,
+body .empty-state,
+body .modal,
+body input,
+body textarea,
+body select,
+body .custom-select-button,
+body .custom-select-menu,
+body .custom-select-option,
+body .tabs,
+body .tab-btn {
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+body .proxy-mode-button.active,
+body .proxy-mode-button:hover,
+body .tab-btn.active,
+body .tab-btn:hover,
+body .btn-primary,
+body .btn-success,
+body .btn-update,
+body .btn-action-primary,
+body .site-result-row.ok .site-result-status,
+body .node-group-item.selected,
+body .source-push-card.selected,
+body .source-push-card.active,
+body .auto-select-choice-card.selected,
+body .auto-node-item.active {
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+body .btn-primary,
+body .btn-success,
+body .btn-update,
+body .btn-action-primary {
+    color: var(--accent) !important;
+}
+
+body .btn-danger,
+body .btn-delete,
+body .btn-mini-danger {
+    color: var(--danger) !important;
+}
+
+body .btn-ghost,
+body .btn-mini,
+body .btn-action,
+body .test-btn,
+body .bw-btn,
+body input,
+body textarea,
+body select,
+body .custom-select-button {
+    color: var(--text-main) !important;
+}
+
+body input::placeholder,
+body textarea::placeholder {
+    color: color-mix(in srgb, var(--text-sub) 72%, transparent) !important;
+}
+
+/* Light theme network palettes: flat state color with readable foregrounds. */
+:root[data-theme="light"] body[data-network-state="direct"] {
+    --state-bg: #ffffff;
+    --state-surface: rgba(15, 23, 42, 0.035);
+    --state-surface-strong: rgba(15, 23, 42, 0.055);
+    --state-text: #0f172a;
+    --state-text-sub: #475569;
+    --state-accent: #334155;
+    --state-button: #1f2937;
+    --text-main: var(--state-text);
+    --text-sub: var(--state-text-sub);
+    --text-dim: #64748b;
+    --accent: var(--state-accent);
+    --accent-2: #475569;
+    --accent-hover: #111827;
+    --island-accent: var(--state-accent);
+    background: var(--state-bg) !important;
+    color: var(--state-text) !important;
+}
+
+:root[data-theme="light"] body[data-network-state="proxy"] {
+    --state-bg: #e8f6ff;
+    --state-surface: rgba(2, 132, 199, 0.065);
+    --state-surface-strong: rgba(2, 132, 199, 0.105);
+    --state-text: #06324f;
+    --state-text-sub: #23506e;
+    --state-accent: #0077b6;
+    --state-button: #005f99;
+    --text-main: var(--state-text);
+    --text-sub: var(--state-text-sub);
+    --text-dim: #4d7894;
+    --accent: var(--state-accent);
+    --accent-2: #0b5f93;
+    --accent-hover: #005f99;
+    --island-accent: var(--state-accent);
+    background: var(--state-bg) !important;
+    color: var(--state-text) !important;
+}
+
+:root[data-theme="light"] body[data-network-state="tun"] {
+    --state-bg: #fff4c7;
+    --state-surface: rgba(146, 101, 0, 0.070);
+    --state-surface-strong: rgba(146, 101, 0, 0.110);
+    --state-text: #3f2f02;
+    --state-text-sub: #6f5205;
+    --state-accent: #9a6b00;
+    --state-button: #805600;
+    --text-main: var(--state-text);
+    --text-sub: var(--state-text-sub);
+    --text-dim: #8a6c1f;
+    --accent: var(--state-accent);
+    --accent-2: #805600;
+    --accent-hover: #6a4700;
+    --island-accent: var(--state-accent);
+    background: var(--state-bg) !important;
+    color: var(--state-text) !important;
+}
+
+:root[data-theme="light"] body[data-network-state="proxy_tun"] {
+    --state-bg: #f0eaff;
+    --state-surface: rgba(109, 40, 217, 0.065);
+    --state-surface-strong: rgba(109, 40, 217, 0.105);
+    --state-text: #332064;
+    --state-text-sub: #574292;
+    --state-accent: #7650d9;
+    --state-button: #5f3cc3;
+    --text-main: var(--state-text);
+    --text-sub: var(--state-text-sub);
+    --text-dim: #715dac;
+    --accent: var(--state-accent);
+    --accent-2: #5f3cc3;
+    --accent-hover: #4f2fb0;
+    --island-accent: var(--state-accent);
+    background: var(--state-bg) !important;
+    color: var(--state-text) !important;
+}
+
+:root[data-theme="light"] body[data-network-state] .log-container,
+:root[data-theme="light"] body[data-network-state] .explorer-card,
+:root[data-theme="light"] body[data-network-state] .node-card-table,
+:root[data-theme="light"] body[data-network-state] .node-detail-pane,
+:root[data-theme="light"] body[data-network-state] .node-group-sidebar,
+:root[data-theme="light"] body[data-network-state] .settings-panel,
+:root[data-theme="light"] body[data-network-state] .help-hero,
+:root[data-theme="light"] body[data-network-state] .help-card,
+:root[data-theme="light"] body[data-network-state] .sitecheck-panel,
+:root[data-theme="light"] body[data-network-state] .modal,
+:root[data-theme="light"] body[data-network-state] .island-center {
+    background: var(--state-surface) !important;
+    color: var(--state-text) !important;
+}
+
+:root[data-theme="light"] body[data-network-state] .site-target-row,
+:root[data-theme="light"] body[data-network-state] .site-result-row,
+:root[data-theme="light"] body[data-network-state] .settings-switch-card,
+:root[data-theme="light"] body[data-network-state] .settings-form-row,
+:root[data-theme="light"] body[data-network-state] .settings-management-button,
+:root[data-theme="light"] body[data-network-state] .system-action-card,
+:root[data-theme="light"] body[data-network-state] .auto-select-section,
+:root[data-theme="light"] body[data-network-state] .auto-select-inline-row,
+:root[data-theme="light"] body[data-network-state] .auto-select-choice-card,
+:root[data-theme="light"] body[data-network-state] .auto-select-rule-card,
+:root[data-theme="light"] body[data-network-state] .auto-node-item,
+:root[data-theme="light"] body[data-network-state] .node-group-item,
+:root[data-theme="light"] body[data-network-state] .source-push-card,
+:root[data-theme="light"] body[data-network-state] .empty-state,
+:root[data-theme="light"] body[data-network-state] input,
+:root[data-theme="light"] body[data-network-state] textarea,
+:root[data-theme="light"] body[data-network-state] select,
+:root[data-theme="light"] body[data-network-state] .custom-select-button {
+    background: var(--state-surface-strong) !important;
+    color: var(--state-text) !important;
+}
+
+:root[data-theme="light"] body[data-network-state] .tab-btn,
+:root[data-theme="light"] body[data-network-state] .proxy-mode-button,
+:root[data-theme="light"] body[data-network-state] .btn-primary,
+:root[data-theme="light"] body[data-network-state] .btn-success,
+:root[data-theme="light"] body[data-network-state] .btn-update,
+:root[data-theme="light"] body[data-network-state] .btn-action-primary,
+:root[data-theme="light"] body[data-network-state] .direct-button,
+:root[data-theme="light"] body[data-network-state] .speed-monitor,
+:root[data-theme="light"] body[data-network-state] .selected-node-display,
+:root[data-theme="light"] body[data-network-state] .selected-node-group-display,
+:root[data-theme="light"] body[data-network-state] .selected-node-protocol-display,
+:root[data-theme="light"] body[data-network-state] .site-target-category,
+:root[data-theme="light"] body[data-network-state] .site-target-lock,
+:root[data-theme="light"] body[data-network-state] .node-type,
+:root[data-theme="light"] body[data-network-state] .source-traffic-inline,
+:root[data-theme="light"] body[data-network-state] .rule-action-badge,
+:root[data-theme="light"] body[data-network-state] .log-node-proxy,
+:root[data-theme="light"] body[data-network-state] .log-node-direct,
+:root[data-theme="light"] body[data-network-state] .log-status-active {
+    color: var(--state-button) !important;
+}
+
+:root[data-theme="light"] body[data-network-state] .tab-btn.active,
+:root[data-theme="light"] body[data-network-state] .proxy-mode-button.active,
+:root[data-theme="light"] body[data-network-state] .node-group-item.selected,
+:root[data-theme="light"] body[data-network-state] .source-push-card.selected,
+:root[data-theme="light"] body[data-network-state] .source-push-card.active,
+:root[data-theme="light"] body[data-network-state] .auto-select-choice-card.selected,
+:root[data-theme="light"] body[data-network-state] .auto-node-item.active {
+    color: var(--state-text) !important;
+    background: var(--state-surface-strong) !important;
+}
+
+:root[data-theme="light"] body[data-network-state] input::placeholder,
+:root[data-theme="light"] body[data-network-state] textarea::placeholder {
+    color: color-mix(in srgb, var(--state-text-sub) 68%, transparent) !important;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] body[data-network-state="direct"] {
+        --state-bg: #ffffff;
+        --state-surface: rgba(15, 23, 42, 0.035);
+        --state-surface-strong: rgba(15, 23, 42, 0.055);
+        --state-text: #0f172a;
+        --state-text-sub: #475569;
+        --state-accent: #334155;
+        --state-button: #1f2937;
+        --text-main: var(--state-text);
+        --text-sub: var(--state-text-sub);
+        --text-dim: #64748b;
+        --accent: var(--state-accent);
+        --accent-2: #475569;
+        --accent-hover: #111827;
+        --island-accent: var(--state-accent);
+        background: var(--state-bg) !important;
+        color: var(--state-text) !important;
+    }
+
+    :root[data-theme="system"] body[data-network-state="proxy"] {
+        --state-bg: #e8f6ff;
+        --state-surface: rgba(2, 132, 199, 0.065);
+        --state-surface-strong: rgba(2, 132, 199, 0.105);
+        --state-text: #06324f;
+        --state-text-sub: #23506e;
+        --state-accent: #0077b6;
+        --state-button: #005f99;
+        --text-main: var(--state-text);
+        --text-sub: var(--state-text-sub);
+        --text-dim: #4d7894;
+        --accent: var(--state-accent);
+        --accent-2: #0b5f93;
+        --accent-hover: #005f99;
+        --island-accent: var(--state-accent);
+        background: var(--state-bg) !important;
+        color: var(--state-text) !important;
+    }
+
+    :root[data-theme="system"] body[data-network-state="tun"] {
+        --state-bg: #fff4c7;
+        --state-surface: rgba(146, 101, 0, 0.070);
+        --state-surface-strong: rgba(146, 101, 0, 0.110);
+        --state-text: #3f2f02;
+        --state-text-sub: #6f5205;
+        --state-accent: #9a6b00;
+        --state-button: #805600;
+        --text-main: var(--state-text);
+        --text-sub: var(--state-text-sub);
+        --text-dim: #8a6c1f;
+        --accent: var(--state-accent);
+        --accent-2: #805600;
+        --accent-hover: #6a4700;
+        --island-accent: var(--state-accent);
+        background: var(--state-bg) !important;
+        color: var(--state-text) !important;
+    }
+
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] {
+        --state-bg: #f0eaff;
+        --state-surface: rgba(109, 40, 217, 0.065);
+        --state-surface-strong: rgba(109, 40, 217, 0.105);
+        --state-text: #332064;
+        --state-text-sub: #574292;
+        --state-accent: #7650d9;
+        --state-button: #5f3cc3;
+        --text-main: var(--state-text);
+        --text-sub: var(--state-text-sub);
+        --text-dim: #715dac;
+        --accent: var(--state-accent);
+        --accent-2: #5f3cc3;
+        --accent-hover: #4f2fb0;
+        --island-accent: var(--state-accent);
+        background: var(--state-bg) !important;
+        color: var(--state-text) !important;
+    }
+
+    :root[data-theme="system"] body[data-network-state] .log-container,
+    :root[data-theme="system"] body[data-network-state] .explorer-card,
+    :root[data-theme="system"] body[data-network-state] .node-card-table,
+    :root[data-theme="system"] body[data-network-state] .node-detail-pane,
+    :root[data-theme="system"] body[data-network-state] .node-group-sidebar,
+    :root[data-theme="system"] body[data-network-state] .settings-panel,
+    :root[data-theme="system"] body[data-network-state] .help-hero,
+    :root[data-theme="system"] body[data-network-state] .help-card,
+    :root[data-theme="system"] body[data-network-state] .sitecheck-panel,
+    :root[data-theme="system"] body[data-network-state] .modal,
+    :root[data-theme="system"] body[data-network-state] .island-center {
+        background: var(--state-surface) !important;
+        color: var(--state-text) !important;
+    }
+
+    :root[data-theme="system"] body[data-network-state] .site-target-row,
+    :root[data-theme="system"] body[data-network-state] .site-result-row,
+    :root[data-theme="system"] body[data-network-state] .settings-switch-card,
+    :root[data-theme="system"] body[data-network-state] .settings-form-row,
+    :root[data-theme="system"] body[data-network-state] .settings-management-button,
+    :root[data-theme="system"] body[data-network-state] .system-action-card,
+    :root[data-theme="system"] body[data-network-state] .auto-select-section,
+    :root[data-theme="system"] body[data-network-state] .auto-select-inline-row,
+    :root[data-theme="system"] body[data-network-state] .auto-select-choice-card,
+    :root[data-theme="system"] body[data-network-state] .auto-select-rule-card,
+    :root[data-theme="system"] body[data-network-state] .auto-node-item,
+    :root[data-theme="system"] body[data-network-state] .node-group-item,
+    :root[data-theme="system"] body[data-network-state] .source-push-card,
+    :root[data-theme="system"] body[data-network-state] .empty-state,
+    :root[data-theme="system"] body[data-network-state] input,
+    :root[data-theme="system"] body[data-network-state] textarea,
+    :root[data-theme="system"] body[data-network-state] select,
+    :root[data-theme="system"] body[data-network-state] .custom-select-button {
+        background: var(--state-surface-strong) !important;
+        color: var(--state-text) !important;
+    }
+
+    :root[data-theme="system"] body[data-network-state] .tab-btn,
+    :root[data-theme="system"] body[data-network-state] .proxy-mode-button,
+    :root[data-theme="system"] body[data-network-state] .btn-primary,
+    :root[data-theme="system"] body[data-network-state] .btn-success,
+    :root[data-theme="system"] body[data-network-state] .btn-update,
+    :root[data-theme="system"] body[data-network-state] .btn-action-primary,
+    :root[data-theme="system"] body[data-network-state] .direct-button,
+    :root[data-theme="system"] body[data-network-state] .speed-monitor,
+    :root[data-theme="system"] body[data-network-state] .selected-node-display,
+    :root[data-theme="system"] body[data-network-state] .selected-node-group-display,
+    :root[data-theme="system"] body[data-network-state] .selected-node-protocol-display,
+    :root[data-theme="system"] body[data-network-state] .site-target-category,
+    :root[data-theme="system"] body[data-network-state] .site-target-lock,
+    :root[data-theme="system"] body[data-network-state] .node-type,
+    :root[data-theme="system"] body[data-network-state] .source-traffic-inline,
+    :root[data-theme="system"] body[data-network-state] .rule-action-badge,
+    :root[data-theme="system"] body[data-network-state] .log-node-proxy,
+    :root[data-theme="system"] body[data-network-state] .log-node-direct,
+    :root[data-theme="system"] body[data-network-state] .log-status-active {
+        color: var(--state-button) !important;
+    }
+
+    :root[data-theme="system"] body[data-network-state] .tab-btn.active,
+    :root[data-theme="system"] body[data-network-state] .proxy-mode-button.active,
+    :root[data-theme="system"] body[data-network-state] .node-group-item.selected,
+    :root[data-theme="system"] body[data-network-state] .source-push-card.selected,
+    :root[data-theme="system"] body[data-network-state] .source-push-card.active,
+    :root[data-theme="system"] body[data-network-state] .auto-select-choice-card.selected,
+    :root[data-theme="system"] body[data-network-state] .auto-node-item.active {
+        color: var(--state-text) !important;
+        background: var(--state-surface-strong) !important;
+    }
+
+    :root[data-theme="system"] body[data-network-state] input::placeholder,
+    :root[data-theme="system"] body[data-network-state] textarea::placeholder {
+        color: color-mix(in srgb, var(--state-text-sub) 68%, transparent) !important;
+    }
 }

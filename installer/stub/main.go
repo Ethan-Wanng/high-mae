@@ -238,11 +238,15 @@ $ErrorActionPreference = 'Stop'
 $shell = New-Object -ComObject WScript.Shell
 $exe = %s
 $workDir = %s
+$icon = Join-Path $workDir 'icon.ico'
+if (-not (Test-Path -LiteralPath $icon)) {
+    $icon = $exe
+}
 $desktop = [Environment]::GetFolderPath('DesktopDirectory')
 $shortcut = $shell.CreateShortcut((Join-Path $desktop 'wing.lnk'))
 $shortcut.TargetPath = $exe
 $shortcut.WorkingDirectory = $workDir
-$shortcut.IconLocation = $exe
+$shortcut.IconLocation = $icon
 $shortcut.Save()
 $programs = [Environment]::GetFolderPath('Programs')
 $startMenuDir = Join-Path $programs 'wing'
@@ -250,7 +254,7 @@ New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null
 $shortcut = $shell.CreateShortcut((Join-Path $startMenuDir 'wing.lnk'))
 $shortcut.TargetPath = $exe
 $shortcut.WorkingDirectory = $workDir
-$shortcut.IconLocation = $exe
+$shortcut.IconLocation = $icon
 $shortcut.Save()
 `, powershellString(exePath), powershellString(installDir))
 

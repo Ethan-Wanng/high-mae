@@ -402,6 +402,30 @@ function updateConnectionState(status = {}) {
     document.querySelectorAll('.proxy-mode-button').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.preset === state);
     });
+    updateModeLogos();
+}
+
+function effectiveThemeMode() {
+    const theme = document.documentElement.dataset.theme || localStorage.getItem('wing_theme_mode') || 'system';
+    if (theme === 'light' || theme === 'dark') return theme;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function currentModeLogoSrc() {
+    const state = document.body?.dataset?.networkState || 'direct';
+    if (state === 'proxy_tun') return 'logo-mark-proxy-tun.png';
+    if (state === 'proxy') return 'logo-mark-proxy.png';
+    if (state === 'tun') return 'logo-mark-tun.png';
+    return effectiveThemeMode() === 'light' ? 'logo-mark-direct-light.png' : 'logo-mark-direct-dark.png';
+}
+
+function updateModeLogos() {
+    const src = currentModeLogoSrc();
+    document.querySelectorAll('img.mode-logo').forEach(img => {
+        if (img.getAttribute('src') !== src) {
+            img.setAttribute('src', src);
+        }
+    });
 }
 
 function updateConnectionNodeSummary() {
@@ -1240,6 +1264,15 @@ function applyThemeMode(mode) {
     const theme = ['light', 'dark', 'system'].includes(mode) ? mode : 'system';
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('wing_theme_mode', theme);
+    updateModeLogos();
+}
+
+if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+        if ((document.documentElement.dataset.theme || 'system') === 'system') {
+            updateModeLogos();
+        }
+    });
 }
 
 function buildSystemConfigPayload() {
@@ -2199,7 +2232,7 @@ function renderAutoSelectSourceCard({ kind, value, title, meta, selected, index 
     return `
         <button type="button" class="auto-select-choice-card ${selected ? 'selected' : ''}" data-auto-select-action="${action}" data-file-name="${escapeAttr(value)}" aria-pressed="${selected ? 'true' : 'false'}" style="--deal-index:${Math.min(index || 0, 12)}">
             <span class="auto-select-card-corner">${rank}</span>
-            <span class="auto-select-card-mark"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
+            <span class="auto-select-card-mark"><img class="mode-logo" src="${currentModeLogoSrc()}" alt="" aria-hidden="true"></span>
             <span class="auto-select-card-title">${escapeHTML(title)}</span>
             <span class="auto-select-card-meta">${escapeHTML(meta)}</span>
         </button>
@@ -2240,7 +2273,7 @@ function renderAutoSelectSiteCard(target, selected, index) {
     return `
         <button type="button" class="auto-select-choice-card site ${selected ? 'selected' : ''}" data-auto-select-action="site-target-card" data-target-id="${escapeAttr(target.id)}" aria-pressed="${selected ? 'true' : 'false'}" style="--deal-index:${Math.min(index || 0, 12)}">
             <span class="auto-select-card-corner">WEB</span>
-            <span class="auto-select-card-mark"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
+            <span class="auto-select-card-mark"><img class="mode-logo" src="${currentModeLogoSrc()}" alt="" aria-hidden="true"></span>
             <span class="auto-select-card-title">${escapeHTML(target.name || target.url || target.id)}</span>
             <span class="auto-select-card-meta">${escapeHTML(target.category || '网站')}</span>
         </button>
@@ -2254,7 +2287,7 @@ function renderAutoSelectRuleCard(rule, options = {}) {
     return `
         <button type="button" class="auto-select-rule-card ${options.justDrawn ? 'drawn' : ''}" data-auto-select-action="open-rule-card" data-rule-id="${escapeAttr(rule.id)}" title="${escapeAttr(detail)}" style="--deal-index:${Math.min(options.index || 0, 18)}">
             <span class="auto-select-rule-rank">${escapeHTML(autoSelectRuleCardRank(rule.type))}</span>
-            <span class="auto-select-rule-suit"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
+            <span class="auto-select-rule-suit"><img class="mode-logo" src="${currentModeLogoSrc()}" alt="" aria-hidden="true"></span>
             <span class="auto-select-rule-title">${escapeHTML(autoSelectRuleLabel(rule))}</span>
             <span class="auto-select-rule-desc">${escapeHTML(description)}</span>
             <span class="auto-select-rule-meta">${values.length || 1} 个条件 · 点击查看/编辑</span>
@@ -2285,7 +2318,7 @@ function renderAutoSelectDiscardCard(rule, index) {
     return `
         <button type="button" class="auto-select-rule-card discarded" data-auto-select-action="restore-discarded-rule" data-discard-index="${index}" title="${escapeAttr(detail)}" aria-label="查看弃置：${escapeAttr(autoSelectRuleLabel(rule))}" style="--discard-index:${index}">
             <span class="auto-select-rule-rank">${escapeHTML(autoSelectRuleCardRank(rule.type))}</span>
-            <span class="auto-select-rule-suit"><img src="logo-mark.png" alt="" aria-hidden="true"></span>
+            <span class="auto-select-rule-suit"><img class="mode-logo" src="${currentModeLogoSrc()}" alt="" aria-hidden="true"></span>
             <span class="auto-select-rule-title">${escapeHTML(autoSelectRuleLabel(rule))}</span>
             <span class="auto-select-rule-desc">${escapeHTML(autoSelectRuleDescription(rule))}</span>
         </button>

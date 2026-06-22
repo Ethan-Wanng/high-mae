@@ -118,6 +118,12 @@ func buildWebUIMux() *http.ServeMux {
 	mux.HandleFunc("/style.css", serveCSS)
 	mux.HandleFunc("/script.js", serveJS)
 	mux.HandleFunc("/logo-mark.png", serveLogoMark)
+	mux.HandleFunc("/logo-mark-app.png", func(w http.ResponseWriter, r *http.Request) { servePNGBytes(w, r, logoMarkAppPNG) })
+	mux.HandleFunc("/logo-mark-direct-dark.png", func(w http.ResponseWriter, r *http.Request) { servePNGBytes(w, r, logoMarkDirectDarkPNG) })
+	mux.HandleFunc("/logo-mark-direct-light.png", func(w http.ResponseWriter, r *http.Request) { servePNGBytes(w, r, logoMarkDirectLightPNG) })
+	mux.HandleFunc("/logo-mark-proxy.png", func(w http.ResponseWriter, r *http.Request) { servePNGBytes(w, r, logoMarkProxyPNG) })
+	mux.HandleFunc("/logo-mark-tun.png", func(w http.ResponseWriter, r *http.Request) { servePNGBytes(w, r, logoMarkTunPNG) })
+	mux.HandleFunc("/logo-mark-proxy-tun.png", func(w http.ResponseWriter, r *http.Request) { servePNGBytes(w, r, logoMarkProxyTunPNG) })
 	api("/api/nodes", getNodes)
 	api("/api/switch", switchNodeHandler)
 	api("/api/direct", directNodeHandler)
@@ -490,7 +496,7 @@ func resetNodeMetricCaches() {
 func rulesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(routing.RuleGroups)
+		json.NewEncoder(w).Encode(routing.GetRuleGroups())
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -521,7 +527,7 @@ func resetRulesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "groups": routing.RuleGroups})
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "groups": routing.GetRuleGroups()})
 }
 
 func sniffDirectDomainsHandler(w http.ResponseWriter, r *http.Request) {
@@ -533,7 +539,7 @@ func sniffDirectDomainsHandler(w http.ResponseWriter, r *http.Request) {
 
 	candidates := directSniffCandidates()
 	added := make([]string, 0, len(candidates))
-	groups := append([]routing.RuleGroup(nil), routing.RuleGroups...)
+	groups := routing.GetRuleGroups()
 	sniffIdx := -1
 	for i := range groups {
 		if groups[i].ID == "direct_sniff" || groups[i].Name == "嗅探到规则" {
@@ -571,7 +577,7 @@ func sniffDirectDomainsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"ok":     true,
 		"added":  added,
-		"groups": routing.RuleGroups,
+		"groups": routing.GetRuleGroups(),
 	})
 }
 
@@ -696,7 +702,7 @@ func probeDirectDomain(domain string, timeout time.Duration) bool {
 func cmdRulesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(routing.CmdRules)
+		json.NewEncoder(w).Encode(routing.GetCmdRules())
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -2112,6 +2118,9 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 				} else {
 					common.MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
 				}
+			}
+			if common.RefreshTrayIcon != nil {
+				common.RefreshTrayIcon()
 			}
 		})
 	case "mode":

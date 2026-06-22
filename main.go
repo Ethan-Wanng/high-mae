@@ -27,10 +27,27 @@ func init() {
 //go:embed assets/icon.ico
 var iconBytes []byte
 
+//go:embed assets/icon-direct-dark.ico
+var iconDirectDarkBytes []byte
+
+//go:embed assets/icon-direct-light.ico
+var iconDirectLightBytes []byte
+
+//go:embed assets/icon-proxy.ico
+var iconProxyBytes []byte
+
+//go:embed assets/icon-tun.ico
+var iconTunBytes []byte
+
+//go:embed assets/icon-proxy-tun.ico
+var iconProxyTunBytes []byte
+
 func onReady() {
 	defer utils.RecoverPanic("systray ready")
 
-	systray.SetIcon(iconBytes)
+	proxy.LoadSystemConfig()
+	common.RefreshTrayIcon = refreshTrayIcon
+	refreshTrayIcon()
 	systray.SetTitle("wing")
 	systray.SetTooltip("wing")
 	systray.SetOnClick(ShowFlutterWindow)
@@ -54,7 +71,6 @@ func onReady() {
 
 	routing.LoadUserRules()
 	proxy.LoadDNSConfig()
-	proxy.LoadSystemConfig()
 
 	common.MToggleProxy = systray.AddMenuItem("⚪ 系统代理: [已关闭]", "点击切换系统浏览器代理")
 	common.MToggleMode = systray.AddMenuItem("🔄 路由模式: [规则分流]", "点击切换全局/分流")
@@ -90,6 +106,7 @@ func onReady() {
 					} else {
 						common.MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
 					}
+					refreshTrayIcon()
 				})
 			case <-common.MToggleMode.ClickedCh:
 				proxy.RunNetworkTransition(func() {
@@ -106,6 +123,7 @@ func onReady() {
 					utils.ShowWindowsMsgBox("隧道连接", msg)
 				}
 				stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
+				refreshTrayIcon()
 			case <-mAbout.ClickedCh:
 				aboutMsg := "wing v" + common.AppVersion + " - 桌面代理客户端\n\n" +
 					"wing 是基于 Flutter + Go 的代理客户端，集成 sing-box、Mieru Client 与本地 Web 控制面板，支持节点订阅、测速、规则分流、自动选点、隧道连接、DNS 分流与 WebRTC 防泄漏。\n\n" +
@@ -180,4 +198,34 @@ func main() {
 	}
 
 	systray.Run(onReady, onExit)
+}
+
+func refreshTrayIcon() {
+	systray.SetIcon(currentTrayIconBytes())
+}
+
+func currentTrayIconBytes() []byte {
+	switch {
+	case common.IsSystemProxyOn && common.IsTunModeOn:
+		return iconProxyTunBytes
+	case common.IsSystemProxyOn:
+		return iconProxyBytes
+	case common.IsTunModeOn:
+		return iconTunBytes
+	case isEffectiveLightTheme():
+		return iconDirectLightBytes
+	default:
+		return iconDirectDarkBytes
+	}
+}
+
+func isEffectiveLightTheme() bool {
+	switch proxy.GlobalSystemConfig.ThemeMode {
+	case "light":
+		return true
+	case "dark":
+		return false
+	default:
+		return utils.IsSystemLightTheme()
+	}
 }

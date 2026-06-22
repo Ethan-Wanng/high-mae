@@ -16,6 +16,10 @@ func IsAdmin() bool {
 	return os.Geteuid() == 0
 }
 
+func IsSystemLightTheme() bool {
+	return false
+}
+
 func SetSystemProxy(enable bool) {}
 
 func SetSystemDNS(enable bool, dnsIP string) {}
