@@ -430,28 +430,28 @@
                                     <strong>代理服务</strong>
                                     <small>开启系统 HTTP/SOCKS 代理入口。</small>
                                 </span>
-                                <span class="toggle"><input type="checkbox" id="chkProxy" onchange="doAction('proxy')"><span class="slider"></span></span>
+                                <span class="toggle"><input type="checkbox" id="chkProxy" onchange="doAction('proxy', this.checked)"><span class="slider"></span></span>
                             </label>
                             <label class="settings-switch-card">
                                 <span class="settings-switch-copy">
                                     <strong>全局路由</strong>
                                     <small>关闭时使用规则分流。</small>
                                 </span>
-                                <span class="toggle"><input type="checkbox" id="chkMode" onchange="doAction('mode')"><span class="slider"></span></span>
+                                <span class="toggle"><input type="checkbox" id="chkMode" onchange="doAction('mode', this.checked)"><span class="slider"></span></span>
                             </label>
                             <label class="settings-switch-card">
                                 <span class="settings-switch-copy">
                                     <strong>隧道连接</strong>
                                     <small>接管不遵循系统代理的应用流量。</small>
                                 </span>
-                                <span class="toggle"><input type="checkbox" id="chkTun" onchange="doAction('tun')"><span class="slider"></span></span>
+                                <span class="toggle"><input type="checkbox" id="chkTun" onchange="doAction('tun', this.checked)"><span class="slider"></span></span>
                             </label>
                             <label class="settings-switch-card">
                                 <span class="settings-switch-copy">
                                     <strong>WebRTC 防泄露</strong>
                                     <small>写入浏览器策略，减少真实 IP 暴露。</small>
                                 </span>
-                                <span class="toggle"><input type="checkbox" id="chkWebRTC" onchange="doAction('webrtc')"><span class="slider"></span></span>
+                                <span class="toggle"><input type="checkbox" id="chkWebRTC" onchange="doAction('webrtc', this.checked)"><span class="slider"></span></span>
                             </label>
                         </div>
                     </div>
@@ -462,7 +462,7 @@
                                 <h3>系统偏好</h3>
                                 <p>端口、启动行为、解析策略和主题。</p>
                             </div>
-                            <button class="btn-ghost settings-admin-button" onclick="restartAsAdmin()">管理员重启</button>
+                            <button class="btn-ghost settings-restart-button" onclick="restartApp()">重启 wing</button>
                         </div>
                         <div class="settings-form-list">
                             <div class="settings-form-row">

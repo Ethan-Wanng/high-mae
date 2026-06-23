@@ -20,7 +20,9 @@ func IsSystemLightTheme() bool {
 	return false
 }
 
-func SetSystemProxy(enable bool) {}
+func SetSystemProxy(enable bool) error {
+	return nil
+}
 
 func SetSystemDNS(enable bool, dnsIP string) {}
 
@@ -42,6 +44,12 @@ func RunHiddenCommand(name string, args ...string) ([]byte, error) {
 
 func RestartAsAdmin() error {
 	return fmt.Errorf("administrator restart is only supported on Windows")
+}
+
+func RestartApp() error {
+	args := append(StripRestartHandoffArgs(os.Args[1:]), RestartHandoffArg())
+	cmd := exec.Command(os.Args[0], args...)
+	return cmd.Start()
 }
 
 func SetStartupEnabled(enable bool) error {

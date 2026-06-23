@@ -93,16 +93,25 @@ func systemConfigHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Apply port change if changed
 		if oldPort != portStr {
-			if err := proxy.RestartLocalHTTPProxyServer(); err != nil {
-				// We don't rollback port here to keep it simple, just report error
-				json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "代理端口已保存，但重启本地 HTTP 服务失败: " + err.Error()})
+			var applyErr error
+			proxy.RunNetworkTransition(func() {
+				if err := proxy.RestartLocalHTTPProxyServer(); err != nil {
+					applyErr = err
+					return
+				}
+				if common.IsSystemProxyOn {
+					if err := utils.SetSystemProxy(true); err != nil {
+						applyErr = err
+						return
+					}
+				}
+				if common.IsTunModeOn {
+					applyErr = proxy.RestartTun(common.GlobalNodeServer, common.GlobalNodeIP)
+				}
+			})
+			if applyErr != nil {
+				json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "代理端口已保存，但重新应用本地代理失败: " + applyErr.Error()})
 				return
-			}
-			if common.IsSystemProxyOn {
-				utils.SetSystemProxy(true)
-			}
-			if common.IsTunModeOn {
-				proxy.RestartTun(common.GlobalNodeServer, common.GlobalNodeIP)
 			}
 		}
 

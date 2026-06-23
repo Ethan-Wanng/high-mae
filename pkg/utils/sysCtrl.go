@@ -47,23 +47,29 @@ func IsSystemLightTheme() bool {
 	return err == nil && value != 0
 }
 
-func SetSystemProxy(enable bool) {
+func SetSystemProxy(enable bool) error {
 	if runtime.GOOS != "windows" {
-		return
+		return nil
 	}
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.SET_VALUE)
 	if err != nil {
 		fmt.Printf("⚠️ 无法打开注册表项: %v\n", err)
-		return
+		return err
 	}
 	defer k.Close()
 
 	if enable {
 		proxyStr := fmt.Sprintf("127.0.0.1:%s", common.LocalHttpPort)
-		k.SetDWordValue("ProxyEnable", 1)
-		k.SetStringValue("ProxyServer", proxyStr)
+		if err := k.SetDWordValue("ProxyEnable", 1); err != nil {
+			return err
+		}
+		if err := k.SetStringValue("ProxyServer", proxyStr); err != nil {
+			return err
+		}
 	} else {
-		k.SetDWordValue("ProxyEnable", 0)
+		if err := k.SetDWordValue("ProxyEnable", 0); err != nil {
+			return err
+		}
 	}
 
 	// 🚀 核心稳定性增强：通知 Windows 设置已变更，防止浏览器反应迟钝
@@ -73,6 +79,7 @@ func SetSystemProxy(enable bool) {
 	setOption := wininet.NewProc("InternetSetOptionW")
 	setOption.Call(0, 39, 0, 0)
 	setOption.Call(0, 37, 0, 0)
+	return nil
 }
 
 func SetSystemDNS(enable bool, dnsIP string) {
@@ -155,6 +162,19 @@ func RestartAsAdmin() error {
 		return fmt.Errorf("ShellExecute failed with code %d: %v", ret, err)
 	}
 	return nil
+}
+
+func RestartApp() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cwd, _ := os.Getwd()
+	args := append(StripRestartHandoffArgs(os.Args[1:]), RestartHandoffArg())
+	cmd := exec.Command(exe, args...)
+	cmd.Dir = cwd
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	return cmd.Start()
 }
 
 func windowsCommandLine(args []string) string {

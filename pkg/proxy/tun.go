@@ -52,7 +52,25 @@ func ToggleTunMode() string {
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
-	if common.IsTunModeOn {
+	return setTunModeLocked(!common.IsTunModeOn)
+}
+
+func SetTunMode(enabled bool) string {
+	networkTransitionMu.Lock()
+	defer networkTransitionMu.Unlock()
+
+	tunMu.Lock()
+	defer tunMu.Unlock()
+
+	return setTunModeLocked(enabled)
+}
+
+func setTunModeLocked(enabled bool) string {
+	if common.IsTunModeOn == enabled {
+		return ""
+	}
+
+	if !enabled {
 		stopTunWatchdogLocked()
 		stopTunLocked()
 		common.IsTunModeOn = false

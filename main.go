@@ -85,7 +85,9 @@ func onReady() {
 	utils.SafeGo("local http proxy", proxy.StartAnyTLSHttpServer)
 	utils.SafeGo("flutter ui show", ShowFlutterWindowWhenWebUIReady)
 	sub.StartAutoUpdateSubscriptions()
-	utils.SetSystemProxy(common.IsSystemProxyOn)
+	if err := utils.SetSystemProxy(common.IsSystemProxyOn); err != nil {
+		fmt.Printf("⚠️ 同步系统代理状态失败: %v\n", err)
+	}
 
 	utils.SafeGo("tray menu loop", func() {
 		for {
@@ -97,27 +99,11 @@ func onReady() {
 			case <-mImportLink.ClickedCh:
 				sub.ImportNodeFromClipboard()
 			case <-common.MToggleProxy.ClickedCh:
-				proxy.RunNetworkTransition(func() {
-					common.IsSystemProxyOn = !common.IsSystemProxyOn
-					utils.SetSystemProxy(common.IsSystemProxyOn)
-					stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
-					if common.IsSystemProxyOn {
-						common.MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
-					} else {
-						common.MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
-					}
-					refreshTrayIcon()
-				})
+				if err := proxy.ToggleSystemProxy(); err != nil {
+					utils.ShowWindowsMsgBox("系统代理", "切换系统代理失败: "+err.Error())
+				}
 			case <-common.MToggleMode.ClickedCh:
-				proxy.RunNetworkTransition(func() {
-					if common.ProxyMode == "Rule" {
-						common.ProxyMode = "Global"
-						common.MToggleMode.SetTitle("🌐 路由模式: [全局代理]")
-					} else {
-						common.ProxyMode = "Rule"
-						common.MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
-					}
-				})
+				proxy.ToggleProxyMode()
 			case <-common.MToggleTun.ClickedCh:
 				if msg := proxy.ToggleTunMode(); msg != "" {
 					utils.ShowWindowsMsgBox("隧道连接", msg)
@@ -152,7 +138,7 @@ func onReady() {
 func onExit() {
 	defer utils.RecoverPanic("shutdown cleanup")
 
-	utils.SetSystemProxy(false)
+	_ = utils.SetSystemProxy(false)
 	if common.IsSystemDNSHijacked {
 		utils.SetSystemDNS(false, "")
 		common.IsSystemDNSHijacked = false

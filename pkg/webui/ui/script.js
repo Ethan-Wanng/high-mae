@@ -1187,17 +1187,21 @@ async function importSubscription() {
     btn.innerHTML = '导入订阅';
 }
 
-async function doAction(type) {
+async function doAction(type, desiredState = null) {
     if (pendingActions.has(type)) {
         showToast('正在切换中，请稍候。', 'info', 1600);
         loadStatus();
-        return null;
+        return { ok: false, pending: true };
     }
     pendingActions.add(type);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), (type === 'tun' || type === 'tunnel') ? 12000 : 5000);
     try {
-        const res = await fetch('/api/action?type=' + type, { method: 'POST', signal: controller.signal });
+        const params = new URLSearchParams({ type });
+        if (typeof desiredState === 'boolean') {
+            params.set('enable', desiredState ? 'true' : 'false');
+        }
+        const res = await fetch('/api/action?' + params.toString(), { method: 'POST', signal: controller.signal });
         const data = await res.json();
         if (data && data.msg) {
             showToast(data.msg, data.ok === false ? 'error' : 'info');
@@ -1209,14 +1213,17 @@ async function doAction(type) {
             }
         }
         return data;
-    } catch(e) {}
+    } catch(e) {
+        const timeoutMsg = e?.name === 'AbortError' ? '切换请求超时，请稍后查看状态。' : '切换请求失败，请检查 wing 是否仍在运行。';
+        showToast(timeoutMsg, 'error');
+        return { ok: false, error: timeoutMsg };
+    }
     finally {
         clearTimeout(timeout);
         setTimeout(() => pendingActions.delete(type), (type === 'tun' || type === 'tunnel') ? 1500 : 400);
         setTimeout(loadStatus, 300);
         if (type === 'tun' || type === 'tunnel') setTimeout(loadStatus, 2500);
     }
-    return null;
 }
 
 async function activateProxyPreset(preset) {
@@ -1227,11 +1234,13 @@ async function activateProxyPreset(preset) {
     const wantProxy = preset === 'proxy' || preset === 'proxy_tun';
     const wantTun = preset === 'tun' || preset === 'proxy_tun';
     if (proxyOn !== wantProxy) {
-        await doAction('proxy');
+        const result = await doAction('proxy', wantProxy);
+        if (result?.ok === false) return;
         await sleep(250);
     }
     if (tunOn !== wantTun) {
-        await doAction('tun');
+        const result = await doAction('tun', wantTun);
+        if (result?.ok === false) return;
     }
     setTimeout(loadStatus, 350);
     setTimeout(loadStatus, 1800);
@@ -1376,6 +1385,17 @@ async function restartAsAdmin() {
         showToast(data.msg || (data.ok === false ? '请求管理员权限失败' : '正在请求管理员权限并重启'), data.ok === false ? 'error' : 'success');
     } catch(e) {
         showToast('请求管理员权限失败', 'error');
+    }
+}
+
+async function restartApp() {
+    if (!confirm('现在重启 wing 吗？')) return;
+    try {
+        const res = await fetch('/api/restart', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        showToast(data.msg || (data.ok === false ? '重启失败' : '正在重启 wing'), data.ok === false ? 'error' : 'success');
+    } catch(e) {
+        showToast('重启失败，请检查 wing 是否仍在运行。', 'error');
     }
 }
 
@@ -4706,21 +4726,22 @@ function deleteSearchRule(gIdx, rIdx) {
 async function saveRules() {
     syncRuleGroupForm();
     try {
-        const ruleRes = await fetch('/api/rules', {
+        const res = await fetch('/api/rules/apply', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(ruleGroups)
+            body: JSON.stringify({ ruleGroups, cmdRules })
         });
-        const cmdRes = await fetch('/api/cmd_rules', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(cmdRules)
-        });
-        if (!ruleRes.ok || !cmdRes.ok) throw new Error('save failed');
-        alert('规则保存成功！');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) throw new Error(data.msg || 'save failed');
+        ruleGroups = data.ruleGroups || ruleGroups;
+        cmdRules = data.cmdRules || cmdRules;
+        renderRuleGroups();
+        renderCmdRules();
+        showToast(data.msg || '规则保存并应用成功', 'success');
         closeRuleModal();
+        setTimeout(loadStatus, 250);
     } catch(e) {
-        alert('保存失败');
+        showToast(e.message || '保存失败', 'error');
     }
 }
 

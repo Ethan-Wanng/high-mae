@@ -268,6 +268,29 @@ func SaveUserRules() error {
 	return SaveRuleGroups(GetRuleGroups())
 }
 
+func SaveAllRules(groups []RuleGroup, cmdRules []CmdRule) error {
+	groups = normalizeRuleGroups(cloneRuleGroups(groups))
+	cmdRules = normalizeCmdRules(cloneCmdRules(cmdRules))
+
+	groupData, err := json.MarshalIndent(groups, "", "  ")
+	if err != nil {
+		return err
+	}
+	cmdData, err := json.MarshalIndent(cmdRules, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := secure.SecureWriteFile(RuleGroupsFile, groupData); err != nil {
+		return err
+	}
+	if err := secure.SecureWriteFile(CmdRulesFile, cmdData); err != nil {
+		return err
+	}
+	setRuleGroups(groups)
+	setCmdRules(cmdRules)
+	return nil
+}
+
 func ReadRuleGroups() ([]RuleGroup, error) {
 	data, err := secure.SecureReadFile(RuleGroupsFile)
 	if err == nil {

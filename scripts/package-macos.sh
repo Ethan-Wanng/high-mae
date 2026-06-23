@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${WING_VERSION:-1.0.4.7.2}"
+VERSION="${WING_VERSION:-1.0.4.7.3}"
 ARCH="${WING_ARCH:-$(uname -m)}"
 case "$ARCH" in
   x86_64|amd64) DIST_ARCH="x64" ;;

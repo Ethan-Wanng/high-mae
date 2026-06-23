@@ -15,7 +15,7 @@ type GenericClient interface {
 	CreateProxy(ctx context.Context, destination metadata.Socksaddr) (net.Conn, error)
 }
 
-const AppVersion = "1.0.4.7.2"
+const AppVersion = "1.0.4.7.3"
 
 var LocalHttpPort = "10808"
 

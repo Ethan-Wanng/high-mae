@@ -144,6 +144,7 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/update_supplier", updateSupplierHandler)
 	api("/api/delete_supplier", deleteSupplierHandler)
 	api("/api/rules", rulesHandler)
+	api("/api/rules/apply", applyRulesHandler)
 	api("/api/rules/reset_default", resetRulesHandler)
 	api("/api/sniff_direct_domains", sniffDirectDomainsHandler)
 	api("/api/cmd_rules", cmdRulesHandler)
@@ -165,6 +166,7 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/clear_logs", clearLogsHandler)
 	api("/api/privacy", privacyToggleHandler)
 	api("/api/system_config", systemConfigHandler)
+	api("/api/restart", restartHandler)
 	api("/api/restart_admin", restartAdminHandler)
 	api("/api/app_update", appUpdateHandler)
 	api("/api/app_update/open", appUpdateOpenHandler)
@@ -509,11 +511,46 @@ func rulesHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Save failed", http.StatusInternalServerError)
 			return
 		}
+		if err := proxy.ApplyRoutingRulesChanged(); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "规则已保存，但重新应用系统代理失败: " + err.Error()})
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 		return
 	}
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+func applyRulesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		RuleGroups []routing.RuleGroup `json:"ruleGroups"`
+		CmdRules   []routing.CmdRule   `json:"cmdRules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if err := routing.SaveAllRules(req.RuleGroups, req.CmdRules); err != nil {
+		http.Error(w, "Save failed", http.StatusInternalServerError)
+		return
+	}
+	if err := proxy.ApplyRoutingRulesChanged(); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "规则已保存，但重新应用系统代理失败: " + err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":         true,
+		"msg":        "规则已保存并立即应用",
+		"ruleGroups": routing.GetRuleGroups(),
+		"cmdRules":   routing.GetCmdRules(),
+	})
 }
 
 func resetRulesHandler(w http.ResponseWriter, r *http.Request) {
@@ -524,6 +561,10 @@ func resetRulesHandler(w http.ResponseWriter, r *http.Request) {
 	groups := routing.DefaultRuleGroups()
 	if err := routing.SaveRuleGroups(groups); err != nil {
 		http.Error(w, "Save failed", http.StatusInternalServerError)
+		return
+	}
+	if err := proxy.ApplyRoutingRulesChanged(); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "规则已恢复，但重新应用系统代理失败: " + err.Error()})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -572,6 +613,10 @@ func sniffDirectDomainsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := routing.SaveRuleGroups(groups); err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "保存嗅探规则失败"})
+		return
+	}
+	if err := proxy.ApplyRoutingRulesChanged(); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "嗅探规则已保存，但重新应用系统代理失败: " + err.Error()})
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -713,6 +758,10 @@ func cmdRulesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := routing.SaveCmdRules(rules); err != nil {
 			http.Error(w, "Save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := proxy.ApplyRoutingRulesChanged(); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "命令行规则已保存，但重新应用系统代理失败: " + err.Error()})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1626,11 +1675,9 @@ func freeTrafficHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	proxy.SwitchNode(node)
 	if !common.IsSystemProxyOn {
-		utils.SetSystemProxy(true)
-		common.IsSystemProxyOn = true
-		stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
-		if common.MToggleProxy != nil {
-			common.MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
+		if err := proxy.SetSystemProxyEnabled(true); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "免费流量已切换，但开启系统代理失败: " + err.Error()})
+			return
 		}
 	}
 	if common.MCurrentNode != nil {
@@ -2108,37 +2155,33 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch actionType {
 	case "proxy":
-		proxy.RunNetworkTransition(func() {
-			common.IsSystemProxyOn = !common.IsSystemProxyOn
-			utils.SetSystemProxy(common.IsSystemProxyOn)
-			stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
-			if common.MToggleProxy != nil {
-				if common.IsSystemProxyOn {
-					common.MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
-				} else {
-					common.MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
-				}
-			}
-			if common.RefreshTrayIcon != nil {
-				common.RefreshTrayIcon()
-			}
-		})
+		target := requestedBool(r, !common.IsSystemProxyOn)
+		if err := proxy.SetSystemProxyEnabled(target); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "系统代理切换失败: " + err.Error(), "proxy": common.IsSystemProxyOn})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "proxy": common.IsSystemProxyOn})
+		return
 	case "mode":
-		proxy.RunNetworkTransition(func() {
-			if common.ProxyMode == "Rule" {
-				common.ProxyMode = "Global"
-				if common.MToggleMode != nil {
-					common.MToggleMode.SetTitle("🌐 路由模式: [全局代理]")
-				}
-			} else {
-				common.ProxyMode = "Rule"
-				if common.MToggleMode != nil {
-					common.MToggleMode.SetTitle("🔄 路由模式: [规则分流]")
-				}
-			}
-		})
+		targetGlobal := requestedBool(r, common.ProxyMode != "Global")
+		proxy.SetProxyModeGlobal(targetGlobal)
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "mode": common.ProxyMode})
+		return
 	case "tun", "tunnel":
-		if !utils.IsAdmin() {
+		tunTarget := requestedBool(r, !common.IsTunModeOn)
+		if tunPending.Load() {
+			if tunPendingState.Load() == tunTarget {
+				json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "tun": tunTarget})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "TUN 正在切换中，请稍候。"})
+			return
+		}
+		if common.IsTunModeOn == tunTarget {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "tun": common.IsTunModeOn})
+			return
+		}
+		if tunTarget && !utils.IsAdmin() {
 			if proxy.GlobalSystemConfig.AutoRestartAsAdmin {
 				if err := utils.RestartAsAdmin(); err != nil {
 					json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "requiresAdmin": true, "msg": "自动请求管理员权限失败: " + err.Error()})
@@ -2152,7 +2195,6 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 标记 TUN 正在切换中，防止轮询期间把 checkbox 闪回旧状态
-		tunTarget := !common.IsTunModeOn
 		if !tunPending.CompareAndSwap(false, true) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "TUN 正在切换中，请稍候。"})
 			return
@@ -2160,9 +2202,9 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 		tunPendingState.Store(tunTarget)
 		utils.SafeGo("webui tun toggle", func() {
 			defer tunPending.Store(false)
-			msg := proxy.ToggleTunMode()
+			msg := proxy.SetTunMode(tunTarget)
 			if msg != "" {
-				// 失败时不需要额外处理，proxy.ToggleTunMode 内部不会修改 common.IsTunModeOn
+				// 失败时不需要额外处理，proxy.SetTunMode 内部不会修改 common.IsTunModeOn
 				return
 			}
 			stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
@@ -2170,7 +2212,7 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 		return
 	case "webrtc":
-		common.IsWebRTCPolicyOn = !common.IsWebRTCPolicyOn
+		common.IsWebRTCPolicyOn = requestedBool(r, !common.IsWebRTCPolicyOn)
 		routing.ToggleWebRTCLeak(common.IsWebRTCPolicyOn)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"ok":  true,
@@ -2181,10 +2223,50 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }
 
+func requestedBool(r *http.Request, fallback bool) bool {
+	raw := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("enable")))
+	switch raw {
+	case "1", "true", "yes", "on", "enabled":
+		return true
+	case "0", "false", "no", "off", "disabled":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func restartHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	wasAdmin := utils.IsAdmin()
+	if err := utils.RestartApp(); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "重启失败: " + err.Error()})
+		return
+	}
+	scheduleExitAfterRestart("manual app restart")
+	msg := "正在重启 wing..."
+	if wasAdmin {
+		msg = "正在以当前管理员权限重启 wing..."
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "restarting": true, "admin": wasAdmin, "msg": msg})
+}
+
 func restartAdminHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if utils.IsAdmin() {
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "当前已经是管理员权限"})
+		if err := utils.RestartApp(); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "重启失败: " + err.Error()})
+			return
+		}
+		scheduleExitAfterRestart("admin app restart")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "restarting": true, "msg": "正在以当前管理员权限重启 wing..."})
 		return
 	}
 	if err := utils.RestartAsAdmin(); err != nil {
@@ -2196,6 +2278,10 @@ func restartAdminHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func scheduleExitAfterAdminRestart(name string) {
+	scheduleExitAfterRestart(name)
+}
+
+func scheduleExitAfterRestart(name string) {
 	utils.SafeGo(name, func() {
 		time.Sleep(500 * time.Millisecond)
 		systray.Quit()

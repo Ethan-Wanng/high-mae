@@ -158,6 +158,48 @@ func TestResetRulesHandlerRestoresDefaultRulesWithoutBingDirect(t *testing.T) {
 	}
 }
 
+func TestApplyRulesHandlerAppliesRoutingAndCmdRulesImmediately(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	oldGroups := routing.GetRuleGroups()
+	oldCmdRules := routing.GetCmdRules()
+	oldMode := common.ProxyMode
+	oldSystemProxy := common.IsSystemProxyOn
+	defer func() {
+		_ = routing.SaveAllRules(oldGroups, oldCmdRules)
+		common.ProxyMode = oldMode
+		common.IsSystemProxyOn = oldSystemProxy
+	}()
+
+	common.ProxyMode = "Rule"
+	common.IsSystemProxyOn = false
+	payload := `{
+		"ruleGroups":[
+			{"id":"direct","name":"Direct","action":"direct","rules":[{"type":"domain","value":"Example.COM"}]}
+		],
+		"cmdRules":[
+			{"pattern":"curl https://example.com","type":"prefix","action":"direct"}
+		]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/apply", strings.NewReader(payload))
+	rr := httptest.NewRecorder()
+
+	applyRulesHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	if got := routing.EvaluateRouting("example.com:443"); got != "direct" {
+		t.Fatalf("EvaluateRouting immediately after save = %q, want direct", got)
+	}
+	action, matched := routing.EvaluateCmdRouting("curl https://example.com/path")
+	if !matched || action != "direct" {
+		t.Fatalf("EvaluateCmdRouting immediately after save = %q/%v, want direct/true", action, matched)
+	}
+}
+
 func TestDirectRuleAlreadyCoversSniffDomain(t *testing.T) {
 	groups := []routing.RuleGroup{
 		{

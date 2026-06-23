@@ -2216,7 +2216,7 @@ input:checked + .slider:before {
 }
 
 .settings-save-button,
-.settings-admin-button {
+.settings-restart-button {
     height: 38px;
     white-space: nowrap;
 }
@@ -2907,7 +2907,7 @@ input:checked + .slider:before {
     margin-right: auto;
 }
 
-.settings-centered-panel .settings-admin-button {
+.settings-centered-panel .settings-restart-button {
     align-self: center;
 }
 
@@ -5692,7 +5692,7 @@ body.tabs-collapsed .connection-card .connection-orb {
     }
 }
 
-/* ── 1.0.4.7.2 interaction polish: sticky island, compact settings, rectangular cards ── */
+/* ── 1.0.4.7.3 interaction polish: sticky island, compact settings, rectangular cards ── */
 .container {
     padding-top: 0;
 }
