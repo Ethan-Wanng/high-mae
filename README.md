@@ -23,7 +23,7 @@ wing 是一款基于 Flutter + Go 的跨平台代理客户端。它集成 sing-b
 - 订阅管理：支持为订阅设置自动更新时间间隔，并优化远程订阅更新速度。
 - 免费流量：内置获取免费流量入口，按周限制可用流量，用完后自动停止使用该入口。
 - 延迟测速：支持单节点、订阅组和聚合组测速；展开订阅组或聚合组时会自动测试组内节点延迟。
-- 自动选点：支持全节点、指定订阅组和指定聚合组范围内按延迟自动选择节点；开启后按用户设置的间隔自动重测候选节点并选择一次，可选择自动启动系统代理或 TUN，也支持手动立即选择。
+- 自动选点：支持全节点、指定订阅组和指定聚合组范围内按延迟自动选择节点；开启后按用户设置的间隔自动重测候选节点并选择一次，也支持手动立即选择。
 - 自动选点规则：用户可编辑排除关键字、只选地区、只选节点、只选订阅组、只选聚合组、使用/不使用协议和网站可用性规则；默认提供可删除的“不使用香港的节点”规则。
 - 网站可用性测试：可检测当前节点对 ChatGPT、Gemini、Claude、TikTok、YouTube、Netflix、BBC News、ESPN 等网站的支持情况，支持一键全量测试和单点测试，也支持添加自定义测试网站。
 - 规则分流：支持域名、域名后缀、域名关键字规则，也支持按命令行完整命令或前缀选择直连/代理。
@@ -113,14 +113,14 @@ go mod download
 双击根目录的 `package-wing.bat` 可以构建并生成给最终用户使用的 Windows 标准安装包：
 
 ```text
-dist/wing-1.0.4.7.3-windows-x64-setup.exe
+dist/wing-1.0.4.8-windows-x64-setup.exe
 ```
 
 命令行方式如下：
 
 ```powershell
 ./scripts/mk.ps1 build  # 构建 Flutter 控制面板与 Go 后端
-./scripts/mk.ps1 package # 构建并生成 dist/wing-1.0.4.7.3-windows-x64-setup.exe 标准安装包
+./scripts/mk.ps1 package # 构建并生成 dist/wing-1.0.4.8-windows-x64-setup.exe 标准安装包
 ./scripts/mk.ps1 installer # 同 package
 ./scripts/mk.ps1 portable # 生成旧版自解压安装包，不建议作为公开 Release 资产
 ./scripts/mk.ps1 backend # 仅构建 Go 后端
@@ -134,7 +134,7 @@ dist/wing-1.0.4.7.3-windows-x64-setup.exe
 
 - `wing.exe`：Go 后端、系统托盘、本地代理与本地 Web API。
 - `build/bin/flutter_ui/wing_ui.exe`：Flutter 桌面控制面板，会加载 `http://127.0.0.1:10809/`。
-- `dist/wing-1.0.4.7.3-windows-x64-setup.exe`：标准 Windows 安装包，用户双击后可选择安装目录。
+- `dist/wing-1.0.4.8-windows-x64-setup.exe`：标准 Windows 安装包，用户双击后可选择安装目录。
 - `dist/wing-installer.exe`：旧版自解压安装器，仅通过 `portable` 命令生成，公开分发时不推荐使用。
 
 ### 其他平台打包
@@ -159,18 +159,18 @@ bash scripts/package-ios.sh
 可通过环境变量覆盖版本与构建号：
 
 ```bash
-WING_VERSION=1.0.4.7.3 FLUTTER_BUILD_NUMBER=4073 bash scripts/package-android.sh
+WING_VERSION=1.0.4.8 FLUTTER_BUILD_NUMBER=4080 bash scripts/package-android.sh
 ```
 
 ### Release 资产
 
 GitHub Actions 的 `release.yml` 会为 `v*` 标签生成并上传以下资产：
 
-- `wing-1.0.4.7.3-windows-x64-setup.exe`
-- `wing-1.0.4.7.3-linux-x64.run`
-- `wing-1.0.4.7.3-macos-x64.pkg`
-- `wing-1.0.4.7.3-android-universal.apk`
-- `wing-1.0.4.7.3-ios-unsigned.ipa`
+- `wing-1.0.4.8-windows-x64-setup.exe`
+- `wing-1.0.4.8-linux-x64.run`
+- `wing-1.0.4.8-macos-x64.pkg`
+- `wing-1.0.4.8-android-universal.apk`
+- `wing-1.0.4.8-ios-unsigned.ipa`
 
 iOS 默认 Release 资产是未签名 IPA，需要 Apple Developer 证书签名后才能真机分发；本地可通过 `IOS_EXPORT_OPTIONS_PLIST=/path/to/ExportOptions.plist bash scripts/package-ios.sh` 生成签名 IPA。Windows 代理软件未签名时仍可能被部分安全软件误报；仓库提供 `scripts/sign-windows.ps1`，在配置代码签名证书后可自动签名 Windows 可执行文件和安装包。
 

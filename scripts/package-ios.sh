@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${WING_VERSION:-1.0.4.7.3}"
-BUILD_NUMBER="${FLUTTER_BUILD_NUMBER:-4073}"
+VERSION="${WING_VERSION:-1.0.4.8}"
+BUILD_NUMBER="${FLUTTER_BUILD_NUMBER:-4080}"
 DIST="$ROOT/dist"
 UNSIGNED_IPA="$DIST/wing-${VERSION}-ios-unsigned.ipa"
 SIGNED_IPA="$DIST/wing-${VERSION}-ios.ipa"

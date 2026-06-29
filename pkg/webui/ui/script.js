@@ -38,6 +38,8 @@ let appUpdateInfo = null;
 let appUpdateNoticeShown = false;
 let islandIdleTimer = null;
 let currentSettingsSubtab = 'run';
+let currentAutoSelectConfigTab = 'runtime';
+let currentAutoSelectRuleTab = 'add';
 
 applyThemeMode(localStorage.getItem('wing_theme_mode') || 'system');
 let shareQRCodeURL = "";
@@ -579,20 +581,75 @@ function showTab(tabId, options = {}) {
 }
 
 
-function setNodeGroupMode(mode) {
-    nodeGroupMode = ["subscription", "aggregate", "auto", "auto_nodes"].includes(mode) ? mode : "subscription";
-    if (nodeGroupMode !== "auto") selectedNodeGroupFile = "";
-    nodeGroupManualCollapsed = false;
+function isAutoSelectEnabled() {
+    return !!autoSelectConfig?.enabled;
+}
+
+function syncNodeSourceTabActiveState() {
     document.querySelectorAll('.node-source-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === nodeGroupMode);
     });
+    document.body?.classList.toggle('node-auto-mode-active', nodeGroupMode === "auto" || nodeGroupMode === "auto_nodes");
+}
+
+function syncAutoNodesTabVisibility() {
+    const autoNodesTab = document.getElementById('autoNodesTab');
+    const enabled = isAutoSelectEnabled();
+    if (autoNodesTab) autoNodesTab.hidden = !enabled;
+    if (!enabled && nodeGroupMode === "auto_nodes") {
+        nodeGroupMode = "subscription";
+    }
+    syncNodeSourceTabActiveState();
+}
+
+function setNodeGroupMode(mode) {
+    const normalizedMode = ["subscription", "aggregate", "auto", "auto_nodes"].includes(mode) ? mode : "subscription";
+    nodeGroupMode = normalizedMode === "auto_nodes" && !isAutoSelectEnabled() ? "subscription" : normalizedMode;
+    syncAutoNodesTabVisibility();
+    if (nodeGroupMode !== "auto") selectedNodeGroupFile = "";
+    nodeGroupManualCollapsed = false;
     renderNodes();
+}
+
+function captureNodeSearchFocus() {
+    const input = document.getElementById('nodeSearch');
+    if (!input || document.activeElement !== input) return null;
+    return {
+        value: input.value,
+        selectionStart: input.selectionStart,
+        selectionEnd: input.selectionEnd
+    };
+}
+
+function restoreNodeSearchFocus(state) {
+    if (!state) return;
+    const input = document.getElementById('nodeSearch');
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    const start = Number.isFinite(state.selectionStart) ? state.selectionStart : input.value.length;
+    const end = Number.isFinite(state.selectionEnd) ? state.selectionEnd : start;
+    input.setSelectionRange(start, end);
+}
+
+function parkNodeInlineToolbar() {
+    const toolbar = document.getElementById('nodeInlineToolbar');
+    const home = document.getElementById('nodeToolbarHome');
+    if (toolbar && home && toolbar.parentElement !== home) home.appendChild(toolbar);
+}
+
+function mountNodeInlineToolbar(target) {
+    const toolbar = document.getElementById('nodeInlineToolbar');
+    if (!toolbar || !target) return;
+    target.appendChild(toolbar);
 }
 
 function renderNodes(options = {}) {
     const grid = document.getElementById('nodeGrid');
     const autoPane = document.getElementById('autoSelectNodePane');
     if (!grid) return;
+    const searchFocus = captureNodeSearchFocus();
+    parkNodeInlineToolbar();
+    syncAutoNodesTabVisibility();
     if (nodeGroupMode === "auto" || nodeGroupMode === "auto_nodes") {
         grid.style.display = "none";
         if (autoPane) {
@@ -635,6 +692,7 @@ function renderNodes(options = {}) {
     const selectedGroup = groups.find(g => g.fileName === selectedNodeGroupFile);
 
     if (!groups.length) {
+        restoreNodeSearchFocus(searchFocus);
         grid.innerHTML = `<div class="empty-state">${nodeGroupMode === "aggregate" ? "暂无聚合组，可在系统设置中创建。" : "当前没有订阅组，点击 <strong>导入订阅</strong> 开始使用。"}</div>`;
         return;
     }
@@ -644,26 +702,26 @@ function renderNodes(options = {}) {
         g.count = allNodesList.filter(n => n.fileName === g.fileName).length;
     });
     const selectedNodes = selectedGroup ? filterNodeRows(allNodesList.filter(n => n.fileName === selectedGroup.fileName), keyword) : [];
-    const groupList = groups.filter(g => !keyword || g.name.toLowerCase().includes(keyword) || (selectedGroup && g.fileName === selectedGroup.fileName));
+    const groupList = groups;
     const selectedGroupTraffic = selectedGroup?.type === 'subscription' ? supplierTrafficInline(selectedGroup, { compact: false }) : '';
+    const showDetailHeader = nodeGroupMode !== "aggregate";
 
     grid.innerHTML = `
         <section class="node-card-table">
-            <div class="node-card-table-header">
-                <div>
-                    <div class="node-card-table-title">${nodeGroupMode === "aggregate" ? "聚合组" : "订阅组"}</div>
-                    ${keyword ? `<div class="node-card-table-subtitle">已按搜索过滤</div>` : ''}
-                </div>
-                <div class="node-card-table-actions">${selectedGroup ? renderSelectedGroupActions(selectedGroup) : ''}</div>
-            </div>
             <div class="source-card-deck"></div>
             <div class="node-deck-window">
+                ${showDetailHeader ? `
                 <div class="node-detail-header">
-                    <div>
-                        <div class="node-detail-title">${selectedGroup ? `${escapeHTML(selectedGroup.name)}${selectedGroupTraffic}` : "未展开组"}</div>
+                    <div class="node-detail-heading">
+                        <div class="node-detail-title-row">
+                            <div class="node-detail-title">${selectedGroup ? `${escapeHTML(selectedGroup.name)}${selectedGroupTraffic}` : "未展开组"}</div>
+                            <div class="node-detail-actions">${selectedGroup ? renderSelectedGroupActions(selectedGroup) : ''}</div>
+                        </div>
                         <div class="node-detail-subtitle">${selectedGroup ? `${selectedNodes.length} 个节点${keyword ? "匹配当前搜索" : ""}` : "点击上方订阅组展开节点"}</div>
                     </div>
                 </div>
+                ` : ''}
+                <div class="node-inline-toolbar-slot"></div>
                 <div class="node-detail-body"></div>
             </div>
         </section>
@@ -686,6 +744,9 @@ function renderNodes(options = {}) {
         list.appendChild(item);
     });
 
+    if (selectedGroup) mountNodeInlineToolbar(grid.querySelector('.node-inline-toolbar-slot'));
+    restoreNodeSearchFocus(searchFocus);
+
     const body = grid.querySelector('.node-detail-body');
     if (!selectedGroup) {
         body.innerHTML = '<div class="empty-state">点击上方订阅组展开节点列表。</div>';
@@ -701,6 +762,8 @@ function renderNodes(options = {}) {
 function renderAutoNodes() {
     const grid = document.getElementById('nodeGrid');
     if (!grid) return;
+    const searchFocus = captureNodeSearchFocus();
+    parkNodeInlineToolbar();
     grid.innerHTML = '';
     
     let candidates = autoSelectCandidates().filter(nodePassesAutoSelectRules);
@@ -718,9 +781,13 @@ function renderAutoNodes() {
                     ${autoSelectExcludedNodeCount() ? `<button class="btn-mini" onclick="clearAutoSelectExcludedNodes()">恢复已排除节点 (${autoSelectExcludedNodeCount()})</button>` : ''}
                 </div>
             </div>
+            <div class="node-inline-toolbar-slot"></div>
             <div class="node-detail-body"></div>
         </section>
     `;
+
+    mountNodeInlineToolbar(grid.querySelector('.node-inline-toolbar-slot'));
+    restoreNodeSearchFocus(searchFocus);
 
     const body = grid.querySelector('.node-detail-body');
     if (!candidates.length) {
@@ -797,7 +864,8 @@ function renderAutoNodeList(nodes, options = {}) {
         }
 
         const item = document.createElement('article');
-        item.className = `auto-node-item ${n.active ? 'active' : ''}`;
+        item.className = `auto-node-item ${n.active ? 'active is-selected' : ''}`;
+        if (n.active) item.setAttribute('aria-current', 'true');
         item.style.setProperty('--deal-index', String(Math.min(index, 18)));
         const sourceLabel = supplierNameForNode(n) || aggregateNameByFile(n.fileName) || n.group || n.fileName || '';
         const deleteButton = options.autoSelect
@@ -1187,7 +1255,10 @@ async function importSubscription() {
     btn.innerHTML = '导入订阅';
 }
 
-async function doAction(type, desiredState = null) {
+async function doAction(type, desiredState = null, options = {}) {
+    if (options.signal?.aborted) {
+        return { ok: false, aborted: true };
+    }
     if (pendingActions.has(type)) {
         showToast('正在切换中，请稍候。', 'info', 1600);
         loadStatus();
@@ -1195,7 +1266,11 @@ async function doAction(type, desiredState = null) {
     }
     pendingActions.add(type);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), (type === 'tun' || type === 'tunnel') ? 12000 : 5000);
+    const abortRequest = () => controller.abort();
+    if (options.signal) {
+        options.signal.addEventListener('abort', abortRequest, { once: true });
+    }
+    const timeout = setTimeout(abortRequest, (type === 'tun' || type === 'tunnel') ? 12000 : 5000);
     try {
         const params = new URLSearchParams({ type });
         if (typeof desiredState === 'boolean') {
@@ -1214,19 +1289,27 @@ async function doAction(type, desiredState = null) {
         }
         return data;
     } catch(e) {
+        if (options.signal?.aborted) {
+            return { ok: false, aborted: true };
+        }
         const timeoutMsg = e?.name === 'AbortError' ? '切换请求超时，请稍后查看状态。' : '切换请求失败，请检查 wing 是否仍在运行。';
-        showToast(timeoutMsg, 'error');
+        if (!options.silent) showToast(timeoutMsg, 'error');
         return { ok: false, error: timeoutMsg };
     }
     finally {
         clearTimeout(timeout);
+        if (options.signal) {
+            options.signal.removeEventListener('abort', abortRequest);
+        }
         setTimeout(() => pendingActions.delete(type), (type === 'tun' || type === 'tunnel') ? 1500 : 400);
         setTimeout(loadStatus, 300);
         if (type === 'tun' || type === 'tunnel') setTimeout(loadStatus, 2500);
     }
 }
 
-async function activateProxyPreset(preset) {
+async function activateProxyPreset(preset, options = {}) {
+    if (options.runContext) assertAutoSelectActive(options.runContext, options);
+    if (options.signal?.aborted) return { ok: false, aborted: true };
     const proxyControl = document.getElementById('chkProxy');
     const tunControl = document.getElementById('chkTun');
     const proxyOn = proxyControl ? !!proxyControl.checked : !!lastConnectionStatus.proxy;
@@ -1234,16 +1317,20 @@ async function activateProxyPreset(preset) {
     const wantProxy = preset === 'proxy' || preset === 'proxy_tun';
     const wantTun = preset === 'tun' || preset === 'proxy_tun';
     if (proxyOn !== wantProxy) {
-        const result = await doAction('proxy', wantProxy);
-        if (result?.ok === false) return;
-        await sleep(250);
+        const result = await doAction('proxy', wantProxy, { signal: options.signal, silent: options.silent });
+        if (result?.ok === false) return result;
+        if (options.runContext) assertAutoSelectActive(options.runContext, options);
+        await sleep(250, options.signal);
     }
+    if (options.runContext) assertAutoSelectActive(options.runContext, options);
     if (tunOn !== wantTun) {
-        const result = await doAction('tun', wantTun);
-        if (result?.ok === false) return;
+        const result = await doAction('tun', wantTun, { signal: options.signal, silent: options.silent });
+        if (result?.ok === false) return result;
     }
+    if (options.runContext) assertAutoSelectActive(options.runContext, options);
     setTimeout(loadStatus, 350);
     setTimeout(loadStatus, 1800);
+    return { ok: true };
 }
 
 async function loadSystemConfig() {
@@ -1843,7 +1930,6 @@ function defaultAutoSelectConfig() {
         subscriptionFiles: [],
         aggregateFiles: [],
         intervalMinutes: 5,
-        startupMode: 'none',
         siteCheck: {
             mode: 'none',
             ids: [],
@@ -1860,6 +1946,7 @@ function defaultAutoSelectConfig() {
 
 async function loadAutoSelectConfig() {
     let loadedFromServer = false;
+    let shouldCleanupAutoSelectConfig = false;
     try {
         const res = await fetch('/api/auto_select_config');
         const data = await res.json();
@@ -1877,9 +1964,10 @@ async function loadAutoSelectConfig() {
             autoSelectConfig = defaultAutoSelectConfig();
         }
     }
+    shouldCleanupAutoSelectConfig = !!autoSelectConfig && Object.prototype.hasOwnProperty.call(autoSelectConfig, 'startupMode');
     normalizeAutoSelectConfig();
     localStorage.setItem('wing_auto_select_config', JSON.stringify(autoSelectConfig));
-    if (!loadedFromServer) persistAutoSelectConfigToServer();
+    if (!loadedFromServer || shouldCleanupAutoSelectConfig) persistAutoSelectConfigToServer();
     renderAutoSelectConfig();
 }
 
@@ -1903,7 +1991,7 @@ function normalizeAutoSelectConfig() {
     if (!Array.isArray(autoSelectConfig.aggregateFiles)) autoSelectConfig.aggregateFiles = [];
     autoSelectConfig.aggregateFiles = normalizedFileList(autoSelectConfig.aggregateFiles);
     autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
-    if (!['none', 'proxy', 'tun', 'proxy_tun'].includes(autoSelectConfig.startupMode)) autoSelectConfig.startupMode = 'none';
+    delete autoSelectConfig.startupMode;
     if (!autoSelectConfig.siteCheck || typeof autoSelectConfig.siteCheck !== 'object') {
         autoSelectConfig.siteCheck = { mode: 'none', ids: [], defaultSelectionApplied: false };
     }
@@ -2014,8 +2102,6 @@ function bindAutoSelectConfigEvents() {
             setAutoSelectSiteTarget(target.dataset.targetId || '', target.checked);
         } else if (action === 'scope') {
             setAutoSelectScope(target.value);
-        } else if (action === 'startup-mode') {
-            setAutoSelectStartupMode(target.value);
         } else if (action === 'site-mode') {
             setAutoSelectSiteMode(target.value);
         } else if (action === 'new-rule-type') {
@@ -2064,6 +2150,10 @@ function bindAutoSelectConfigEvents() {
             openAutoSelectRuleModal(button.dataset.ruleId || '');
         } else if (action === 'restore-discarded-rule') {
             restoreAutoSelectDiscardedRule(button.dataset.discardIndex || '');
+        } else if (action === 'config-tab') {
+            showAutoSelectConfigTab(button.dataset.autoConfigTab || 'runtime');
+        } else if (action === 'rule-tab') {
+            showAutoSelectRuleTab(button.dataset.autoRuleTab || 'add');
         }
     });
 }
@@ -2118,10 +2208,11 @@ function scheduleAutoSelectRuleChangeRestart(delay = 620) {
 }
 
 function setAutoSelectNowButtonBusy(isBusy) {
-    const btn = document.querySelector('.auto-select-section-actions .btn-primary');
+    const btn = document.getElementById('autoSelectRunNowButton');
     if (!btn) return;
-    if (!btn.dataset.idleText) btn.dataset.idleText = btn.textContent || '立即选择';
-    btn.textContent = isBusy ? '选择中' : (btn.dataset.idleText || '立即选择');
+    if (!btn.dataset.idleText) btn.dataset.idleText = btn.textContent || '重新选择';
+    btn.textContent = isBusy ? '选择中' : (btn.dataset.idleText || '重新选择');
+    btn.disabled = !!isBusy || !autoSelectConfig?.enabled;
 }
 
 function stopAutoSelectSelection() {
@@ -2162,27 +2253,24 @@ function renderAutoSelectConfig() {
     const subscriptionEl = document.getElementById('autoSelectSubscriptions');
     const aggregateEl = document.getElementById('autoSelectAggregates');
     const intervalEl = document.getElementById('autoSelectIntervalMinutes');
-    const startupEl = document.getElementById('autoSelectStartupMode');
     const siteModeEl = document.getElementById('autoSelectSiteMode');
     const siteListEl = document.getElementById('autoSelectSiteList');
     const listEl = document.getElementById('autoSelectRuleList');
     const discardEl = document.getElementById('autoSelectDiscardPile');
     const ignoreTimeoutEl = document.getElementById('autoSelectIgnoreTimeout');
     if (!enabledEl || !scopeEl || !listEl || !autoSelectConfig) return;
+    updateAutoSelectConfigExpandedState();
+    updateAutoSelectConfigTabs();
+    updateAutoSelectRuleTabs();
 
-    const autoNodesTab = document.getElementById('autoNodesTab');
-    if (autoNodesTab) autoNodesTab.style.display = autoSelectConfig.enabled ? 'inline-block' : 'none';
-    if (!autoSelectConfig.enabled && nodeGroupMode === 'auto_nodes') {
-        setNodeGroupMode('subscription');
-    }
+    syncAutoNodesTabVisibility();
 
     enabledEl.checked = !!autoSelectConfig.enabled;
     scopeEl.value = autoSelectConfig.scope || 'subscription';
     if (intervalEl) intervalEl.value = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
-    if (startupEl) startupEl.value = autoSelectConfig.startupMode || 'none';
     if (ignoreTimeoutEl) ignoreTimeoutEl.checked = !!autoSelectConfig.ignoreTimeout;
     if (subscriptionEl) {
-        subscriptionEl.style.display = autoSelectConfig.scope === 'subscription' ? '' : 'none';
+        subscriptionEl.hidden = autoSelectConfig.scope !== 'subscription';
         if (!suppliersCache.length) {
             subscriptionEl.innerHTML = '<div class="auto-select-empty">暂无订阅组</div>';
         } else {
@@ -2198,7 +2286,7 @@ function renderAutoSelectConfig() {
         }
     }
     if (aggregateEl) {
-        aggregateEl.style.display = autoSelectConfig.scope === 'aggregate' ? '' : 'none';
+        aggregateEl.hidden = autoSelectConfig.scope !== 'aggregate';
         if (!aggregateGroupsCache.length) {
             aggregateEl.innerHTML = '<div class="auto-select-empty">暂无聚合组</div>';
         } else {
@@ -2246,12 +2334,65 @@ function renderAutoSelectConfig() {
     scheduleCustomSelectSync();
 }
 
+function showAutoSelectConfigTab(tab = 'runtime') {
+    currentAutoSelectConfigTab = ['runtime', 'scope', 'sites', 'rules'].includes(tab) ? tab : 'runtime';
+    updateAutoSelectConfigTabs();
+    scheduleCustomSelectSync();
+}
+
+function updateAutoSelectConfigExpandedState() {
+    const body = document.getElementById('autoSelectConfigBody');
+    const runButton = document.getElementById('autoSelectRunNowButton');
+    const enabled = !!autoSelectConfig?.enabled;
+    if (body) {
+        body.hidden = !enabled;
+        body.classList.toggle('expanded', enabled);
+    }
+    if (runButton) runButton.disabled = !enabled || autoSelectRunning;
+}
+
+function updateAutoSelectConfigTabs() {
+    document.querySelectorAll('.auto-select-config-tab').forEach(button => {
+        const active = button.dataset.autoConfigTab === currentAutoSelectConfigTab;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('.auto-select-config-panel').forEach(panel => {
+        const active = panel.dataset.autoConfigPanel === currentAutoSelectConfigTab;
+        panel.classList.toggle('active', active);
+        panel.hidden = !active;
+    });
+}
+
+function showAutoSelectRuleTab(tab = 'add') {
+    currentAutoSelectRuleTab = ['add', 'enabled', 'discarded'].includes(tab) ? tab : 'add';
+    updateAutoSelectRuleTabs();
+}
+
+function updateAutoSelectRuleTabs() {
+    const ruleCount = autoSelectConfig?.rules?.length || 0;
+    const discardCount = autoSelectConfig?.discardedRules?.length || 0;
+    const ruleCountEl = document.getElementById('autoSelectRuleCount');
+    const discardCountEl = document.getElementById('autoSelectDiscardCount');
+    if (ruleCountEl) ruleCountEl.textContent = String(ruleCount);
+    if (discardCountEl) discardCountEl.textContent = String(discardCount);
+    document.querySelectorAll('.auto-select-rule-tab').forEach(button => {
+        const active = button.dataset.autoRuleTab === currentAutoSelectRuleTab;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('.auto-select-rule-tab-panel').forEach(panel => {
+        panel.classList.toggle('active', panel.dataset.autoRulePanel === currentAutoSelectRuleTab);
+    });
+}
+
 function renderAutoSelectSourceCard({ kind, value, title, meta, selected, index }) {
     const action = kind === 'aggregate' ? 'aggregate-card' : 'subscription-card';
     const rank = kind === 'aggregate' ? 'AG' : 'SUB';
     return `
-        <button type="button" class="auto-select-choice-card ${selected ? 'selected' : ''}" data-auto-select-action="${action}" data-file-name="${escapeAttr(value)}" aria-pressed="${selected ? 'true' : 'false'}" style="--deal-index:${Math.min(index || 0, 12)}">
+        <button type="button" class="auto-select-choice-card source-${kind} ${selected ? 'selected' : ''}" data-auto-select-action="${action}" data-file-name="${escapeAttr(value)}" aria-pressed="${selected ? 'true' : 'false'}" style="--deal-index:${Math.min(index || 0, 12)}">
             <span class="auto-select-card-corner">${rank}</span>
+            <span class="auto-select-card-state">${selected ? '已选择' : '未选择'}</span>
             <span class="auto-select-card-mark"><img class="mode-logo" src="${currentModeLogoSrc()}" alt="" aria-hidden="true"></span>
             <span class="auto-select-card-title">${escapeHTML(title)}</span>
             <span class="auto-select-card-meta">${escapeHTML(meta)}</span>
@@ -2291,8 +2432,9 @@ function autoSelectSourceMeta(kind, source) {
 
 function renderAutoSelectSiteCard(target, selected, index) {
     return `
-        <button type="button" class="auto-select-choice-card site ${selected ? 'selected' : ''}" data-auto-select-action="site-target-card" data-target-id="${escapeAttr(target.id)}" aria-pressed="${selected ? 'true' : 'false'}" style="--deal-index:${Math.min(index || 0, 12)}">
+        <button type="button" class="auto-select-choice-card site ${selected ? 'selected' : ''}" data-auto-select-action="site-target-card" data-target-id="${escapeAttr(target.id)}" aria-pressed="${selected ? 'true' : 'false'}" aria-label="${escapeAttr((target.name || target.url || target.id) + (selected ? '，已选择' : '，未选择'))}" style="--deal-index:${Math.min(index || 0, 12)}">
             <span class="auto-select-card-corner">WEB</span>
+            <span class="auto-select-card-state">${selected ? '已选择' : '未选择'}</span>
             <span class="auto-select-card-mark"><img class="mode-logo" src="${currentModeLogoSrc()}" alt="" aria-hidden="true"></span>
             <span class="auto-select-card-title">${escapeHTML(target.name || target.url || target.id)}</span>
             <span class="auto-select-card-meta">${escapeHTML(target.category || '网站')}</span>
@@ -2350,10 +2492,10 @@ function setAutoSelectEnabled(checked) {
     autoSelectConfig.enabled = !!checked;
     saveAutoSelectConfig({ render: false, run: false, timer: false });
     if (!autoSelectConfig.enabled) stopAutoSelectSelection();
-    
-    const autoNodesTab = document.getElementById('autoNodesTab');
-    if (autoNodesTab) autoNodesTab.style.display = autoSelectConfig.enabled ? 'inline-block' : 'none';
-    if (!autoSelectConfig.enabled && nodeGroupMode === 'auto_nodes') {
+
+    const wasAutoNodes = nodeGroupMode === 'auto_nodes';
+    syncAutoNodesTabVisibility();
+    if (!autoSelectConfig.enabled && wasAutoNodes) {
         setNodeGroupMode('subscription');
     }
 
@@ -2410,12 +2552,6 @@ function setAutoSelectInterval(value) {
     scheduleAutoSelectTimer();
 }
 
-function setAutoSelectStartupMode(mode) {
-    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
-    autoSelectConfig.startupMode = ['none', 'proxy', 'tun', 'proxy_tun'].includes(mode) ? mode : 'none';
-    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
-}
-
 function setAutoSelectSiteMode(mode) {
     if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
     autoSelectConfig.siteCheck.mode = ['none', 'any', 'all'].includes(mode) ? mode : 'none';
@@ -2452,6 +2588,7 @@ function addAutoSelectRule() {
     };
     autoSelectConfig.rules.unshift(rule);
     autoSelectLastDrawnRuleId = rule.id;
+    currentAutoSelectRuleTab = 'enabled';
     if (input) input.value = '';
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: false });
     renderAutoSelectConfig();
@@ -2684,6 +2821,7 @@ function deleteAutoSelectRule(encodedId) {
     const rule = autoSelectConfig.rules.find(r => r.id === id);
     if (rule) pushAutoSelectDiscardedRules([rule]);
     autoSelectConfig.rules = autoSelectConfig.rules.filter(rule => rule.id !== id);
+    currentAutoSelectRuleTab = 'discarded';
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
 }
@@ -2697,6 +2835,7 @@ async function clearAutoSelectRules() {
     }
     pushAutoSelectDiscardedRules(autoSelectConfig.rules);
     autoSelectConfig.rules = [];
+    currentAutoSelectRuleTab = 'discarded';
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
     renderAutoSelectConfig();
     showToast('规则已全部弃置', 'success');
@@ -2741,6 +2880,7 @@ function restoreAutoSelectDiscardedRule(indexValue) {
     delete restored.discardedAt;
     autoSelectConfig.rules.unshift(restored);
     autoSelectLastDrawnRuleId = restored.id;
+    currentAutoSelectRuleTab = 'enabled';
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: false });
     renderAutoSelectConfig();
     scheduleAutoSelectRuleChangeRestart();
@@ -3122,8 +3262,6 @@ async function runAutoSelectCycle(options = {}) {
         assertAutoSelectActive(runContext, options);
         await loadNodes();
         assertAutoSelectActive(runContext, options);
-        await ensureAutoSelectNetworkMode();
-        assertAutoSelectActive(runContext, options);
         const candidates = autoSelectCandidates(options.fileName)
             .filter(nodePassesAutoSelectRules);
         if (!candidates.length) {
@@ -3171,19 +3309,6 @@ async function runAutoSelectCycle(options = {}) {
         }
         setAutoSelectNowButtonBusy(hasQueuedRun);
     }
-}
-
-async function ensureAutoSelectNetworkMode() {
-    const mode = autoSelectConfig?.startupMode || 'none';
-    if (mode === 'none') return;
-    await loadStatus();
-    const modeLabel = {
-        proxy: '系统代理',
-        tun: 'TUN',
-        proxy_tun: '代理+TUN'
-    }[mode] || '';
-    if (modeLabel) showToast('自动选择已开启，正在切换到 ' + modeLabel, 'info', 1800);
-    await activateProxyPreset(mode);
 }
 
 async function runAutoSelectNow() {
@@ -3246,16 +3371,18 @@ async function testSpeed(idx) {
 
 async function testAll() {
     const btn = document.getElementById('btnTestAll');
+    if (!btn) return;
     btn.disabled = true;
-    btn.textContent = '⏳ 测速中...';
+    btn.textContent = '测速中...';
     await fetch('/api/test_all', { method: 'POST' });
     btn.disabled = false;
-    btn.textContent = '⚡ 极速测速';
+    btn.textContent = '极速测速';
     loadNodes();
 }
 
 async function updateSupplier() {
     const btn = document.getElementById('btnUpdate');
+    if (!btn) return;
     btn.disabled = true;
     btn.innerHTML = '<span class="spin">🔄</span>';
     
@@ -3473,7 +3600,108 @@ async function copyShareModalText() {
     }
 }
 
+function helpJumpButtons(actions = [], label = '去操作') {
+    if (!actions.length) return '';
+    const buttons = actions.map(action => {
+        const target = jsArg(action.target || '');
+        const value = jsArg(action.value || '');
+        const klass = action.primary ? ' help-jump-button-primary' : '';
+        return `<button type="button" class="help-jump-button${klass}" onclick='jumpFromHelp(${target}, ${value})'>${escapeHTML(action.label || '打开')}</button>`;
+    }).join('');
+    return `
+        <div class="help-action-block">
+            <div class="help-action-label">${escapeHTML(label)}</div>
+            <div class="help-action-grid">${buttons}</div>
+        </div>
+    `;
+}
+
+function jumpFromHelp(target, value = '') {
+    closeHelpTopic();
+    const runSoon = callback => setTimeout(callback, 80);
+    switch (target) {
+        case 'nodes':
+            showTab('nodes');
+            if (value) runSoon(() => setNodeGroupMode(value));
+            break;
+        case 'dashboard':
+            showTab('dashboard');
+            break;
+        case 'sitecheck':
+            showTab('sitecheck');
+            break;
+        case 'settings':
+            showTab('settings');
+            runSoon(() => showSettingsSubtab(value || 'run'));
+            break;
+        case 'add-node':
+            showTab('settings');
+            showSettingsSubtab('entry');
+            runSoon(openAddModal);
+            break;
+        case 'rules':
+            showTab('settings');
+            showSettingsSubtab('manage');
+            runSoon(openRuleModal);
+            break;
+        case 'dns':
+            showTab('settings');
+            showSettingsSubtab('manage');
+            runSoon(openDNSModal);
+            break;
+        case 'aggregate':
+            showTab('settings');
+            showSettingsSubtab('manage');
+            runSoon(openAggGroupModal);
+            break;
+        default:
+            showTab('help');
+            break;
+    }
+}
+
 const helpTopics = {
+    systemMap: {
+        title: '系统地图',
+        summary: '把 wing 看成“节点入口、运行模式、规则管理、验证工具、状态看板”五块，会更容易知道下一步该点哪里。',
+        body: `
+            <h3>先怎么理解这个系统</h3>
+            <div class="help-mini-map">
+                <div><strong>节点入口</strong><span>订阅组、聚合组和自动选择都在“节点管理”。这里决定当前出口是谁。</span></div>
+                <div><strong>运行模式</strong><span>设置里的代理服务、全局路由、TUN、WebRTC 决定流量怎么被接管。</span></div>
+                <div><strong>规则中心</strong><span>规则分流、DNS、聚合组在“设置 / 管理”。这里决定哪些域名、进程和节点组合怎么处理。</span></div>
+                <div><strong>验证工具</strong><span>极速测速看节点延迟，测试网站看目标服务是否真的可用。</span></div>
+                <div><strong>状态看板</strong><span>看板展示流量、连接和日志，用来判断当前状态是否符合预期。</span></div>
+            </div>
+            <h3>页面职责</h3>
+            <ul>
+                <li>节点管理：选择节点、切换订阅组/聚合组、设置自动选择、查看自动节点。</li>
+                <li>设置 / 运行：开关系统代理、全局路由、TUN 和 WebRTC 防泄露。</li>
+                <li>设置 / 偏好：端口、IPv6、启动项、管理员重启和主题等长期偏好。</li>
+                <li>设置 / 入口：导入订阅、手动添加节点、临时出口和免费流量入口。</li>
+                <li>设置 / 管理：规则分流、DNS 规则和聚合组配置。</li>
+                <li>测试网站：检查当前出口能否访问指定网站。</li>
+                <li>数据看板：查看流量和运行状态，辅助排查异常。</li>
+            </ul>
+            <h3>推荐操作顺序</h3>
+            <ol>
+                <li>先进“入口”导入订阅或添加节点。</li>
+                <li>回到“节点管理”选择一个节点，或打开“自动选择”。</li>
+                <li>到“运行”开启代理服务，必要时开启 TUN。</li>
+                <li>用“测试网站”和“数据看板”确认访问、延迟和流量状态。</li>
+                <li>需要精细控制时，再进入“管理”配置规则、DNS 和聚合组。</li>
+            </ol>
+            ${helpJumpButtons([
+                { label: '节点管理', target: 'nodes', value: 'subscription', primary: true },
+                { label: '自动选择', target: 'nodes', value: 'auto' },
+                { label: '运行开关', target: 'settings', value: 'run' },
+                { label: '入口操作', target: 'settings', value: 'entry' },
+                { label: '规则 / DNS / 聚合组', target: 'settings', value: 'manage' },
+                { label: '测试网站', target: 'sitecheck' },
+                { label: '数据看板', target: 'dashboard' }
+            ], '直接跳转')}
+        `
+    },
     projectIntro: {
         title: '项目介绍',
         summary: 'wing 是 Flutter + Go 构建的跨平台代理客户端，核心目标是把节点选择、分流、TUN 和 DNS 管理收进一个轻量桌面入口。',
@@ -3492,6 +3720,18 @@ const helpTopics = {
                 <li>支持系统代理、TUN 隧道、规则分流、命令行进程规则、DNS 分流、DNS 自动覆写和 WebRTC 防泄露。</li>
                 <li>支持延迟测速、带宽测速和常用网站可用性测试。</li>
             </ul>
+            <h3>怎么读界面</h3>
+            <ul>
+                <li>主导航是顶部灵动岛里的图标，日常最常用的是节点、测试网站、看板和设置。</li>
+                <li>节点页的子标签负责选择“节点来源”：订阅组、聚合组、自动选择、自动节点。</li>
+                <li>设置页的子标签负责配置“系统行为”：运行、偏好、入口、管理。</li>
+                <li>如果你不知道下一步去哪，优先从“系统地图”和“快速开始”两个主题进入。</li>
+            </ul>
+            ${helpJumpButtons([
+                { label: '进入节点管理', target: 'nodes', value: 'subscription' },
+                { label: '进入设置', target: 'settings', value: 'run' },
+                { label: '查看看板', target: 'dashboard' }
+            ])}
             <h3>技术栈</h3>
             <ul>
                 <li>桌面与移动壳：Flutter。</li>
@@ -3513,11 +3753,18 @@ const helpTopics = {
         body: `
             <h3>推荐流程</h3>
             <ol>
-                <li>点击顶部“导入订阅”，粘贴订阅链接、单节点链接或配置内容。</li>
+                <li>进入“设置 / 入口”，导入订阅，或打开“添加节点”粘贴单节点链接。</li>
                 <li>在“节点管理”中打开订阅组或聚合组，点击节点卡片或表格中的“选择”。</li>
                 <li>普通浏览器和多数桌面软件可先开启“代理服务”；游戏、命令行、部分不认系统代理的软件建议开启 TUN。</li>
                 <li>先用“极速测速”确认延迟，再用“测试网站”确认目标服务能否访问。</li>
             </ol>
+            ${helpJumpButtons([
+                { label: '入口操作', target: 'settings', value: 'entry', primary: true },
+                { label: '添加节点', target: 'add-node' },
+                { label: '节点管理', target: 'nodes', value: 'subscription' },
+                { label: '运行开关', target: 'settings', value: 'run' },
+                { label: '测试网站', target: 'sitecheck' }
+            ], '按顺序跳转')}
             <h3>注意</h3>
             <ul>
                 <li>系统代理只影响遵循系统代理的软件，TUN 才会接管更多流量。</li>
@@ -3539,6 +3786,12 @@ const helpTopics = {
                 <li>“指定订阅组”只从勾选的订阅组里选择。</li>
                 <li>“指定聚合组”只从勾选的聚合组里选择。</li>
             </ul>
+            ${helpJumpButtons([
+                { label: '打开自动选择', target: 'nodes', value: 'auto', primary: true },
+                { label: '查看订阅组', target: 'nodes', value: 'subscription' },
+                { label: '查看聚合组', target: 'nodes', value: 'aggregate' },
+                { label: '管理聚合组', target: 'aggregate' }
+            ])}
             <h3>立即选择和删除候选</h3>
             <ul>
                 <li>点击“立即选择”时，如果上一轮还没结束，软件不会显示排队提示；上一轮结束后会马上重新选择。</li>
@@ -3562,6 +3815,12 @@ const helpTopics = {
                 <li>TUN 会创建虚拟网卡并接管路由，适合游戏、命令行工具和不支持系统代理的软件。</li>
                 <li>TUN 开启后，DNS 查询会通过本地 DNS 入口处理。</li>
             </ul>
+            ${helpJumpButtons([
+                { label: '运行开关', target: 'settings', value: 'run', primary: true },
+                { label: '偏好设置', target: 'settings', value: 'prefs' },
+                { label: '测试网站', target: 'sitecheck' },
+                { label: 'DNS 管理', target: 'dns' }
+            ])}
             <h3>DNS 自动覆写和 IPv6</h3>
             <ul>
                 <li>DNS 自动覆写会把物理网卡 DNS 指向 127.0.0.2，退出时会尝试恢复。</li>
@@ -3590,6 +3849,12 @@ const helpTopics = {
                 <li>域名后缀：匹配整个站点或区域，例如 cn 可匹配 .cn 域名。</li>
                 <li>域名关键字：匹配包含该关键字的域名，例如 baidu 或 alicdn。</li>
             </ul>
+            ${helpJumpButtons([
+                { label: '打开 DNS 管理', target: 'dns', primary: true },
+                { label: '打开规则分流', target: 'rules' },
+                { label: '运行开关', target: 'settings', value: 'run' },
+                { label: '测试网站', target: 'sitecheck' }
+            ])}
             <h3>匹配顺序</h3>
             <ul>
                 <li>DNS 查询会从上到下匹配 DNS 分流规则。</li>
@@ -3620,6 +3885,11 @@ const helpTopics = {
                 <li>节点配置和订阅链接使用本机派生密钥做 AES-GCM 加密存储。</li>
                 <li>DNS 规则、路由规则和使用统计属于本机配置数据，不会主动上传。</li>
             </ul>
+            ${helpJumpButtons([
+                { label: '偏好设置', target: 'settings', value: 'prefs', primary: true },
+                { label: '入口操作', target: 'settings', value: 'entry' },
+                { label: '数据看板', target: 'dashboard' }
+            ])}
             <h3>必要网络请求</h3>
             <ul>
                 <li>导入或更新订阅时，会访问对应订阅地址。</li>
@@ -3641,6 +3911,13 @@ const helpTopics = {
                 <li>网页正常但某个软件不走代理时，先确认该软件是否支持系统代理。</li>
                 <li>不支持系统代理的软件，建议开启 TUN。</li>
             </ul>
+            ${helpJumpButtons([
+                { label: '运行开关', target: 'settings', value: 'run', primary: true },
+                { label: '测试网站', target: 'sitecheck' },
+                { label: 'DNS 管理', target: 'dns' },
+                { label: '规则分流', target: 'rules' },
+                { label: '数据看板', target: 'dashboard' }
+            ])}
             <h3>DNS 结果异常</h3>
             <ul>
                 <li>打开“DNS 规则管理”，确认默认服务器和分流规则。</li>
@@ -3662,6 +3939,12 @@ const helpTopics = {
                 <li>不要导入来源不明的订阅链接。</li>
                 <li>订阅服务商能看到订阅拉取请求，订阅地址也可能包含你的身份标识。</li>
             </ul>
+            ${helpJumpButtons([
+                { label: '入口操作', target: 'settings', value: 'entry', primary: true },
+                { label: '规则分流', target: 'rules' },
+                { label: 'DNS 管理', target: 'dns' },
+                { label: '偏好设置', target: 'settings', value: 'prefs' }
+            ])}
             <h3>公共网络</h3>
             <ul>
                 <li>公共 Wi-Fi 下优先开启 TUN 和 WebRTC 防泄露。</li>
@@ -3685,6 +3968,9 @@ function openHelpTopicByKey(event, topicId) {
 function openHelpTopic(topicId) {
     const topic = helpTopics[topicId];
     if (!topic) return;
+    document.querySelectorAll('.help-subtab').forEach(button => {
+        button.classList.toggle('active', button.dataset.helpTopic === topicId);
+    });
     document.getElementById('helpTopicTitle').textContent = topic.title;
     document.getElementById('helpTopicSummary').textContent = topic.summary;
     document.getElementById('helpTopicBody').innerHTML = topic.body;

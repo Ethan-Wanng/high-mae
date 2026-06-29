@@ -58,8 +58,6 @@ func onReady() {
 	common.MCurrentNode.Disable()
 	systray.AddSeparator()
 
-	mShowUI := systray.AddMenuItem("🎛️ 显示控制面板", "显示 Flutter 桌面控制面板窗口")
-	mBrowserUI := systray.AddMenuItem("🌐 浏览器打开控制面板", "在浏览器中管理节点并测速")
 	mImportLink := systray.AddMenuItem("📋 导入节点/订阅", "从剪贴板自动解析并添加节点")
 	systray.AddSeparator()
 
@@ -77,6 +75,7 @@ func onReady() {
 	systray.AddSeparator()
 	common.MToggleTun = systray.AddMenuItem("🔌 隧道连接: [已关闭]", "通过 TUN 隧道接管所有流量")
 	systray.AddSeparator()
+	mRestart := systray.AddMenuItem("🔁 重启 wing", "重启 wing 后端与桌面控制面板")
 	mAbout := systray.AddMenuItem("ℹ️ 关于", "查看项目信息与技术栈")
 	common.MQuit = systray.AddMenuItem("❌ 安全退出", "退出程序")
 
@@ -92,10 +91,6 @@ func onReady() {
 	utils.SafeGo("tray menu loop", func() {
 		for {
 			select {
-			case <-mShowUI.ClickedCh:
-				ShowFlutterWindow()
-			case <-mBrowserUI.ClickedCh:
-				openExternalURL(webUIURL)
 			case <-mImportLink.ClickedCh:
 				sub.ImportNodeFromClipboard()
 			case <-common.MToggleProxy.ClickedCh:
@@ -110,6 +105,16 @@ func onReady() {
 				}
 				stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
 				refreshTrayIcon()
+			case <-mRestart.ClickedCh:
+				if err := utils.RestartApp(); err != nil {
+					utils.ShowWindowsMsgBox("重启 wing", "重启失败: "+err.Error())
+					continue
+				}
+				isQuitting.Store(true)
+				utils.SafeGo("tray restart exit", func() {
+					time.Sleep(500 * time.Millisecond)
+					systray.Quit()
+				})
 			case <-mAbout.ClickedCh:
 				aboutMsg := "wing v" + common.AppVersion + " - 桌面代理客户端\n\n" +
 					"wing 是基于 Flutter + Go 的代理客户端，集成 sing-box、Mieru Client 与本地 Web 控制面板，支持节点订阅、测速、规则分流、自动选点、隧道连接、DNS 分流与 WebRTC 防泄漏。\n\n" +

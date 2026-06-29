@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>wing 控制面板</title>
-    <link rel="stylesheet" href="style.css?v=20260617-flat-tabs">
+    <link rel="stylesheet" href="style.css?v=20260623-auto-select-tabs">
 </head>
 
 <body class="tabs-collapsed">
@@ -105,17 +105,17 @@
         <div id="tab-nodes" class="tab-content active">
             <div class="layout-main-panel panel-full">
                 <div class="explorer-card">
-                    <div class="explorer-header">
-                        <div class="explorer-title">
-                            <span>节点管理器</span>
-                        </div>
-                        <div class="explorer-tools">
+                    <div class="node-state-controls" hidden>
+                        <select id="supplierSelect" onchange="switchSupplier(this.value)"></select>
+                        <select id="aggregateSelect" onchange="switchAggregateGroup(this.value)"></select>
+                    </div>
+
+                    <div class="node-toolbar-home" id="nodeToolbarHome" hidden>
+                        <div class="explorer-tools node-inline-toolbar" id="nodeInlineToolbar">
                             <div class="search-box node-search-box">
                                 <input type="text" id="nodeSearch" placeholder="搜索节点、协议或地区..." oninput="filterNodes()">
                             </div>
                             <div class="supplier-actions node-toolbar">
-                                <select id="supplierSelect" onchange="switchSupplier(this.value)" style="display:none;"></select>
-                                <select id="aggregateSelect" onchange="switchAggregateGroup(this.value)" style="display:none;"></select>
                                 <button class="btn-update icon-button" id="btnUpdate" onclick="updateSupplier()" title="更新全部订阅">↻</button>
                                 <button class="btn-primary" id="btnTestAll" onclick="testAll()">极速测速</button>
                                 <button class="btn-ghost direct-button" id="btnDirect" onclick="activateProxyPreset('direct')" title="切换为直连">直连</button>
@@ -127,116 +127,99 @@
                         <button class="node-source-tab active" data-mode="subscription" onclick="setNodeGroupMode('subscription')">订阅组</button>
                         <button class="node-source-tab" data-mode="aggregate" onclick="setNodeGroupMode('aggregate')">聚合组</button>
                         <button class="node-source-tab" data-mode="auto" onclick="setNodeGroupMode('auto')">自动选择</button>
-                        <button class="node-source-tab auto-nodes-tab" data-mode="auto_nodes" id="autoNodesTab" onclick="setNodeGroupMode('auto_nodes')" style="display:none;">⚡ 自动节点</button>
+                        <button class="node-source-tab auto-nodes-tab" data-mode="auto_nodes" id="autoNodesTab" onclick="setNodeGroupMode('auto_nodes')" hidden>⚡ 自动节点</button>
                     </div>
 
                     <div class="auto-select-node-pane" id="autoSelectNodePane" style="display:none;">
                         <div class="log-container auto-select-panel">
-                            <!-- Section 1: Master Toggle -->
-                            <div class="auto-select-section">
-                                <div class="auto-select-section-header">
-                                    <div class="auto-select-section-icon icon-power">⚡</div>
-                                    <div class="auto-select-section-title">
-                                        自动选择节点
-                                        <small>开启后将根据规则自动选取最优节点</small>
-                                    </div>
-                                    <div class="auto-select-section-actions">
-                                        <button class="btn-primary" onclick="runAutoSelectNow()" style="padding: 8px 16px; font-size: 12px;">立即选择</button>
-                                        <label class="toggle"><input type="checkbox" id="autoSelectEnabled" onchange="setAutoSelectEnabled(this.checked)"><span class="slider"></span></label>
-                                    </div>
-                                </div>
-                                <div class="auto-select-controls">
-                                    <select id="autoSelectScope" data-auto-select-action="scope">
-                                        <option value="all">全部节点</option>
-                                        <option value="subscription">指定订阅组</option>
-                                        <option value="aggregate">指定聚合组</option>
-                                    </select>
-                                    <div id="autoSelectSubscriptions" class="auto-select-group-list"></div>
-                                    <div id="autoSelectAggregates" class="auto-select-group-list"></div>
-                                </div>
+                            <div class="auto-select-master-row">
+                                <label class="toggle auto-select-master-toggle" title="自动选择">
+                                    <input type="checkbox" id="autoSelectEnabled" onchange="setAutoSelectEnabled(this.checked)">
+                                    <span class="slider"></span>
+                                </label>
+                                <button class="btn-primary auto-select-run-button" id="autoSelectRunNowButton" onclick="runAutoSelectNow()">重新选择</button>
                             </div>
 
-                            <!-- Section 2: Timer & Startup -->
-                            <div class="auto-select-section">
-                                <div class="auto-select-section-header">
-                                    <div class="auto-select-section-icon icon-timer">⏱</div>
-                                    <div class="auto-select-section-title">
-                                        定时与启动
-                                        <small>配置自动切换间隔和启动行为</small>
-                                    </div>
+                            <div class="auto-select-config-body" id="autoSelectConfigBody" hidden>
+                                <div class="auto-select-config-tabs" role="tablist" aria-label="自动选择配置">
+                                    <button type="button" class="auto-select-config-tab active" data-auto-config-tab="runtime" data-auto-select-action="config-tab">定时和运行</button>
+                                    <button type="button" class="auto-select-config-tab" data-auto-config-tab="scope" data-auto-select-action="config-tab">节点选择组</button>
+                                    <button type="button" class="auto-select-config-tab" data-auto-config-tab="sites" data-auto-select-action="config-tab">网站可用选择</button>
+                                    <button type="button" class="auto-select-config-tab" data-auto-config-tab="rules" data-auto-select-action="config-tab">规则筛选</button>
                                 </div>
-                                <div class="auto-select-inline-row">
-                                    <span class="auto-select-inline-label">切换间隔</span>
-                                    <input type="number" id="autoSelectIntervalMinutes" min="1" max="1440" step="1" onchange="setAutoSelectInterval(this.value)" style="background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:var(--text-main);padding:8px 10px;border-radius:var(--radius);outline:none;">
-                                    <span class="unit-label">分钟</span>
-                                </div>
-                                <div class="auto-select-inline-row">
-                                    <span class="auto-select-inline-label">自动启动</span>
-                                    <select id="autoSelectStartupMode" data-auto-select-action="startup-mode" style="min-width:140px;">
-                                        <option value="none">不自动启动</option>
-                                        <option value="proxy">系统代理</option>
-                                        <option value="tun">TUN</option>
-                                        <option value="proxy_tun">代理+TUN</option>
-                                    </select>
-                                </div>
-                                <div class="auto-select-inline-row toggle-row" style="margin-top: 10px;">
-                                    <div style="display: flex; align-items: center; width: 100%;">
-                                        <span class="auto-select-inline-label">忽略超时节点</span>
-                                        <label class="toggle" style="margin-left: auto;">
-                                            <input type="checkbox" id="autoSelectIgnoreTimeout" onchange="setAutoSelectIgnoreTimeout(this.checked)">
-                                            <span class="slider"></span>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
 
-                            <!-- Section 3: Site Check -->
-                            <div class="auto-select-section">
-                                <div class="auto-select-section-header">
-                                    <div class="auto-select-section-icon icon-site">🌐</div>
-                                    <div class="auto-select-section-title">
-                                        网站可用性验证
-                                        <small>要求选中的节点能访问指定网站</small>
+                                <div class="auto-select-config-panel active" data-auto-config-panel="runtime">
+                                    <div class="auto-select-settings-list">
+                                        <div class="auto-select-inline-row">
+                                            <span class="auto-select-inline-label">切换间隔</span>
+                                            <input type="number" id="autoSelectIntervalMinutes" min="1" max="1440" step="1" onchange="setAutoSelectInterval(this.value)">
+                                            <span class="unit-label">分钟</span>
+                                        </div>
+                                        <div class="auto-select-inline-row toggle-row">
+                                            <span class="auto-select-inline-label">忽略超时节点</span>
+                                            <label class="toggle">
+                                                <input type="checkbox" id="autoSelectIgnoreTimeout" onchange="setAutoSelectIgnoreTimeout(this.checked)">
+                                                <span class="slider"></span>
+                                            </label>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="auto-select-site-rule">
-                                    <select id="autoSelectSiteMode" data-auto-select-action="site-mode">
-                                        <option value="none">不要求网站测试</option>
-                                        <option value="any">所选网站任一可用</option>
-                                        <option value="all">所选网站全部可用</option>
-                                    </select>
-                                    <div id="autoSelectSiteList" class="auto-select-site-list"></div>
-                                </div>
-                            </div>
 
-                            <!-- Section 4: Filter Rules -->
-                            <div class="auto-select-section">
-                                <div class="auto-select-section-header">
-                                    <div class="auto-select-section-icon icon-filter">🔍</div>
-                                    <div class="auto-select-section-title">
-                                        筛选规则
-                                        <small>添加规则过滤候选节点池</small>
+                                <div class="auto-select-config-panel" data-auto-config-panel="scope">
+                                    <div class="auto-select-controls">
+                                        <select id="autoSelectScope" data-auto-select-action="scope">
+                                            <option value="all">全部节点</option>
+                                            <option value="subscription">指定订阅组</option>
+                                            <option value="aggregate">指定聚合组</option>
+                                        </select>
+                                        <div id="autoSelectSubscriptions" class="auto-select-group-list"></div>
+                                        <div id="autoSelectAggregates" class="auto-select-group-list"></div>
                                     </div>
                                 </div>
-                                <div class="auto-select-rule-form">
-                                    <select id="autoSelectRuleType" data-auto-select-action="new-rule-type">
-                                        <option value="exclude_keyword">不使用包含</option>
-                                        <option value="include_region">只选择地区</option>
-                                        <option value="include_node">只选择节点</option>
-                                        <option value="include_subscription">只选择订阅组</option>
-                                        <option value="include_aggregate_group">只选择聚合组</option>
-                                        <option value="include_protocol">只使用协议</option>
-                                        <option value="exclude_protocol">不使用协议</option>
-                                    </select>
-                                    <input type="text" id="autoSelectRuleValue" placeholder="多个值用逗号分隔，如 美国,日本">
-                                    <button class="btn-success auto-select-draw-rule" onclick="addAutoSelectRule()">添加</button>
+
+                                <div class="auto-select-config-panel" data-auto-config-panel="sites">
+                                    <div class="auto-select-site-rule">
+                                        <select id="autoSelectSiteMode" data-auto-select-action="site-mode">
+                                            <option value="none">不要求网站测试</option>
+                                            <option value="any">所选网站任一可用</option>
+                                            <option value="all">所选网站全部可用</option>
+                                        </select>
+                                        <div id="autoSelectSiteList" class="auto-select-site-list"></div>
+                                    </div>
                                 </div>
-                                <div id="autoSelectRulePicker" class="auto-select-picker"></div>
-                                <div class="auto-select-rule-toolbar">
-                                    <button class="btn-mini btn-mini-danger" onclick="clearAutoSelectRules()">清空规则</button>
+
+                                <div class="auto-select-config-panel" data-auto-config-panel="rules">
+                                    <div class="auto-select-rule-tabs" role="tablist" aria-label="自动选择规则分类">
+                                        <button type="button" class="auto-select-rule-tab active" data-auto-rule-tab="add" data-auto-select-action="rule-tab">添加规则</button>
+                                        <button type="button" class="auto-select-rule-tab" data-auto-rule-tab="enabled" data-auto-select-action="rule-tab">已启用 <span id="autoSelectRuleCount">0</span></button>
+                                        <button type="button" class="auto-select-rule-tab" data-auto-rule-tab="discarded" data-auto-select-action="rule-tab">弃置堆 <span id="autoSelectDiscardCount">0</span></button>
+                                    </div>
+                                    <div class="auto-select-rule-tab-panel active" data-auto-rule-panel="add">
+                                        <div class="auto-select-rule-form">
+                                            <select id="autoSelectRuleType" data-auto-select-action="new-rule-type">
+                                                <option value="exclude_keyword">不使用包含</option>
+                                                <option value="include_region">只选择地区</option>
+                                                <option value="include_node">只选择节点</option>
+                                                <option value="include_subscription">只选择订阅组</option>
+                                                <option value="include_aggregate_group">只选择聚合组</option>
+                                                <option value="include_protocol">只使用协议</option>
+                                                <option value="exclude_protocol">不使用协议</option>
+                                            </select>
+                                            <input type="text" id="autoSelectRuleValue" placeholder="多个值用逗号分隔，如 美国,日本">
+                                            <button class="btn-success auto-select-draw-rule" onclick="addAutoSelectRule()">添加</button>
+                                        </div>
+                                        <div id="autoSelectRulePicker" class="auto-select-picker"></div>
+                                    </div>
+                                    <div class="auto-select-rule-tab-panel" data-auto-rule-panel="enabled">
+                                        <div class="auto-select-rule-toolbar">
+                                            <button class="btn-mini btn-mini-danger" onclick="clearAutoSelectRules()">清空规则</button>
+                                        </div>
+                                        <div id="autoSelectRuleList" class="auto-select-rule-list"></div>
+                                    </div>
+                                    <div class="auto-select-rule-tab-panel" data-auto-rule-panel="discarded">
+                                        <div id="autoSelectDiscardPile" class="auto-select-discard-pile"></div>
+                                    </div>
                                 </div>
-                                <div id="autoSelectRuleList" class="auto-select-rule-list"></div>
-                                <div id="autoSelectDiscardPile" class="auto-select-discard-pile"></div>
                             </div>
                         </div>
                     </div>
@@ -328,17 +311,20 @@
 
         <div id="tab-help" class="tab-content">
             <div class="help-layout">
-                <section class="help-hero">
-                    <div>
-                        <h2>帮助中心</h2>
-                    </div>
-                    <div class="help-status">
-                        <span>本地控制面板</span>
-                        <strong>127.0.0.1:10809</strong>
-                    </div>
-                </section>
+                <div class="help-status help-status-strip">
+                    <span>本地控制面板</span>
+                    <strong>127.0.0.1:10809</strong>
+                </div>
 
                 <section class="help-grid">
+                    <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('systemMap')" onkeydown="openHelpTopicByKey(event, 'systemMap')">
+                        <div class="help-card-title">
+                            <h3>系统地图</h3>
+                            <span>查看详情</span>
+                        </div>
+                        <p>先理解 wing 的页面、模式和数据流，再按按钮直接跳到对应操作位置。</p>
+                    </article>
+
                     <article class="help-card help-summary-card" role="button" tabindex="0" onclick="openHelpTopic('projectIntro')" onkeydown="openHelpTopicByKey(event, 'projectIntro')">
                         <div class="help-card-title">
                             <h3>项目介绍</h3>
@@ -416,14 +402,8 @@
                 <button class="settings-subtab" data-settings-tab="manage" onclick="showSettingsSubtab('manage')">管理</button>
             </div>
             <div class="settings-layout">
-                <section class="settings-column">
+                <section class="settings-column settings-all-sections">
                     <div class="settings-panel settings-hero-panel settings-centered-panel" data-settings-section="run">
-                        <div class="settings-panel-heading">
-                            <div>
-                                <h3>运行模式</h3>
-                                <p>控制系统代理、路由策略、TUN 和浏览器泄露防护。</p>
-                            </div>
-                        </div>
                         <div class="settings-toggle-grid">
                             <label class="settings-switch-card">
                                 <span class="settings-switch-copy">
@@ -458,10 +438,6 @@
 
                     <div class="settings-panel settings-centered-panel" data-settings-section="prefs">
                         <div class="settings-panel-heading">
-                            <div>
-                                <h3>系统偏好</h3>
-                                <p>端口、启动行为、解析策略和主题。</p>
-                            </div>
                             <button class="btn-ghost settings-restart-button" onclick="restartApp()">重启 wing</button>
                         </div>
                         <div class="settings-form-list">
@@ -516,16 +492,8 @@
                             </div>
                         </div>
                     </div>
-                </div>
 
-                <aside class="settings-side">
-                    <div class="settings-panel" data-settings-section="entry">
-                        <div class="settings-panel-heading">
-                            <div>
-                                <h3>入口操作</h3>
-                                <p>导入、添加和临时出口。</p>
-                            </div>
-                        </div>
+                    <div class="settings-panel settings-centered-panel" data-settings-section="entry">
                         <div class="settings-action-grid">
                             <button class="system-action-card import" id="btnImport" onclick="importSubscription()">
                                 <span>导入订阅</span>
@@ -542,13 +510,7 @@
                         </div>
                     </div>
 
-                    <div class="settings-panel" data-settings-section="manage">
-                        <div class="settings-panel-heading">
-                            <div>
-                                <h3>高级管理</h3>
-                                <p>规则、DNS 和聚合组配置。</p>
-                            </div>
-                        </div>
+                    <div class="settings-panel settings-centered-panel" data-settings-section="manage">
                         <div class="settings-management-list">
                             <button class="settings-management-button primary" onclick="openRuleModal()">
                                 <span>规则分流管理</span>
@@ -568,9 +530,8 @@
                             </button>
                         </div>
                     </div>
-                </aside>
+                </section>
             </div>
-        </div>
         </div>
 
     </div>
@@ -793,7 +754,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260617-label1"></script>
+    <script src="script.js?v=20260623-auto-select-tabs"></script>
 </body>
 
 </html>

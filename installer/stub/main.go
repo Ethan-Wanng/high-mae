@@ -53,14 +53,20 @@ func run() error {
 		}
 		installDir = selectedDir
 	}
-	if strings.TrimSpace(installDir) == "" {
+	installDir = strings.TrimSpace(installDir)
+	if installDir == "" {
 		return nil
+	}
+	var err error
+	installDir, err = filepath.Abs(installDir)
+	if err != nil {
+		return err
 	}
 
 	if !options.silent {
 		confirm := messageBox(
 			"wing installer",
-			fmt.Sprintf("wing 将安装到:\n\n%s\n\n如果该目录已存在旧版本文件，将会被覆盖。", installDir),
+			fmt.Sprintf("wing 将安装到:\n\n%s\n\n如果该目录已存在旧版本文件，将会被覆盖；如果旧版本正在运行，会先自动关闭。", installDir),
 			mbOKCancel|mbIconInfo,
 		)
 		if confirm != idOK {
@@ -167,29 +173,30 @@ exit 2
 }
 
 func installPayload(installDir string) error {
-	if err := os.MkdirAll(installDir, 0o755); err != nil {
+	root, err := filepath.Abs(installDir)
+	if err != nil {
 		return err
 	}
 
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	_ = stopInstalledProcesses(root)
+
 	for _, name := range []string{"flutter_ui"} {
-		path := filepath.Join(installDir, name)
+		path := filepath.Join(root, name)
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("清理旧文件失败 %s: %w", path, err)
 		}
 	}
 	for _, name := range []string{"wing.exe", "libcronet.dll"} {
-		path := filepath.Join(installDir, name)
+		path := filepath.Join(root, name)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("清理旧文件失败 %s: %w", path, err)
 		}
 	}
 
 	reader, err := zip.NewReader(bytes.NewReader(payloadZip), int64(len(payloadZip)))
-	if err != nil {
-		return err
-	}
-
-	root, err := filepath.Abs(installDir)
 	if err != nil {
 		return err
 	}
@@ -213,6 +220,36 @@ func installPayload(installDir string) error {
 		}
 	}
 	return nil
+}
+
+func stopInstalledProcesses(installDir string) error {
+	root, err := filepath.Abs(installDir)
+	if err != nil {
+		return err
+	}
+
+	script := fmt.Sprintf(`
+$ErrorActionPreference = 'SilentlyContinue'
+$root = [System.IO.Path]::GetFullPath(%s).TrimEnd('\') + '\'
+Get-Process -Name 'wing','wing_ui' -ErrorAction SilentlyContinue | Where-Object {
+    $processPath = $null
+    try { $processPath = $_.Path } catch { $processPath = $null }
+    if ($processPath) {
+        $fullProcessPath = [System.IO.Path]::GetFullPath($processPath)
+        $fullProcessPath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)
+    } else {
+        $false
+    }
+} | ForEach-Object {
+    $targetId = $_.Id
+    Stop-Process -Id $targetId -Force -ErrorAction SilentlyContinue
+    try { Wait-Process -Id $targetId -Timeout 10 -ErrorAction SilentlyContinue } catch {}
+}
+`, powershellString(root))
+
+	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	return cmd.Run()
 }
 
 func extractFile(file *zip.File, target string) error {
