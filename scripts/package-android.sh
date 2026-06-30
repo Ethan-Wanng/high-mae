@@ -2,8 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${WING_VERSION:-1.0.4.8}"
-BUILD_NUMBER="${FLUTTER_BUILD_NUMBER:-4080}"
+VERSION="${WING_VERSION:-1.0.5}"
+BUILD_NUMBER="${FLUTTER_BUILD_NUMBER:-1005}"
+FLUTTER_BUILD_NAME="${FLUTTER_BUILD_NAME:-$VERSION}"
+if [[ "$FLUTTER_BUILD_NAME" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.[0-9]+(\.[0-9]+)?$ ]]; then
+  FLUTTER_BUILD_NAME="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+fi
 DIST="$ROOT/dist"
 APK="$DIST/wing-${VERSION}-android-universal.apk"
 
@@ -16,7 +20,7 @@ mkdir -p "$DIST"
 
 pushd "$ROOT/flutter_ui" >/dev/null
 flutter pub get
-flutter build apk --release --build-name "$VERSION" --build-number "$BUILD_NUMBER"
+flutter build apk --release --build-name "$FLUTTER_BUILD_NAME" --build-number "$BUILD_NUMBER"
 popd >/dev/null
 
 cp "$ROOT/flutter_ui/build/app/outputs/flutter-apk/app-release.apk" "$APK"

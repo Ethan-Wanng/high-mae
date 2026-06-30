@@ -392,11 +392,22 @@ func parseLinkNodes(content string) []Node {
 				nodes = append(nodes, n)
 			}
 		default:
-			fmt.Printf("⚠️ 跳过不支持的链接格式: %s\n", line)
+			fmt.Printf("⚠️ 跳过不支持的链接格式: %s\n", redactedLinkSummary(line))
 		}
 	}
 
 	return nodes
+}
+
+func redactedLinkSummary(raw string) string {
+	clean := strings.TrimSpace(raw)
+	if clean == "" {
+		return "<empty>"
+	}
+	if idx := strings.Index(clean, "://"); idx > 0 {
+		return clean[:idx] + "://<redacted>"
+	}
+	return fmt.Sprintf("<redacted, %d bytes>", len(clean))
 }
 
 func normalizeYAMLNodes(nodes []Node) []Node {

@@ -229,18 +229,21 @@ func doSubscriptionRequest(req *http.Request) (LoadInputResult, error) {
 
 	for _, attempt := range attempts {
 		clone := req.Clone(req.Context())
+		transport := subscriptionTransport(attempt.proxy, attempt.http2)
 		client := &http.Client{
 			Timeout:   20 * time.Second,
-			Transport: subscriptionTransport(attempt.proxy, attempt.http2),
+			Transport: transport,
 		}
 		resp, err := client.Do(clone)
 		if err != nil {
+			transport.CloseIdleConnections()
 			lastErr = fmt.Errorf("%s: %w", attempt.name, err)
 			continue
 		}
 
 		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		transport.CloseIdleConnections()
 		if readErr != nil {
 			lastErr = fmt.Errorf("%s: %w", attempt.name, readErr)
 			continue

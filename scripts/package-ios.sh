@@ -2,8 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${WING_VERSION:-1.0.4.8}"
-BUILD_NUMBER="${FLUTTER_BUILD_NUMBER:-4080}"
+VERSION="${WING_VERSION:-1.0.5}"
+BUILD_NUMBER="${FLUTTER_BUILD_NUMBER:-1005}"
+FLUTTER_BUILD_NAME="${FLUTTER_BUILD_NAME:-$VERSION}"
+if [[ "$FLUTTER_BUILD_NAME" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.[0-9]+(\.[0-9]+)?$ ]]; then
+  FLUTTER_BUILD_NAME="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+fi
 DIST="$ROOT/dist"
 UNSIGNED_IPA="$DIST/wing-${VERSION}-ios-unsigned.ipa"
 SIGNED_IPA="$DIST/wing-${VERSION}-ios.ipa"
@@ -29,11 +33,11 @@ if [[ -n "$EXPORT_OPTIONS_PLIST" ]]; then
     echo "IOS_EXPORT_OPTIONS_PLIST does not exist: $EXPORT_OPTIONS_PLIST" >&2
     exit 1
   fi
-  flutter build ipa --release --build-name "$VERSION" --build-number "$BUILD_NUMBER" --export-options-plist "$EXPORT_OPTIONS_PLIST"
+  flutter build ipa --release --build-name "$FLUTTER_BUILD_NAME" --build-number "$BUILD_NUMBER" --export-options-plist "$EXPORT_OPTIONS_PLIST"
   cp build/ios/ipa/*.ipa "$SIGNED_IPA"
   echo "Signed iOS IPA generated: $SIGNED_IPA"
 else
-  flutter build ios --release --no-codesign --build-name "$VERSION" --build-number "$BUILD_NUMBER"
+  flutter build ios --release --no-codesign --build-name "$FLUTTER_BUILD_NAME" --build-number "$BUILD_NUMBER"
   rm -rf Payload
   mkdir -p Payload
   cp -R build/ios/iphoneos/Runner.app Payload/

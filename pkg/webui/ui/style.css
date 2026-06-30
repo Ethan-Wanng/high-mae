@@ -1649,7 +1649,7 @@ input:checked + .slider:before {
 
 .help-jump-button-primary {
     color: var(--node-selected-button-text, #04101f);
-    background: var(--node-selected-button-bg, linear-gradient(135deg, #2fd4ff, #18c981));
+    background: var(--node-selected-button-bg, linear-gradient(135deg, #8fbfcc, #638d99));
     border-color: transparent;
 }
 
@@ -5888,7 +5888,7 @@ body.tabs-collapsed .connection-card .connection-orb {
     }
 }
 
-/* ── 1.0.4.8 interaction polish: sticky island, compact settings, rectangular cards ── */
+/* Interaction polish: sticky island, compact settings, rectangular cards. */
 .container {
     padding-top: 0;
 }
@@ -6815,30 +6815,30 @@ body.tabs-collapsed .connection-card .connection-orb {
 }
 
 body[data-network-state="proxy"] .island-center {
-    --island-accent: #00b8ff;
-    --island-border: rgba(88, 213, 255, 0.36);
-    --island-glow: rgba(0, 184, 255, 0.25);
+    --island-accent: #74b7d2;
+    --island-border: rgba(116, 183, 210, 0.32);
+    --island-glow: rgba(116, 183, 210, 0.18);
     --island-bg:
-        linear-gradient(180deg, rgba(10, 43, 72, 0.86), rgba(2, 18, 36, 0.78)),
-        rgba(0, 184, 255, 0.06);
+        linear-gradient(180deg, rgba(20, 48, 60, 0.82), rgba(8, 22, 30, 0.76)),
+        rgba(116, 183, 210, 0.06);
 }
 
 body[data-network-state="tun"] .island-center {
-    --island-accent: #f6d44d;
-    --island-border: rgba(246, 212, 77, 0.42);
-    --island-glow: rgba(246, 212, 77, 0.18);
+    --island-accent: #d1b66b;
+    --island-border: rgba(209, 182, 107, 0.36);
+    --island-glow: rgba(209, 182, 107, 0.18);
     --island-bg:
-        linear-gradient(180deg, rgba(72, 55, 10, 0.82), rgba(26, 19, 5, 0.78)),
-        rgba(246, 212, 77, 0.07);
+        linear-gradient(180deg, rgba(58, 48, 20, 0.82), rgba(25, 19, 7, 0.76)),
+        rgba(209, 182, 107, 0.07);
 }
 
 body[data-network-state="proxy_tun"] .island-center {
-    --island-accent: #a78bfa;
-    --island-border: rgba(167, 139, 250, 0.44);
-    --island-glow: rgba(139, 92, 246, 0.25);
+    --island-accent: #a18bcf;
+    --island-border: rgba(180, 154, 216, 0.42);
+    --island-glow: rgba(161, 139, 207, 0.20);
     --island-bg:
-        linear-gradient(180deg, rgba(48, 32, 95, 0.84), rgba(15, 9, 34, 0.78)),
-        rgba(139, 92, 246, 0.08);
+        linear-gradient(180deg, rgba(48, 38, 74, 0.82), rgba(20, 14, 35, 0.76)),
+        rgba(161, 139, 207, 0.07);
 }
 
 .island-center:hover,
@@ -7105,39 +7105,39 @@ body[data-network-state="direct"] {
 }
 
 body[data-network-state="proxy"] {
-    --island-accent: #00b8ff;
-    --island-border: rgba(88, 213, 255, 0.36);
-    --island-glow: rgba(0, 184, 255, 0.25);
+    --island-accent: #74b7d2;
+    --island-border: rgba(116, 183, 210, 0.32);
+    --island-glow: rgba(116, 183, 210, 0.18);
     --island-bg:
-        linear-gradient(180deg, rgba(10, 43, 72, 0.86), rgba(2, 18, 36, 0.78)),
-        rgba(0, 184, 255, 0.06);
+        linear-gradient(180deg, rgba(20, 48, 60, 0.82), rgba(8, 22, 30, 0.76)),
+        rgba(116, 183, 210, 0.06);
     background:
-        radial-gradient(circle at 16% 16%, rgba(0, 184, 255, 0.22), transparent 32%),
-        linear-gradient(145deg, rgba(1, 12, 28, 0.98), rgba(6, 36, 68, 0.96));
+        radial-gradient(circle at 16% 16%, rgba(116, 183, 210, 0.17), transparent 32%),
+        linear-gradient(145deg, rgba(5, 13, 18, 0.98), rgba(15, 38, 49, 0.96));
 }
 
 body[data-network-state="tun"] {
-    --island-accent: #f6d44d;
-    --island-border: rgba(246, 212, 77, 0.42);
-    --island-glow: rgba(246, 212, 77, 0.18);
+    --island-accent: #d1b66b;
+    --island-border: rgba(209, 182, 107, 0.36);
+    --island-glow: rgba(209, 182, 107, 0.18);
     --island-bg:
-        linear-gradient(180deg, rgba(72, 55, 10, 0.82), rgba(26, 19, 5, 0.78)),
-        rgba(246, 212, 77, 0.07);
+        linear-gradient(180deg, rgba(58, 48, 20, 0.82), rgba(25, 19, 7, 0.76)),
+        rgba(209, 182, 107, 0.07);
     background:
-        radial-gradient(circle at 16% 16%, rgba(246, 212, 77, 0.18), transparent 30%),
-        linear-gradient(145deg, rgba(18, 13, 4, 0.98), rgba(46, 35, 8, 0.96));
+        radial-gradient(circle at 16% 16%, rgba(209, 182, 107, 0.17), transparent 30%),
+        linear-gradient(145deg, rgba(18, 13, 4, 0.98), rgba(43, 34, 12, 0.96));
 }
 
 body[data-network-state="proxy_tun"] {
-    --island-accent: #a78bfa;
-    --island-border: rgba(167, 139, 250, 0.44);
-    --island-glow: rgba(139, 92, 246, 0.25);
+    --island-accent: #a18bcf;
+    --island-border: rgba(180, 154, 216, 0.42);
+    --island-glow: rgba(161, 139, 207, 0.20);
     --island-bg:
-        linear-gradient(180deg, rgba(48, 32, 95, 0.84), rgba(15, 9, 34, 0.78)),
-        rgba(139, 92, 246, 0.08);
+        linear-gradient(180deg, rgba(48, 38, 74, 0.82), rgba(20, 14, 35, 0.76)),
+        rgba(161, 139, 207, 0.07);
     background:
-        radial-gradient(circle at 16% 16%, rgba(167, 139, 250, 0.22), transparent 32%),
-        linear-gradient(145deg, rgba(10, 6, 24, 0.98), rgba(32, 20, 72, 0.96));
+        radial-gradient(circle at 16% 16%, rgba(161, 139, 207, 0.18), transparent 32%),
+        linear-gradient(145deg, rgba(12, 8, 23, 0.98), rgba(34, 27, 54, 0.96));
 }
 
 body[data-network-state] .header {
@@ -8728,76 +8728,76 @@ body textarea::placeholder {
 
 /* Light theme network palettes: flat state color with readable foregrounds. */
 :root[data-theme="light"] body[data-network-state="direct"] {
-    --state-bg: #ffffff;
-    --state-surface: rgba(15, 23, 42, 0.035);
-    --state-surface-strong: rgba(15, 23, 42, 0.055);
-    --state-text: #0f172a;
-    --state-text-sub: #475569;
-    --state-accent: #334155;
-    --state-button: #1f2937;
+    --state-bg: #f7fbfc;
+    --state-surface: rgba(95, 135, 147, 0.060);
+    --state-surface-strong: rgba(95, 135, 147, 0.105);
+    --state-text: #14272e;
+    --state-text-sub: #46636d;
+    --state-accent: #5f8793;
+    --state-button: #527984;
     --text-main: var(--state-text);
     --text-sub: var(--state-text-sub);
-    --text-dim: #64748b;
+    --text-dim: #6b8790;
     --accent: var(--state-accent);
-    --accent-2: #475569;
-    --accent-hover: #111827;
+    --accent-2: #86b5c3;
+    --accent-hover: #466d78;
     --island-accent: var(--state-accent);
     background: var(--state-bg) !important;
     color: var(--state-text) !important;
 }
 
 :root[data-theme="light"] body[data-network-state="proxy"] {
-    --state-bg: #e8f6ff;
-    --state-surface: rgba(2, 132, 199, 0.065);
-    --state-surface-strong: rgba(2, 132, 199, 0.105);
-    --state-text: #06324f;
-    --state-text-sub: #23506e;
-    --state-accent: #0077b6;
-    --state-button: #005f99;
+    --state-bg: #eef8fb;
+    --state-surface: rgba(79, 142, 166, 0.070);
+    --state-surface-strong: rgba(79, 142, 166, 0.118);
+    --state-text: #132f3b;
+    --state-text-sub: #416471;
+    --state-accent: #4f8ea6;
+    --state-button: #427b91;
     --text-main: var(--state-text);
     --text-sub: var(--state-text-sub);
-    --text-dim: #4d7894;
+    --text-dim: #668995;
     --accent: var(--state-accent);
-    --accent-2: #0b5f93;
-    --accent-hover: #005f99;
+    --accent-2: #74b7d2;
+    --accent-hover: #366a7d;
     --island-accent: var(--state-accent);
     background: var(--state-bg) !important;
     color: var(--state-text) !important;
 }
 
 :root[data-theme="light"] body[data-network-state="tun"] {
-    --state-bg: #fff4c7;
-    --state-surface: rgba(146, 101, 0, 0.070);
-    --state-surface-strong: rgba(146, 101, 0, 0.110);
-    --state-text: #3f2f02;
-    --state-text-sub: #6f5205;
-    --state-accent: #9a6b00;
-    --state-button: #805600;
+    --state-bg: #fff9e8;
+    --state-surface: rgba(167, 137, 67, 0.070);
+    --state-surface-strong: rgba(167, 137, 67, 0.118);
+    --state-text: #35290e;
+    --state-text-sub: #6d5a26;
+    --state-accent: #a78943;
+    --state-button: #927636;
     --text-main: var(--state-text);
     --text-sub: var(--state-text-sub);
-    --text-dim: #8a6c1f;
+    --text-dim: #8c7434;
     --accent: var(--state-accent);
-    --accent-2: #805600;
-    --accent-hover: #6a4700;
+    --accent-2: #d1b66b;
+    --accent-hover: #80662d;
     --island-accent: var(--state-accent);
     background: var(--state-bg) !important;
     color: var(--state-text) !important;
 }
 
 :root[data-theme="light"] body[data-network-state="proxy_tun"] {
-    --state-bg: #f0eaff;
-    --state-surface: rgba(109, 40, 217, 0.065);
-    --state-surface-strong: rgba(109, 40, 217, 0.105);
-    --state-text: #332064;
-    --state-text-sub: #574292;
-    --state-accent: #7650d9;
-    --state-button: #5f3cc3;
+    --state-bg: #f7f2ff;
+    --state-surface: rgba(120, 100, 166, 0.070);
+    --state-surface-strong: rgba(120, 100, 166, 0.120);
+    --state-text: #2f2445;
+    --state-text-sub: #625181;
+    --state-accent: #7864a6;
+    --state-button: #685590;
     --text-main: var(--state-text);
     --text-sub: var(--state-text-sub);
-    --text-dim: #715dac;
+    --text-dim: #7f6d9e;
     --accent: var(--state-accent);
-    --accent-2: #5f3cc3;
-    --accent-hover: #4f2fb0;
+    --accent-2: #a18bcf;
+    --accent-hover: #5b497f;
     --island-accent: var(--state-accent);
     background: var(--state-bg) !important;
     color: var(--state-text) !important;
@@ -8878,76 +8878,76 @@ body textarea::placeholder {
 
 @media (prefers-color-scheme: light) {
     :root[data-theme="system"] body[data-network-state="direct"] {
-        --state-bg: #ffffff;
-        --state-surface: rgba(15, 23, 42, 0.035);
-        --state-surface-strong: rgba(15, 23, 42, 0.055);
-        --state-text: #0f172a;
-        --state-text-sub: #475569;
-        --state-accent: #334155;
-        --state-button: #1f2937;
+        --state-bg: #f7fbfc;
+        --state-surface: rgba(95, 135, 147, 0.060);
+        --state-surface-strong: rgba(95, 135, 147, 0.105);
+        --state-text: #14272e;
+        --state-text-sub: #46636d;
+        --state-accent: #5f8793;
+        --state-button: #527984;
         --text-main: var(--state-text);
         --text-sub: var(--state-text-sub);
-        --text-dim: #64748b;
+        --text-dim: #6b8790;
         --accent: var(--state-accent);
-        --accent-2: #475569;
-        --accent-hover: #111827;
+        --accent-2: #86b5c3;
+        --accent-hover: #466d78;
         --island-accent: var(--state-accent);
         background: var(--state-bg) !important;
         color: var(--state-text) !important;
     }
 
     :root[data-theme="system"] body[data-network-state="proxy"] {
-        --state-bg: #e8f6ff;
-        --state-surface: rgba(2, 132, 199, 0.065);
-        --state-surface-strong: rgba(2, 132, 199, 0.105);
-        --state-text: #06324f;
-        --state-text-sub: #23506e;
-        --state-accent: #0077b6;
-        --state-button: #005f99;
+        --state-bg: #eef8fb;
+        --state-surface: rgba(79, 142, 166, 0.070);
+        --state-surface-strong: rgba(79, 142, 166, 0.118);
+        --state-text: #132f3b;
+        --state-text-sub: #416471;
+        --state-accent: #4f8ea6;
+        --state-button: #427b91;
         --text-main: var(--state-text);
         --text-sub: var(--state-text-sub);
-        --text-dim: #4d7894;
+        --text-dim: #668995;
         --accent: var(--state-accent);
-        --accent-2: #0b5f93;
-        --accent-hover: #005f99;
+        --accent-2: #74b7d2;
+        --accent-hover: #366a7d;
         --island-accent: var(--state-accent);
         background: var(--state-bg) !important;
         color: var(--state-text) !important;
     }
 
     :root[data-theme="system"] body[data-network-state="tun"] {
-        --state-bg: #fff4c7;
-        --state-surface: rgba(146, 101, 0, 0.070);
-        --state-surface-strong: rgba(146, 101, 0, 0.110);
-        --state-text: #3f2f02;
-        --state-text-sub: #6f5205;
-        --state-accent: #9a6b00;
-        --state-button: #805600;
+        --state-bg: #fff9e8;
+        --state-surface: rgba(167, 137, 67, 0.070);
+        --state-surface-strong: rgba(167, 137, 67, 0.118);
+        --state-text: #35290e;
+        --state-text-sub: #6d5a26;
+        --state-accent: #a78943;
+        --state-button: #927636;
         --text-main: var(--state-text);
         --text-sub: var(--state-text-sub);
-        --text-dim: #8a6c1f;
+        --text-dim: #8c7434;
         --accent: var(--state-accent);
-        --accent-2: #805600;
-        --accent-hover: #6a4700;
+        --accent-2: #d1b66b;
+        --accent-hover: #80662d;
         --island-accent: var(--state-accent);
         background: var(--state-bg) !important;
         color: var(--state-text) !important;
     }
 
     :root[data-theme="system"] body[data-network-state="proxy_tun"] {
-        --state-bg: #f0eaff;
-        --state-surface: rgba(109, 40, 217, 0.065);
-        --state-surface-strong: rgba(109, 40, 217, 0.105);
-        --state-text: #332064;
-        --state-text-sub: #574292;
-        --state-accent: #7650d9;
-        --state-button: #5f3cc3;
+        --state-bg: #f7f2ff;
+        --state-surface: rgba(120, 100, 166, 0.070);
+        --state-surface-strong: rgba(120, 100, 166, 0.120);
+        --state-text: #2f2445;
+        --state-text-sub: #625181;
+        --state-accent: #7864a6;
+        --state-button: #685590;
         --text-main: var(--state-text);
         --text-sub: var(--state-text-sub);
-        --text-dim: #715dac;
+        --text-dim: #7f6d9e;
         --accent: var(--state-accent);
-        --accent-2: #5f3cc3;
-        --accent-hover: #4f2fb0;
+        --accent-2: #a18bcf;
+        --accent-hover: #5b497f;
         --island-accent: var(--state-accent);
         background: var(--state-bg) !important;
         color: var(--state-text) !important;
@@ -9033,7 +9033,7 @@ body textarea::placeholder {
     --wing-island-clearance-expanded: 158px;
     --wing-tab-tray-bg: rgba(2, 8, 18, 0.70);
     --wing-tab-hover-bg: rgba(255, 255, 255, 0.075);
-    --wing-tab-active-bg: linear-gradient(135deg, #2fd4ff, #18c981);
+    --wing-tab-active-bg: linear-gradient(135deg, #74b7d2, #4f8ea6);
     --wing-tab-active-fg: #04101f;
 }
 
@@ -9127,7 +9127,7 @@ body[data-network-state] .settings-subtab:hover:not(.active) {
 :root[data-theme="light"] body[data-network-state] {
     --wing-tab-tray-bg: var(--state-surface, rgba(255, 255, 255, 0.72));
     --wing-tab-hover-bg: var(--state-surface-strong, rgba(255, 255, 255, 0.48));
-    --wing-tab-active-bg: var(--state-surface-strong, linear-gradient(135deg, #2fd4ff, #18c981));
+    --wing-tab-active-bg: var(--state-surface-strong, linear-gradient(135deg, #74b7d2, #4f8ea6));
     --wing-tab-active-fg: var(--state-text, #071427);
 }
 
@@ -9136,7 +9136,7 @@ body[data-network-state] .settings-subtab:hover:not(.active) {
     :root[data-theme="system"] body[data-network-state] {
         --wing-tab-tray-bg: var(--state-surface, rgba(255, 255, 255, 0.72));
         --wing-tab-hover-bg: var(--state-surface-strong, rgba(255, 255, 255, 0.48));
-        --wing-tab-active-bg: var(--state-surface-strong, linear-gradient(135deg, #2fd4ff, #18c981));
+        --wing-tab-active-bg: var(--state-surface-strong, linear-gradient(135deg, #74b7d2, #4f8ea6));
         --wing-tab-active-fg: var(--state-text, #071427);
     }
 }
@@ -9164,68 +9164,68 @@ body[data-network-state] .settings-subtab:hover:not(.active) {
 
 /* Mode-aware selected node state. Scoped to node rows; does not touch island layout. */
 body {
-    --node-selected-accent: #2fd4ff;
-    --node-selected-accent-2: #0ea5e9;
-    --node-selected-text: #e8f8ff;
+    --node-selected-accent: #74b7d2;
+    --node-selected-accent-2: #4f8ea6;
+    --node-selected-text: #edf9fc;
     --node-selected-bg:
-        linear-gradient(135deg, rgba(47, 212, 255, 0.20), rgba(14, 165, 233, 0.09)),
+        linear-gradient(135deg, rgba(116, 183, 210, 0.18), rgba(79, 142, 166, 0.09)),
         linear-gradient(0deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.055));
-    --node-selected-button-bg: linear-gradient(135deg, #2fd4ff, #0ea5e9);
-    --node-selected-button-text: #031525;
-    --node-selected-border: rgba(47, 212, 255, 0.72);
-    --node-selected-glow: rgba(47, 212, 255, 0.26);
+    --node-selected-button-bg: linear-gradient(135deg, #74b7d2, #4f8ea6);
+    --node-selected-button-text: #071922;
+    --node-selected-border: rgba(116, 183, 210, 0.68);
+    --node-selected-glow: rgba(116, 183, 210, 0.20);
 }
 
 body[data-network-state="direct"] {
-    --node-selected-accent: #2fd4ff;
-    --node-selected-accent-2: #0ea5e9;
-    --node-selected-text: #e8f8ff;
+    --node-selected-accent: #74b7d2;
+    --node-selected-accent-2: #4f8ea6;
+    --node-selected-text: #edf9fc;
     --node-selected-bg:
-        linear-gradient(135deg, rgba(47, 212, 255, 0.22), rgba(14, 165, 233, 0.10)),
+        linear-gradient(135deg, rgba(116, 183, 210, 0.20), rgba(79, 142, 166, 0.10)),
         linear-gradient(0deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.055));
-    --node-selected-button-bg: linear-gradient(135deg, #2fd4ff, #0ea5e9);
-    --node-selected-button-text: #031525;
-    --node-selected-border: rgba(47, 212, 255, 0.76);
-    --node-selected-glow: rgba(47, 212, 255, 0.28);
+    --node-selected-button-bg: linear-gradient(135deg, #74b7d2, #4f8ea6);
+    --node-selected-button-text: #071922;
+    --node-selected-border: rgba(116, 183, 210, 0.70);
+    --node-selected-glow: rgba(116, 183, 210, 0.22);
 }
 
 body[data-network-state="proxy"] {
-    --node-selected-accent: #f6d44d;
-    --node-selected-accent-2: #f59e0b;
-    --node-selected-text: #fff6cf;
+    --node-selected-accent: #d1b66b;
+    --node-selected-accent-2: #a78943;
+    --node-selected-text: #fff4d0;
     --node-selected-bg:
-        linear-gradient(135deg, rgba(246, 212, 77, 0.22), rgba(245, 158, 11, 0.10)),
+        linear-gradient(135deg, rgba(209, 182, 107, 0.21), rgba(167, 137, 67, 0.10)),
         linear-gradient(0deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.055));
-    --node-selected-button-bg: linear-gradient(135deg, #f6d44d, #f59e0b);
-    --node-selected-button-text: #201400;
-    --node-selected-border: rgba(246, 212, 77, 0.78);
-    --node-selected-glow: rgba(246, 212, 77, 0.24);
+    --node-selected-button-bg: linear-gradient(135deg, #d1b66b, #a78943);
+    --node-selected-button-text: #211704;
+    --node-selected-border: rgba(209, 182, 107, 0.70);
+    --node-selected-glow: rgba(209, 182, 107, 0.20);
 }
 
 body[data-network-state="tun"] {
-    --node-selected-accent: #a78bfa;
-    --node-selected-accent-2: #7c3aed;
+    --node-selected-accent: #a18bcf;
+    --node-selected-accent-2: #7864a6;
     --node-selected-text: #f3eeff;
     --node-selected-bg:
-        linear-gradient(135deg, rgba(167, 139, 250, 0.24), rgba(124, 58, 237, 0.12)),
+        linear-gradient(135deg, rgba(161, 139, 207, 0.23), rgba(120, 100, 166, 0.12)),
         linear-gradient(0deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.055));
-    --node-selected-button-bg: linear-gradient(135deg, #a78bfa, #7c3aed);
-    --node-selected-button-text: #12071f;
-    --node-selected-border: rgba(167, 139, 250, 0.78);
-    --node-selected-glow: rgba(167, 139, 250, 0.27);
+    --node-selected-button-bg: linear-gradient(135deg, #a18bcf, #7864a6);
+    --node-selected-button-text: #171022;
+    --node-selected-border: rgba(161, 139, 207, 0.72);
+    --node-selected-glow: rgba(161, 139, 207, 0.22);
 }
 
 body[data-network-state="proxy_tun"] {
-    --node-selected-accent: #2fd4ff;
-    --node-selected-accent-2: #a78bfa;
+    --node-selected-accent: #f0c020;
+    --node-selected-accent-2: #2090ff;
     --node-selected-text: #f7fbff;
     --node-selected-bg:
-        linear-gradient(135deg, rgba(47, 212, 255, 0.20), rgba(246, 212, 77, 0.16) 48%, rgba(167, 139, 250, 0.22)),
+        linear-gradient(135deg, rgba(32, 144, 255, 0.16) 0%, rgba(240, 192, 32, 0.13) 45%, rgba(240, 160, 64, 0.11) 66%, rgba(176, 64, 224, 0.18) 100%),
         linear-gradient(0deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.06));
-    --node-selected-button-bg: linear-gradient(135deg, #2fd4ff 0%, #f6d44d 48%, #a78bfa 100%);
-    --node-selected-button-text: #06111f;
-    --node-selected-border: rgba(167, 139, 250, 0.80);
-    --node-selected-glow: rgba(122, 216, 255, 0.24);
+    --node-selected-button-bg: linear-gradient(135deg, #2090ff 0%, #f0c020 44%, #f0a040 66%, #b040e0 100%);
+    --node-selected-button-text: #08111f;
+    --node-selected-border: rgba(240, 192, 32, 0.58);
+    --node-selected-glow: rgba(32, 144, 255, 0.16);
 }
 
 body .auto-node-item.is-selected,
@@ -9668,28 +9668,32 @@ body .help-summary-card {
 }
 
 /* Narrow mode color pass: keep homepage tabs neutral, color only explicit mode controls. */
-body .island-mode-strip .proxy-mode-button[data-preset="direct"] {
-    --preset-accent: #2fd4ff;
-    --preset-bg: linear-gradient(135deg, #2fd4ff, #0ea5e9);
-    --preset-text: #031525;
+body .proxy-mode-button[data-preset="direct"] {
+    --preset-accent: #74b7d2;
+    --preset-accent-2: #4f8ea6;
+    --preset-bg: linear-gradient(135deg, #74b7d2, #4f8ea6);
+    --preset-text: #071922;
 }
 
-body .island-mode-strip .proxy-mode-button[data-preset="proxy"] {
-    --preset-accent: #f6d44d;
-    --preset-bg: linear-gradient(135deg, #f6d44d, #f59e0b);
-    --preset-text: #201400;
+body .proxy-mode-button[data-preset="proxy"] {
+    --preset-accent: #d1b66b;
+    --preset-accent-2: #a78943;
+    --preset-bg: linear-gradient(135deg, #d1b66b, #a78943);
+    --preset-text: #211704;
 }
 
-body .island-mode-strip .proxy-mode-button[data-preset="tun"] {
-    --preset-accent: #a78bfa;
-    --preset-bg: linear-gradient(135deg, #a78bfa, #7c3aed);
-    --preset-text: #12071f;
+body .proxy-mode-button[data-preset="tun"] {
+    --preset-accent: #a18bcf;
+    --preset-accent-2: #7864a6;
+    --preset-bg: linear-gradient(135deg, #a18bcf, #7864a6);
+    --preset-text: #171022;
 }
 
-body .island-mode-strip .proxy-mode-button[data-preset="proxy_tun"] {
-    --preset-accent: #d8c7ff;
-    --preset-bg: linear-gradient(135deg, #2fd4ff 0%, #f6d44d 48%, #a78bfa 100%);
-    --preset-text: #06111f;
+body .proxy-mode-button[data-preset="proxy_tun"] {
+    --preset-accent: #f0c020;
+    --preset-accent-2: #2090ff;
+    --preset-bg: linear-gradient(135deg, #2090ff 0%, #f0c020 44%, #f0a040 66%, #b040e0 100%);
+    --preset-text: #08111f;
 }
 
 body.island-mode-expanded .island-mode-strip .proxy-mode-button[data-preset] {
@@ -9700,8 +9704,8 @@ body.island-mode-expanded .island-mode-strip .proxy-mode-button[data-preset] {
 }
 
 body.island-mode-expanded .island-mode-strip .proxy-mode-button[data-preset="proxy_tun"]:not(.active) {
-    background: linear-gradient(135deg, rgba(47, 212, 255, 0.12), rgba(246, 212, 77, 0.10) 48%, rgba(167, 139, 250, 0.16)) !important;
-    border-color: rgba(167, 139, 250, 0.42) !important;
+    background: linear-gradient(135deg, rgba(32, 144, 255, 0.11) 0%, rgba(240, 192, 32, 0.10) 44%, rgba(240, 160, 64, 0.09) 66%, rgba(176, 64, 224, 0.14) 100%) !important;
+    border-color: rgba(240, 192, 32, 0.34) !important;
 }
 
 body.island-mode-expanded .island-mode-strip .proxy-mode-button[data-preset].active {
@@ -9716,21 +9720,21 @@ body.island-mode-expanded .island-mode-strip .proxy-mode-button[data-preset] .pr
 }
 
 body .settings-panel[data-settings-section="run"] #chkProxy:checked + .slider {
-    background: linear-gradient(135deg, #f6d44d, #f59e0b) !important;
-    border-color: rgba(246, 212, 77, 0.58) !important;
-    box-shadow: 0 0 0 3px rgba(246, 212, 77, 0.16) !important;
+    background: linear-gradient(135deg, #d1b66b, #a78943) !important;
+    border-color: rgba(209, 182, 107, 0.58) !important;
+    box-shadow: 0 0 0 3px rgba(209, 182, 107, 0.14) !important;
 }
 
 body .settings-panel[data-settings-section="run"] #chkMode:checked + .slider {
-    background: linear-gradient(135deg, #2fd4ff, #0ea5e9) !important;
-    border-color: rgba(47, 212, 255, 0.54) !important;
-    box-shadow: 0 0 0 3px rgba(47, 212, 255, 0.14) !important;
+    background: linear-gradient(135deg, #74b7d2, #4f8ea6) !important;
+    border-color: rgba(116, 183, 210, 0.54) !important;
+    box-shadow: 0 0 0 3px rgba(116, 183, 210, 0.13) !important;
 }
 
 body .settings-panel[data-settings-section="run"] #chkTun:checked + .slider {
-    background: linear-gradient(135deg, #a78bfa, #7c3aed) !important;
-    border-color: rgba(167, 139, 250, 0.58) !important;
-    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.15) !important;
+    background: linear-gradient(135deg, #a18bcf, #7864a6) !important;
+    border-color: rgba(161, 139, 207, 0.58) !important;
+    box-shadow: 0 0 0 3px rgba(161, 139, 207, 0.14) !important;
 }
 
 body .settings-panel[data-settings-section="run"] #chkWebRTC:checked + .slider {
@@ -9854,4 +9858,1372 @@ body[data-network-state] .settings-panel[data-settings-section="run"] #chkWebRTC
     background: var(--node-selected-button-bg) !important;
     border-color: var(--mode-button-border-strong) !important;
     box-shadow: 0 10px 24px var(--node-selected-glow) !important;
+}
+
+/* Home connection panel: reference-image layout, without an outer boundary line. */
+:root {
+    --home-bg-accent: #6d7a7f;
+    --home-bg-core: rgba(17, 19, 19, 0.72);
+    --home-bg-mid: rgba(6, 7, 7, 0.94);
+    --home-bg-outer: #020303;
+    --home-card-core: rgba(26, 28, 27, 0.76);
+    --home-card-mid: rgba(8, 9, 8, 0.84);
+    --home-card-outer: rgba(4, 5, 4, 0.90);
+    --home-mode-accent: #74b7d2;
+    --home-mode-accent-2: #4f8ea6;
+    --home-mode-accent-3: #a8cad6;
+    --home-mode-text: #d9eef4;
+}
+
+body.tabs-collapsed .connection-stage {
+    min-height: calc(100vh - 72px) !important;
+    padding: 0 0 18px !important;
+    align-content: center !important;
+}
+
+body[data-network-state="direct"] {
+    --home-bg-accent: #6d7a7f;
+    --home-bg-core: rgba(17, 19, 19, 0.72);
+    --home-bg-mid: rgba(6, 7, 7, 0.94);
+    --home-bg-outer: #020303;
+    --home-card-core: rgba(26, 28, 27, 0.76);
+    --home-card-mid: rgba(8, 9, 8, 0.84);
+    --home-card-outer: rgba(4, 5, 4, 0.90);
+    --home-mode-accent: #74b7d2;
+    --home-mode-accent-2: #4f8ea6;
+    --home-mode-accent-3: #a8cad6;
+    --home-mode-text: #d9eef4;
+}
+
+body[data-network-state="proxy"] {
+    --home-bg-accent: #74b7d2;
+    --home-bg-core: rgba(20, 48, 60, 0.78);
+    --home-bg-mid: rgba(7, 17, 22, 0.94);
+    --home-bg-outer: #030709;
+    --home-card-core: rgba(19, 38, 46, 0.78);
+    --home-card-mid: rgba(7, 15, 19, 0.86);
+    --home-card-outer: rgba(3, 6, 8, 0.92);
+    --home-mode-accent: #d1b66b;
+    --home-mode-accent-2: #a78943;
+    --home-mode-accent-3: #ead79b;
+    --home-mode-text: #f2e7c4;
+}
+
+body[data-network-state="tun"] {
+    --home-bg-accent: #d1b66b;
+    --home-bg-core: rgba(48, 39, 15, 0.76);
+    --home-bg-mid: rgba(21, 16, 6, 0.94);
+    --home-bg-outer: #050402;
+    --home-card-core: rgba(45, 37, 15, 0.78);
+    --home-card-mid: rgba(17, 13, 5, 0.86);
+    --home-card-outer: rgba(6, 5, 2, 0.92);
+    --home-mode-accent: #a18bcf;
+    --home-mode-accent-2: #7864a6;
+    --home-mode-accent-3: #c8b6e7;
+    --home-mode-text: #e8defa;
+}
+
+body[data-network-state="proxy_tun"] {
+    --home-bg-accent: #a18bcf;
+    --home-bg-core: rgba(35, 27, 54, 0.78);
+    --home-bg-mid: rgba(14, 10, 22, 0.94);
+    --home-bg-outer: #040306;
+    --home-card-core: rgba(36, 29, 54, 0.78);
+    --home-card-mid: rgba(15, 11, 23, 0.86);
+    --home-card-outer: rgba(6, 5, 9, 0.92);
+    --home-mode-accent: #b040e0;
+    --home-mode-accent-2: #2090ff;
+    --home-mode-accent-3: #f0c020;
+    --home-mode-text: #f0e9ff;
+}
+
+body.tabs-collapsed {
+    background:
+        radial-gradient(circle at 50% 43%, color-mix(in srgb, var(--home-bg-accent) 18%, transparent), transparent 25%),
+        radial-gradient(circle at 50% 50%, var(--home-bg-core), var(--home-bg-mid) 64%, var(--home-bg-outer) 100%) !important;
+}
+
+body.tabs-collapsed[data-network-state],
+:root[data-theme="light"] body.tabs-collapsed[data-network-state],
+:root[data-theme="system"] body.tabs-collapsed[data-network-state] {
+    background:
+        radial-gradient(circle at 50% 43%, color-mix(in srgb, var(--home-bg-accent) 18%, transparent), transparent 25%),
+        radial-gradient(circle at 50% 50%, var(--home-bg-core), var(--home-bg-mid) 64%, var(--home-bg-outer) 100%) !important;
+}
+
+body.tabs-collapsed .connection-card,
+body.tabs-collapsed[data-network-state] .connection-card,
+:root[data-theme="light"] body.tabs-collapsed .connection-card {
+    width: min(980px, calc(100vw - 48px)) !important;
+    min-height: 300px !important;
+    grid-template-columns: 255px minmax(0, 1fr) !important;
+    grid-template-rows: minmax(214px, auto) 86px !important;
+    column-gap: 38px !important;
+    row-gap: 0 !important;
+    align-items: center !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background:
+        radial-gradient(circle at 55% 42%, color-mix(in srgb, var(--home-bg-accent) 20%, transparent), transparent 35%),
+        radial-gradient(circle at 55% 42%, var(--home-card-core), var(--home-card-mid) 68%, var(--home-card-outer) 100%) !important;
+    box-shadow:
+        0 26px 74px rgba(0, 0, 0, 0.32) !important;
+    backdrop-filter: blur(22px) saturate(132%) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(132%) !important;
+    overflow: hidden !important;
+}
+
+body.tabs-collapsed[data-network-state] .connection-card,
+:root[data-theme="light"] body.tabs-collapsed .connection-card[data-state],
+:root[data-theme="system"] body.tabs-collapsed .connection-card[data-state] {
+    background:
+        radial-gradient(circle at 55% 42%, color-mix(in srgb, var(--home-bg-accent) 20%, transparent), transparent 35%),
+        radial-gradient(circle at 55% 42%, var(--home-card-core), var(--home-card-mid) 68%, var(--home-card-outer) 100%) !important;
+}
+
+body.tabs-collapsed .connection-card::before {
+    display: block !important;
+    content: "" !important;
+    position: absolute !important;
+    inset: 0 !important;
+    pointer-events: none !important;
+    background:
+        linear-gradient(115deg, rgba(255,255,255,0.07), transparent 22%, rgba(255,255,255,0.025) 70%, transparent) !important;
+    opacity: 0.72 !important;
+}
+
+body.tabs-collapsed .connection-card::after {
+    display: none !important;
+    content: none !important;
+}
+
+body.tabs-collapsed .connection-orb,
+body.tabs-collapsed .connection-card .connection-orb {
+    width: 255px !important;
+    height: 214px !important;
+    display: grid !important;
+    place-items: center !important;
+    align-self: stretch !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    z-index: 1 !important;
+}
+
+body.tabs-collapsed .connection-orb img,
+body.tabs-collapsed .connection-card .connection-orb img {
+    width: 154px !important;
+    height: 106px !important;
+    object-fit: contain !important;
+    filter: none !important;
+}
+
+body.tabs-collapsed .connection-copy {
+    align-self: center !important;
+    padding: 24px 48px 24px 0 !important;
+    z-index: 2 !important;
+}
+
+body.tabs-collapsed .selected-node-meta-row {
+    gap: 22px !important;
+    margin-bottom: 20px !important;
+}
+
+body.tabs-collapsed .connection-copy .selected-node-group-display,
+body.tabs-collapsed .selected-node-protocol-display {
+    min-height: auto !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: color-mix(in srgb, var(--home-mode-text) 82%, rgba(255,255,255,0.72)) !important;
+    font-size: 14px !important;
+    font-weight: 900 !important;
+    line-height: 1.15 !important;
+    letter-spacing: 0 !important;
+    text-shadow: 0 0 14px color-mix(in srgb, var(--home-mode-accent) 16%, transparent) !important;
+}
+
+body.tabs-collapsed .selected-node-protocol-display {
+    max-width: none !important;
+    color: color-mix(in srgb, var(--home-mode-accent) 68%, rgba(255,255,255,0.74)) !important;
+}
+
+body.tabs-collapsed .selected-node-label {
+    display: block !important;
+    margin: 0 0 10px !important;
+    color: rgba(255, 255, 255, 0.66) !important;
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    line-height: 1.2 !important;
+}
+
+body.tabs-collapsed .selected-node-main-row {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 14px !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    margin-bottom: 28px !important;
+}
+
+body.tabs-collapsed .connection-copy .selected-node-display {
+    flex: 0 1 min(520px, 100%) !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: #ffffff !important;
+    font-size: clamp(24px, 3.2vw, 36px) !important;
+    font-weight: 950 !important;
+    line-height: 1.08 !important;
+    letter-spacing: 0 !important;
+    overflow: hidden !important;
+    text-align: left !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    text-shadow: 0 10px 28px rgba(0, 0, 0, 0.38) !important;
+}
+
+body.tabs-collapsed .connection-mode-row {
+    display: block !important;
+}
+
+body.tabs-collapsed .connection-card .proxy-mode-strip {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(98px, 1fr)) !important;
+    gap: 18px !important;
+    width: min(612px, 100%) !important;
+    margin: 0 !important;
+}
+
+body.tabs-collapsed .connection-card .proxy-mode-button {
+    width: 100% !important;
+    height: 78px !important;
+    display: grid !important;
+    grid-template-rows: 34px auto !important;
+    place-items: center !important;
+    align-content: center !important;
+    gap: 7px !important;
+    padding: 9px 12px !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    color: color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 82%, #ffffff) !important;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 8%, rgba(255, 255, 255, 0.075)), rgba(255, 255, 255, 0.035)),
+        rgba(22, 22, 21, 0.74) !important;
+    box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 24%, rgba(255,255,255,0.075)),
+        0 14px 28px rgba(0,0,0,0.22) !important;
+}
+
+body.tabs-collapsed[data-network-state] .connection-card .proxy-mode-strip:not(.island-mode-strip) .proxy-mode-button[data-preset]:not(.active) {
+    color: color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 82%, #ffffff) !important;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 8%, rgba(255, 255, 255, 0.075)), rgba(255, 255, 255, 0.035)),
+        rgba(22, 22, 21, 0.74) !important;
+    border-color: color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 30%, transparent) !important;
+    box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 24%, rgba(255,255,255,0.075)),
+        0 14px 28px rgba(0,0,0,0.22) !important;
+}
+
+body.tabs-collapsed[data-network-state] .connection-card .proxy-mode-strip:not(.island-mode-strip) .proxy-mode-button[data-preset="direct"]:not(.active) {
+    color: color-mix(in srgb, #74b7d2 82%, #ffffff) !important;
+    background:
+        linear-gradient(180deg, rgba(116, 183, 210, 0.11), rgba(255, 255, 255, 0.035)),
+        rgba(22, 22, 21, 0.74) !important;
+    background-image: linear-gradient(180deg, rgba(116, 183, 210, 0.11), rgba(255, 255, 255, 0.035)) !important;
+    background-color: color-mix(in srgb, #74b7d2 12%, rgba(22, 22, 21, 0.74)) !important;
+    border-color: rgba(116, 183, 210, 0.34) !important;
+}
+
+body.tabs-collapsed[data-network-state] .connection-card .proxy-mode-strip:not(.island-mode-strip) .proxy-mode-button[data-preset="proxy"]:not(.active) {
+    color: color-mix(in srgb, #d1b66b 82%, #ffffff) !important;
+    background:
+        linear-gradient(180deg, rgba(209, 182, 107, 0.11), rgba(255, 255, 255, 0.035)),
+        rgba(22, 22, 21, 0.74) !important;
+    background-image: linear-gradient(180deg, rgba(209, 182, 107, 0.11), rgba(255, 255, 255, 0.035)) !important;
+    background-color: color-mix(in srgb, #d1b66b 12%, rgba(22, 22, 21, 0.74)) !important;
+    border-color: rgba(209, 182, 107, 0.34) !important;
+}
+
+body.tabs-collapsed[data-network-state] .connection-card .proxy-mode-strip:not(.island-mode-strip) .proxy-mode-button[data-preset="tun"]:not(.active) {
+    color: color-mix(in srgb, #a18bcf 82%, #ffffff) !important;
+    background:
+        linear-gradient(180deg, rgba(161, 139, 207, 0.12), rgba(255, 255, 255, 0.035)),
+        rgba(22, 22, 21, 0.74) !important;
+    background-image: linear-gradient(180deg, rgba(161, 139, 207, 0.12), rgba(255, 255, 255, 0.035)) !important;
+    background-color: color-mix(in srgb, #a18bcf 12%, rgba(22, 22, 21, 0.74)) !important;
+    border-color: rgba(161, 139, 207, 0.36) !important;
+}
+
+body.tabs-collapsed[data-network-state] .connection-card .proxy-mode-strip:not(.island-mode-strip) .proxy-mode-button[data-preset="proxy_tun"]:not(.active) {
+    color: color-mix(in srgb, #f0c020 76%, #ffffff) !important;
+    background:
+        linear-gradient(135deg, rgba(32, 144, 255, 0.10) 0%, rgba(240, 192, 32, 0.09) 44%, rgba(240, 160, 64, 0.08) 66%, rgba(176, 64, 224, 0.12) 100%),
+        rgba(22, 22, 21, 0.74) !important;
+    background-image: linear-gradient(135deg, rgba(32, 144, 255, 0.10) 0%, rgba(240, 192, 32, 0.09) 44%, rgba(240, 160, 64, 0.08) 66%, rgba(176, 64, 224, 0.12) 100%) !important;
+    background-color: color-mix(in srgb, #b040e0 10%, rgba(22, 22, 21, 0.74)) !important;
+    border-color: rgba(240, 192, 32, 0.34) !important;
+    box-shadow:
+        inset 0 0 0 1px rgba(240, 192, 32, 0.20),
+        0 14px 28px rgba(0,0,0,0.22) !important;
+}
+
+body.tabs-collapsed .connection-card .proxy-mode-button:hover {
+    color: #ffffff !important;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 15%, rgba(255,255,255,0.08)), rgba(255, 255, 255, 0.05)),
+        rgba(26, 26, 24, 0.84) !important;
+    transform: translateY(-2px) !important;
+}
+
+body.tabs-collapsed .connection-card .proxy-mode-button.active,
+body.tabs-collapsed[data-network-state] .connection-card .proxy-mode-button.active {
+    color: color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 82%, #ffffff) !important;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 20%, rgba(24, 23, 22, 0.90)), rgba(17, 16, 15, 0.86)),
+        rgba(27, 22, 34, 0.88) !important;
+    box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 62%, transparent),
+        0 12px 30px color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 18%, transparent) !important;
+}
+
+body.tabs-collapsed[data-network-state="proxy_tun"] {
+    background:
+        radial-gradient(circle at 50% 43%, rgba(161, 139, 207, 0.20), transparent 26%),
+        radial-gradient(circle at 50% 50%, rgba(35, 27, 54, 0.78), rgba(14, 10, 22, 0.94) 64%, #040306 100%) !important;
+}
+
+body.tabs-collapsed[data-network-state="proxy_tun"] .connection-card {
+    background:
+        radial-gradient(circle at 55% 42%, rgba(161, 139, 207, 0.22), transparent 35%),
+        radial-gradient(circle at 55% 42%, rgba(36, 29, 54, 0.78), rgba(15, 11, 23, 0.86) 68%, rgba(6, 5, 9, 0.92) 100%) !important;
+}
+
+body.tabs-collapsed .connection-card .proxy-mode-button[data-preset="proxy_tun"] {
+    background:
+        linear-gradient(135deg, rgba(32, 144, 255, 0.10) 0%, rgba(240, 192, 32, 0.09) 44%, rgba(240, 160, 64, 0.08) 66%, rgba(176, 64, 224, 0.12) 100%),
+        rgba(22, 22, 21, 0.74) !important;
+    box-shadow:
+        inset 0 0 0 1px rgba(240, 192, 32, 0.20),
+        0 14px 28px rgba(0,0,0,0.22) !important;
+}
+
+body.tabs-collapsed[data-network-state="proxy_tun"] .connection-card .proxy-mode-button.active {
+    color: #f8fbff !important;
+    background:
+        linear-gradient(135deg, rgba(32, 144, 255, 0.28) 0%, rgba(240, 192, 32, 0.24) 44%, rgba(240, 160, 64, 0.20) 66%, rgba(176, 64, 224, 0.30) 100%),
+        rgba(20, 20, 21, 0.90) !important;
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 231, 135, 0.32),
+        0 14px 34px rgba(32, 144, 255, 0.10),
+        0 10px 26px rgba(176, 64, 224, 0.14) !important;
+}
+
+body.tabs-collapsed[data-network-state="proxy_tun"] .connection-card .proxy-mode-button.active .proxy-mode-icon {
+    color: #f8fbff !important;
+    filter:
+        drop-shadow(0 7px 12px rgba(32, 144, 255, 0.18))
+        drop-shadow(0 4px 12px rgba(176, 64, 224, 0.18)) !important;
+}
+
+body.tabs-collapsed .connection-card .proxy-mode-icon {
+    width: 28px !important;
+    height: 28px !important;
+    stroke-width: 2 !important;
+    filter: drop-shadow(0 8px 14px color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 18%, transparent)) !important;
+}
+
+body.tabs-collapsed .connection-card .proxy-mode-label {
+    display: block !important;
+    color: rgba(255, 255, 255, 0.72) !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    line-height: 1.05 !important;
+    white-space: nowrap !important;
+}
+
+body.tabs-collapsed .connection-card .proxy-mode-button.active .proxy-mode-label {
+    color: rgba(255, 255, 255, 0.92) !important;
+}
+
+body.tabs-collapsed .connection-speed-strip {
+    grid-column: 1 / -1 !important;
+    align-self: stretch !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    align-items: center !important;
+    min-height: 86px !important;
+    padding: 0 76px !important;
+    background:
+        linear-gradient(180deg, rgba(3, 4, 5, 0.34), rgba(0, 0, 0, 0.28)),
+        rgba(7, 7, 6, 0.42) !important;
+    box-shadow: inset 0 26px 42px rgba(0, 0, 0, 0.18) !important;
+    z-index: 2 !important;
+}
+
+body.tabs-collapsed .home-speed-item {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 9px !important;
+    color: rgba(255, 255, 255, 0.72) !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace !important;
+    font-size: 14px !important;
+    font-weight: 750 !important;
+}
+
+body.tabs-collapsed .home-speed-down {
+    justify-self: end !important;
+}
+
+body.tabs-collapsed .speed-icon {
+    width: 21px !important;
+    height: 21px !important;
+    fill: none !important;
+    stroke: currentColor !important;
+    stroke-width: 1.9 !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+}
+
+body.tabs-collapsed .home-speed-up {
+    color: color-mix(in srgb, var(--home-mode-accent) 72%, #ffffff) !important;
+}
+
+body.tabs-collapsed .home-speed-down {
+    color: color-mix(in srgb, var(--home-mode-accent-2) 70%, #ffffff) !important;
+}
+
+@media (max-width: 820px) {
+    body.tabs-collapsed .connection-card,
+    body.tabs-collapsed[data-network-state] .connection-card {
+        width: min(560px, calc(100vw - 28px)) !important;
+        grid-template-columns: 1fr !important;
+        grid-template-rows: auto auto auto !important;
+        min-height: 0 !important;
+    }
+
+    body.tabs-collapsed .connection-card::before {
+        background:
+            linear-gradient(115deg, rgba(255,255,255,0.07), transparent 32%, rgba(255,255,255,0.025) 76%, transparent) !important;
+    }
+
+    body.tabs-collapsed .connection-card::after {
+        left: 50% !important;
+        top: 2px !important;
+        width: 210px !important;
+        height: 210px !important;
+        transform: translateX(-50%) !important;
+    }
+
+    body.tabs-collapsed .connection-orb,
+    body.tabs-collapsed .connection-card .connection-orb {
+        width: 100% !important;
+        height: 122px !important;
+    }
+
+    body.tabs-collapsed .connection-orb img,
+    body.tabs-collapsed .connection-card .connection-orb img {
+        width: 118px !important;
+        height: 82px !important;
+    }
+
+    body.tabs-collapsed .connection-copy {
+        padding: 0 22px 22px !important;
+    }
+
+    body.tabs-collapsed .selected-node-meta-row {
+        justify-content: center !important;
+        margin-bottom: 16px !important;
+    }
+
+    body.tabs-collapsed .selected-node-label,
+    body.tabs-collapsed .selected-node-main-row {
+        justify-content: center !important;
+        text-align: center !important;
+    }
+
+    body.tabs-collapsed .connection-card .proxy-mode-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        width: 100% !important;
+        gap: 12px !important;
+    }
+
+    body.tabs-collapsed .connection-speed-strip {
+        grid-template-columns: 1fr 1fr !important;
+        min-height: 74px !important;
+        padding: 0 22px !important;
+    }
+}
+
+/* Final polish: source cards, light home mode, and a single-layer island. */
+body[data-network-state] .source-push-card.is-browsing-source:not(.is-current-source),
+:root[data-theme="light"] body[data-network-state] .source-push-card.is-browsing-source:not(.is-current-source) {
+    color: var(--text-main) !important;
+    background:
+        linear-gradient(135deg, color-mix(in srgb, var(--node-selected-accent) 8%, transparent), transparent 72%),
+        rgba(255, 255, 255, 0.055) !important;
+    box-shadow: none !important;
+}
+
+body[data-network-state] .source-push-card.is-current-source:not(.is-browsing-source),
+:root[data-theme="light"] body[data-network-state] .source-push-card.is-current-source:not(.is-browsing-source) {
+    color: var(--text-main) !important;
+    background:
+        linear-gradient(135deg, color-mix(in srgb, var(--node-selected-accent) 13%, transparent), transparent 72%),
+        rgba(255, 255, 255, 0.055) !important;
+    box-shadow: none !important;
+}
+
+body[data-network-state] .source-push-card.is-current-source.is-browsing-source,
+:root[data-theme="light"] body[data-network-state] .source-push-card.is-current-source.is-browsing-source {
+    color: var(--node-selected-text) !important;
+    background: var(--node-selected-bg) !important;
+    box-shadow: 0 12px 26px color-mix(in srgb, var(--node-selected-accent) 12%, transparent) !important;
+}
+
+body .source-push-card .node-group-meta {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 7px !important;
+}
+
+body .node-group-current-badge {
+    display: inline-flex !important;
+    align-items: center !important;
+    height: 18px !important;
+    padding: 0 7px !important;
+    border-radius: 999px !important;
+    color: var(--node-selected-button-text, #08111f) !important;
+    background: var(--node-selected-button-bg, linear-gradient(135deg, #74b7d2, #4f8ea6)) !important;
+    font-size: 11px !important;
+    font-weight: 850 !important;
+    line-height: 1 !important;
+}
+
+body[data-network-state="proxy_tun"] .node-group-current-badge,
+body[data-network-state="proxy_tun"] .proxy-mode-button[data-preset="proxy_tun"].active,
+body[data-network-state="proxy_tun"] .proxy-mode-strip:not(.island-mode-strip) .proxy-mode-button[data-preset="proxy_tun"].active {
+    background: linear-gradient(135deg, #2090ff 0%, #f0c020 44%, #f0a040 66%, #b040e0 100%) !important;
+    color: #08111f !important;
+}
+
+:root[data-theme="light"] body[data-network-state="direct"] {
+    --home-bg-accent: #7f9aa4;
+    --home-bg-core: rgba(250, 253, 254, 0.98);
+    --home-bg-mid: rgba(239, 247, 249, 0.98);
+    --home-bg-outer: #dce9ed;
+    --home-card-core: rgba(255, 255, 255, 0.86);
+    --home-card-mid: rgba(246, 251, 252, 0.90);
+    --home-card-outer: rgba(226, 238, 242, 0.94);
+    --home-mode-text: #1d3138;
+}
+
+:root[data-theme="light"] body[data-network-state="proxy"] {
+    --home-bg-accent: #74b7d2;
+    --home-bg-core: rgba(244, 251, 253, 0.98);
+    --home-bg-mid: rgba(225, 243, 249, 0.98);
+    --home-bg-outer: #cfe8f1;
+    --home-card-core: rgba(255, 255, 255, 0.86);
+    --home-card-mid: rgba(238, 249, 252, 0.92);
+    --home-card-outer: rgba(211, 236, 245, 0.94);
+    --home-mode-text: #12323f;
+}
+
+:root[data-theme="light"] body[data-network-state="tun"] {
+    --home-bg-accent: #d1b66b;
+    --home-bg-core: rgba(255, 252, 242, 0.98);
+    --home-bg-mid: rgba(250, 240, 207, 0.98);
+    --home-bg-outer: #ead9a3;
+    --home-card-core: rgba(255, 255, 255, 0.86);
+    --home-card-mid: rgba(253, 246, 225, 0.92);
+    --home-card-outer: rgba(235, 219, 171, 0.94);
+    --home-mode-text: #40320f;
+}
+
+:root[data-theme="light"] body[data-network-state="proxy_tun"] {
+    --home-bg-accent: #b040e0;
+    --home-bg-core: rgba(252, 248, 255, 0.98);
+    --home-bg-mid: rgba(241, 229, 252, 0.98);
+    --home-bg-outer: #ddd0eb;
+    --home-card-core: rgba(255, 255, 255, 0.86);
+    --home-card-mid: rgba(248, 241, 254, 0.92);
+    --home-card-outer: rgba(225, 211, 239, 0.94);
+    --home-mode-accent: #b040e0;
+    --home-mode-accent-2: #2090ff;
+    --home-mode-accent-3: #f0c020;
+    --home-mode-text: #38234d;
+}
+
+:root[data-theme="light"] body.tabs-collapsed .selected-node-group-display,
+:root[data-theme="light"] body.tabs-collapsed .selected-node-protocol-display,
+:root[data-theme="light"] body.tabs-collapsed .selected-node-display,
+:root[data-theme="light"] body.tabs-collapsed .selected-node-label {
+    color: color-mix(in srgb, var(--home-mode-text) 86%, #ffffff) !important;
+    text-shadow: none !important;
+}
+
+:root[data-theme="light"] body.tabs-collapsed .connection-card .proxy-mode-button,
+:root[data-theme="light"] body.tabs-collapsed[data-network-state] .connection-card .proxy-mode-strip:not(.island-mode-strip) .proxy-mode-button[data-preset]:not(.active) {
+    color: color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 72%, #1b2730) !important;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 9%, rgba(255,255,255,0.92)), rgba(255,255,255,0.68)),
+        rgba(255, 255, 255, 0.72) !important;
+    box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 18%, transparent),
+        0 10px 24px rgba(40, 55, 70, 0.08) !important;
+}
+
+:root[data-theme="light"] body.tabs-collapsed .connection-card .proxy-mode-button.active,
+:root[data-theme="light"] body.tabs-collapsed[data-network-state] .connection-card .proxy-mode-button.active {
+    color: #10202b !important;
+    background:
+        linear-gradient(135deg, color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 56%, #ffffff), color-mix(in srgb, var(--preset-accent-2, var(--home-mode-accent-2)) 46%, #ffffff)),
+        rgba(255, 255, 255, 0.72) !important;
+    box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 24%, transparent),
+        0 12px 26px rgba(40, 55, 70, 0.10) !important;
+}
+
+:root[data-theme="light"] body.tabs-collapsed[data-network-state="proxy_tun"] .connection-card .proxy-mode-button[data-preset="proxy_tun"],
+:root[data-theme="light"] body.tabs-collapsed[data-network-state="proxy_tun"] .connection-card .proxy-mode-button[data-preset="proxy_tun"].active {
+    color: #08111f !important;
+    background:
+        linear-gradient(135deg, color-mix(in srgb, #2090ff 52%, #ffffff) 0%, color-mix(in srgb, #f0c020 50%, #ffffff) 44%, color-mix(in srgb, #f0a040 46%, #ffffff) 66%, color-mix(in srgb, #b040e0 52%, #ffffff) 100%),
+        rgba(255, 255, 255, 0.74) !important;
+}
+
+body .island-center .tabs,
+body.island-hovered .island-center .tabs,
+body .island-center:hover .tabs,
+body .island-center:focus-within .tabs,
+body.island-mode-expanded .island-center .tabs,
+:root[data-theme="light"] body .island-center .tabs,
+:root[data-theme="light"] body.island-hovered .island-center .tabs,
+:root[data-theme="light"] body .island-center:hover .tabs,
+:root[data-theme="light"] body .island-center:focus-within .tabs,
+:root[data-theme="light"] body.island-mode-expanded .island-center .tabs {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+body .island-center .tab-btn,
+body.island-hovered .island-center .tab-btn,
+body .island-center:hover .tab-btn,
+body .island-center:focus-within .tab-btn,
+body.island-mode-expanded .island-center .tab-btn,
+body .island-center .tab-btn.active,
+body.island-hovered .island-center .tab-btn.active,
+body .island-center:hover .tab-btn.active,
+body .island-center:focus-within .tab-btn.active,
+body.island-mode-expanded .island-center .tab-btn.active,
+:root[data-theme="light"] body .island-center .tab-btn,
+:root[data-theme="light"] body.island-hovered .island-center .tab-btn,
+:root[data-theme="light"] body .island-center:hover .tab-btn,
+:root[data-theme="light"] body .island-center:focus-within .tab-btn,
+:root[data-theme="light"] body.island-mode-expanded .island-center .tab-btn,
+:root[data-theme="light"] body .island-center .tab-btn.active,
+:root[data-theme="light"] body.island-hovered .island-center .tab-btn.active,
+:root[data-theme="light"] body .island-center:hover .tab-btn.active,
+:root[data-theme="light"] body .island-center:focus-within .tab-btn.active,
+:root[data-theme="light"] body.island-mode-expanded .island-center .tab-btn.active {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+body .island-center .tab-btn.active,
+body.island-hovered .island-center .tab-btn.active,
+body .island-center:hover .tab-btn.active,
+body .island-center:focus-within .tab-btn.active,
+body.island-mode-expanded .island-center .tab-btn.active,
+:root[data-theme="light"] body .island-center .tab-btn.active,
+:root[data-theme="light"] body.island-hovered .island-center .tab-btn.active,
+:root[data-theme="light"] body .island-center:hover .tab-btn.active,
+:root[data-theme="light"] body .island-center:focus-within .tab-btn.active,
+:root[data-theme="light"] body.island-mode-expanded .island-center .tab-btn.active {
+    color: var(--island-accent, var(--accent)) !important;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] body[data-network-state="direct"] {
+        --home-bg-accent: #7f9aa4;
+        --home-bg-core: rgba(250, 253, 254, 0.98);
+        --home-bg-mid: rgba(239, 247, 249, 0.98);
+        --home-bg-outer: #dce9ed;
+        --home-card-core: rgba(255, 255, 255, 0.86);
+        --home-card-mid: rgba(246, 251, 252, 0.90);
+        --home-card-outer: rgba(226, 238, 242, 0.94);
+        --home-mode-text: #1d3138;
+    }
+
+    :root[data-theme="system"] body[data-network-state="proxy"] {
+        --home-bg-accent: #74b7d2;
+        --home-bg-core: rgba(244, 251, 253, 0.98);
+        --home-bg-mid: rgba(225, 243, 249, 0.98);
+        --home-bg-outer: #cfe8f1;
+        --home-card-core: rgba(255, 255, 255, 0.86);
+        --home-card-mid: rgba(238, 249, 252, 0.92);
+        --home-card-outer: rgba(211, 236, 245, 0.94);
+        --home-mode-text: #12323f;
+    }
+
+    :root[data-theme="system"] body[data-network-state="tun"] {
+        --home-bg-accent: #d1b66b;
+        --home-bg-core: rgba(255, 252, 242, 0.98);
+        --home-bg-mid: rgba(250, 240, 207, 0.98);
+        --home-bg-outer: #ead9a3;
+        --home-card-core: rgba(255, 255, 255, 0.86);
+        --home-card-mid: rgba(253, 246, 225, 0.92);
+        --home-card-outer: rgba(235, 219, 171, 0.94);
+        --home-mode-text: #40320f;
+    }
+
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] {
+        --home-bg-accent: #b040e0;
+        --home-bg-core: rgba(252, 248, 255, 0.98);
+        --home-bg-mid: rgba(241, 229, 252, 0.98);
+        --home-bg-outer: #ddd0eb;
+        --home-card-core: rgba(255, 255, 255, 0.86);
+        --home-card-mid: rgba(248, 241, 254, 0.92);
+        --home-card-outer: rgba(225, 211, 239, 0.94);
+        --home-mode-accent: #b040e0;
+        --home-mode-accent-2: #2090ff;
+        --home-mode-accent-3: #f0c020;
+        --home-mode-text: #38234d;
+    }
+
+    :root[data-theme="system"] body.tabs-collapsed .selected-node-group-display,
+    :root[data-theme="system"] body.tabs-collapsed .selected-node-protocol-display,
+    :root[data-theme="system"] body.tabs-collapsed .selected-node-display,
+    :root[data-theme="system"] body.tabs-collapsed .selected-node-label {
+        color: color-mix(in srgb, var(--home-mode-text) 86%, #ffffff) !important;
+        text-shadow: none !important;
+    }
+
+    :root[data-theme="system"] body.tabs-collapsed .connection-card .proxy-mode-button,
+    :root[data-theme="system"] body.tabs-collapsed[data-network-state] .connection-card .proxy-mode-strip:not(.island-mode-strip) .proxy-mode-button[data-preset]:not(.active) {
+        color: color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 72%, #1b2730) !important;
+        background:
+            linear-gradient(180deg, color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 9%, rgba(255,255,255,0.92)), rgba(255,255,255,0.68)),
+            rgba(255, 255, 255, 0.72) !important;
+        box-shadow:
+            inset 0 0 0 1px color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 18%, transparent),
+            0 10px 24px rgba(40, 55, 70, 0.08) !important;
+    }
+
+    :root[data-theme="system"] body.tabs-collapsed .connection-card .proxy-mode-button.active,
+    :root[data-theme="system"] body.tabs-collapsed[data-network-state] .connection-card .proxy-mode-button.active {
+        color: #10202b !important;
+        background:
+            linear-gradient(135deg, color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 56%, #ffffff), color-mix(in srgb, var(--preset-accent-2, var(--home-mode-accent-2)) 46%, #ffffff)),
+            rgba(255, 255, 255, 0.72) !important;
+        box-shadow:
+            inset 0 0 0 1px color-mix(in srgb, var(--preset-accent, var(--home-mode-accent)) 24%, transparent),
+            0 12px 26px rgba(40, 55, 70, 0.10) !important;
+    }
+
+    :root[data-theme="system"] body.tabs-collapsed[data-network-state="proxy_tun"] .connection-card .proxy-mode-button[data-preset="proxy_tun"],
+    :root[data-theme="system"] body.tabs-collapsed[data-network-state="proxy_tun"] .connection-card .proxy-mode-button[data-preset="proxy_tun"].active {
+        color: #08111f !important;
+        background:
+            linear-gradient(135deg, color-mix(in srgb, #2090ff 52%, #ffffff) 0%, color-mix(in srgb, #f0c020 50%, #ffffff) 44%, color-mix(in srgb, #f0a040 46%, #ffffff) 66%, color-mix(in srgb, #b040e0 52%, #ffffff) 100%),
+            rgba(255, 255, 255, 0.74) !important;
+    }
+}
+
+body[data-network-state="direct"] {
+    --home-speed-color: rgba(255, 255, 255, 0.78);
+}
+
+body[data-network-state="proxy"] {
+    --home-speed-color: #74b7d2;
+}
+
+body[data-network-state="tun"] {
+    --home-speed-color: #d1b66b;
+}
+
+body[data-network-state="proxy_tun"] {
+    --home-speed-color: #a18bcf;
+}
+
+body.tabs-collapsed .home-speed-up,
+body.tabs-collapsed .home-speed-down,
+body.tabs-collapsed[data-network-state] .home-speed-up,
+body.tabs-collapsed[data-network-state] .home-speed-down {
+    color: var(--home-speed-color) !important;
+}
+
+:root[data-theme="light"] body[data-network-state="direct"] {
+    --home-speed-color: #18272d;
+    --state-accent: #263842;
+    --state-button: #263842;
+}
+
+:root[data-theme="light"] body[data-network-state="proxy"] {
+    --home-speed-color: #2f6f86;
+    --state-accent: #2f6f86;
+    --state-button: #2f6f86;
+}
+
+:root[data-theme="light"] body[data-network-state="tun"] {
+    --home-speed-color: #765817;
+    --state-accent: #765817;
+    --state-button: #765817;
+}
+
+:root[data-theme="light"] body[data-network-state="proxy_tun"] {
+    --home-speed-color: #60458a;
+    --state-accent: #60458a;
+    --state-button: #60458a;
+}
+
+:root[data-theme="light"] body.tabs-collapsed .home-speed-up,
+:root[data-theme="light"] body.tabs-collapsed .home-speed-down,
+:root[data-theme="light"] body.tabs-collapsed[data-network-state] .home-speed-up,
+:root[data-theme="light"] body.tabs-collapsed[data-network-state] .home-speed-down {
+    color: var(--home-speed-color) !important;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] body[data-network-state="direct"] {
+        --home-speed-color: #18272d;
+        --state-accent: #263842;
+        --state-button: #263842;
+    }
+
+    :root[data-theme="system"] body[data-network-state="proxy"] {
+        --home-speed-color: #2f6f86;
+        --state-accent: #2f6f86;
+        --state-button: #2f6f86;
+    }
+
+    :root[data-theme="system"] body[data-network-state="tun"] {
+        --home-speed-color: #765817;
+        --state-accent: #765817;
+        --state-button: #765817;
+    }
+
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] {
+        --home-speed-color: #60458a;
+        --state-accent: #60458a;
+        --state-button: #60458a;
+    }
+
+    :root[data-theme="system"] body.tabs-collapsed .home-speed-up,
+    :root[data-theme="system"] body.tabs-collapsed .home-speed-down,
+    :root[data-theme="system"] body.tabs-collapsed[data-network-state] .home-speed-up,
+    :root[data-theme="system"] body.tabs-collapsed[data-network-state] .home-speed-down {
+        color: var(--home-speed-color) !important;
+    }
+}
+
+/* Final light modal adaptation and proxy+TUN button color pass. */
+body[data-network-state="proxy_tun"] {
+    --wing-logo-gradient: linear-gradient(135deg, #2090ff 0%, #f0c020 44%, #f0a040 66%, #b040e0 100%);
+    --wing-logo-soft:
+        linear-gradient(135deg, rgba(32, 144, 255, 0.14) 0%, rgba(240, 192, 32, 0.12) 44%, rgba(240, 160, 64, 0.10) 66%, rgba(176, 64, 224, 0.15) 100%);
+    --wing-logo-shadow: rgba(176, 64, 224, 0.18);
+    --wing-logo-ink: #08111f;
+}
+
+body[data-network-state="proxy_tun"] .btn-primary,
+body[data-network-state="proxy_tun"] .btn-success,
+body[data-network-state="proxy_tun"] .btn-update,
+body[data-network-state="proxy_tun"] .btn-action-primary,
+body[data-network-state="proxy_tun"] .settings-save-button,
+body[data-network-state="proxy_tun"] .auto-select-run-button,
+body[data-network-state="proxy_tun"] .auto-select-draw-rule,
+body[data-network-state="proxy_tun"] .help-jump-button-primary,
+body[data-network-state="proxy_tun"] .settings-management-button.primary,
+body[data-network-state="proxy_tun"] .system-action-card,
+body[data-network-state="proxy_tun"] .node-source-tab.active,
+body[data-network-state="proxy_tun"] .settings-subtab.active,
+body[data-network-state="proxy_tun"] .auto-select-config-tab.active,
+body[data-network-state="proxy_tun"] .auto-select-rule-tab.active,
+body[data-network-state="proxy_tun"] .help-subtab.active,
+body[data-network-state="proxy_tun"] .rule-group-tag.active,
+body[data-network-state="proxy_tun"] input:checked + .slider {
+    color: var(--wing-logo-ink) !important;
+    background: var(--wing-logo-gradient) !important;
+    box-shadow: 0 10px 24px var(--wing-logo-shadow) !important;
+}
+
+body[data-network-state="proxy_tun"] .btn-ghost,
+body[data-network-state="proxy_tun"] .btn-mini:not(.btn-mini-danger),
+body[data-network-state="proxy_tun"] .btn-action:not(.btn-action-primary):not(.btn-action-danger),
+body[data-network-state="proxy_tun"] .settings-management-button:not(.primary),
+body[data-network-state="proxy_tun"] .help-jump-button:not(.help-jump-button-primary),
+body[data-network-state="proxy_tun"] .node-source-tab:not(.active),
+body[data-network-state="proxy_tun"] .settings-subtab:not(.active),
+body[data-network-state="proxy_tun"] .auto-select-config-tab:not(.active),
+body[data-network-state="proxy_tun"] .auto-select-rule-tab:not(.active),
+body[data-network-state="proxy_tun"] .help-subtab:not(.active),
+body[data-network-state="proxy_tun"] .rule-group-tag:not(.active) {
+    color: color-mix(in srgb, #f0c020 52%, var(--readable-text)) !important;
+    background: var(--wing-logo-soft) !important;
+    box-shadow: none !important;
+}
+
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .btn-ghost,
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .btn-mini:not(.btn-mini-danger),
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .btn-action:not(.btn-action-primary):not(.btn-action-danger),
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .settings-management-button:not(.primary),
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .help-jump-button:not(.help-jump-button-primary),
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .node-source-tab:not(.active),
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .settings-subtab:not(.active),
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .auto-select-config-tab:not(.active),
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .auto-select-rule-tab:not(.active),
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .help-subtab:not(.active),
+:root[data-theme="light"] body[data-network-state="proxy_tun"] .rule-group-tag:not(.active) {
+    color: #402a60 !important;
+}
+
+:root[data-theme="light"] body .modal-overlay {
+    background: rgba(12, 24, 38, 0.24) !important;
+}
+
+:root[data-theme="light"] body .modal,
+:root[data-theme="light"] body .management-modal,
+:root[data-theme="light"] body .help-topic-modal,
+:root[data-theme="light"] body .auto-select-rule-modal {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 250, 253, 0.96)),
+        color-mix(in srgb, var(--state-surface, rgba(79, 142, 166, 0.08)) 55%, transparent) !important;
+    color: var(--readable-text) !important;
+    box-shadow: 0 24px 70px rgba(24, 45, 68, 0.18) !important;
+}
+
+:root[data-theme="light"] body .modal h2,
+:root[data-theme="light"] body .management-modal h2,
+:root[data-theme="light"] body .help-topic-modal h2,
+:root[data-theme="light"] body .help-topic-body h3,
+:root[data-theme="light"] body .auto-select-rule-title {
+    color: var(--readable-text) !important;
+}
+
+:root[data-theme="light"] body .help-topic-summary,
+:root[data-theme="light"] body .help-topic-body,
+:root[data-theme="light"] body .help-topic-body p,
+:root[data-theme="light"] body .help-topic-body li,
+:root[data-theme="light"] body .auto-select-rule-desc,
+:root[data-theme="light"] body .auto-select-rule-meta {
+    color: var(--readable-sub) !important;
+}
+
+:root[data-theme="light"] body .modal input,
+:root[data-theme="light"] body .modal textarea,
+:root[data-theme="light"] body .modal select,
+:root[data-theme="light"] body .management-modal input,
+:root[data-theme="light"] body .management-modal textarea,
+:root[data-theme="light"] body .management-modal select,
+:root[data-theme="light"] body .auto-select-rule-modal input,
+:root[data-theme="light"] body .auto-select-rule-modal select {
+    background: rgba(255, 255, 255, 0.82) !important;
+    color: var(--readable-text) !important;
+    border-color: rgba(67, 91, 111, 0.16) !important;
+    box-shadow: inset 0 0 0 1px rgba(67, 91, 111, 0.05) !important;
+}
+
+:root[data-theme="light"] body .modal input::placeholder,
+:root[data-theme="light"] body .modal textarea::placeholder,
+:root[data-theme="light"] body .management-modal input::placeholder,
+:root[data-theme="light"] body .management-modal textarea::placeholder {
+    color: color-mix(in srgb, var(--readable-muted) 76%, transparent) !important;
+}
+
+:root[data-theme="light"] body .modal-scroll,
+:root[data-theme="light"] body .rule-modal-scroll,
+:root[data-theme="light"] body .dns-modal-scroll,
+:root[data-theme="light"] body .rule-list-scroll,
+:root[data-theme="light"] body .cmd-rule-panel,
+:root[data-theme="light"] body .cmd-rule-list,
+:root[data-theme="light"] body .rule-action-selector-drawer,
+:root[data-theme="light"] body #dnsServerList,
+:root[data-theme="light"] body #dnsRuleList,
+:root[data-theme="light"] body #aggCurrentNodeList,
+:root[data-theme="light"] body #aggNodeList,
+:root[data-theme="light"] body .auto-select-rule-modal-body,
+:root[data-theme="light"] body .auto-select-picker,
+:root[data-theme="light"] body .auto-select-rule-list,
+:root[data-theme="light"] body .auto-select-rule-card,
+:root[data-theme="light"] body .rule-item-container,
+:root[data-theme="light"] body .custom-select-menu {
+    background: rgba(255, 255, 255, 0.62) !important;
+    color: var(--readable-text) !important;
+    border-color: rgba(67, 91, 111, 0.12) !important;
+    box-shadow: none !important;
+}
+
+:root[data-theme="light"] body .management-modal .modal-scroll > div,
+:root[data-theme="light"] body .dns-modal-scroll > div,
+:root[data-theme="light"] body .agg-modal > div:not(.action-bar),
+:root[data-theme="light"] body .auto-select-rule-row,
+:root[data-theme="light"] body .custom-select-option {
+    background: rgba(255, 255, 255, 0.56) !important;
+    color: var(--readable-text) !important;
+}
+
+:root[data-theme="light"] body .rule-action-badge,
+:root[data-theme="light"] body .rule-group-tag {
+    color: var(--readable-sub) !important;
+    background: rgba(255, 255, 255, 0.58) !important;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .btn-ghost,
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .btn-mini:not(.btn-mini-danger),
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .btn-action:not(.btn-action-primary):not(.btn-action-danger),
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .settings-management-button:not(.primary),
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .help-jump-button:not(.help-jump-button-primary),
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .node-source-tab:not(.active),
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .settings-subtab:not(.active),
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .auto-select-config-tab:not(.active),
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .auto-select-rule-tab:not(.active),
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .help-subtab:not(.active),
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] .rule-group-tag:not(.active) {
+        color: #402a60 !important;
+    }
+
+    :root[data-theme="system"] body .modal-overlay {
+        background: rgba(12, 24, 38, 0.24) !important;
+    }
+
+    :root[data-theme="system"] body .modal,
+    :root[data-theme="system"] body .management-modal,
+    :root[data-theme="system"] body .help-topic-modal,
+    :root[data-theme="system"] body .auto-select-rule-modal {
+        background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 250, 253, 0.96)),
+            color-mix(in srgb, var(--state-surface, rgba(79, 142, 166, 0.08)) 55%, transparent) !important;
+        color: var(--readable-text) !important;
+        box-shadow: 0 24px 70px rgba(24, 45, 68, 0.18) !important;
+    }
+
+    :root[data-theme="system"] body .modal h2,
+    :root[data-theme="system"] body .management-modal h2,
+    :root[data-theme="system"] body .help-topic-modal h2,
+    :root[data-theme="system"] body .help-topic-body h3,
+    :root[data-theme="system"] body .auto-select-rule-title {
+        color: var(--readable-text) !important;
+    }
+
+    :root[data-theme="system"] body .help-topic-summary,
+    :root[data-theme="system"] body .help-topic-body,
+    :root[data-theme="system"] body .help-topic-body p,
+    :root[data-theme="system"] body .help-topic-body li,
+    :root[data-theme="system"] body .auto-select-rule-desc,
+    :root[data-theme="system"] body .auto-select-rule-meta {
+        color: var(--readable-sub) !important;
+    }
+
+    :root[data-theme="system"] body .modal input,
+    :root[data-theme="system"] body .modal textarea,
+    :root[data-theme="system"] body .modal select,
+    :root[data-theme="system"] body .management-modal input,
+    :root[data-theme="system"] body .management-modal textarea,
+    :root[data-theme="system"] body .management-modal select,
+    :root[data-theme="system"] body .auto-select-rule-modal input,
+    :root[data-theme="system"] body .auto-select-rule-modal select {
+        background: rgba(255, 255, 255, 0.82) !important;
+        color: var(--readable-text) !important;
+        border-color: rgba(67, 91, 111, 0.16) !important;
+        box-shadow: inset 0 0 0 1px rgba(67, 91, 111, 0.05) !important;
+    }
+
+    :root[data-theme="system"] body .modal input::placeholder,
+    :root[data-theme="system"] body .modal textarea::placeholder,
+    :root[data-theme="system"] body .management-modal input::placeholder,
+    :root[data-theme="system"] body .management-modal textarea::placeholder {
+        color: color-mix(in srgb, var(--readable-muted) 76%, transparent) !important;
+    }
+
+    :root[data-theme="system"] body .modal-scroll,
+    :root[data-theme="system"] body .rule-modal-scroll,
+    :root[data-theme="system"] body .dns-modal-scroll,
+    :root[data-theme="system"] body .rule-list-scroll,
+    :root[data-theme="system"] body .cmd-rule-panel,
+    :root[data-theme="system"] body .cmd-rule-list,
+    :root[data-theme="system"] body .rule-action-selector-drawer,
+    :root[data-theme="system"] body #dnsServerList,
+    :root[data-theme="system"] body #dnsRuleList,
+    :root[data-theme="system"] body #aggCurrentNodeList,
+    :root[data-theme="system"] body #aggNodeList,
+    :root[data-theme="system"] body .auto-select-rule-modal-body,
+    :root[data-theme="system"] body .auto-select-picker,
+    :root[data-theme="system"] body .auto-select-rule-list,
+    :root[data-theme="system"] body .auto-select-rule-card,
+    :root[data-theme="system"] body .rule-item-container,
+    :root[data-theme="system"] body .custom-select-menu {
+        background: rgba(255, 255, 255, 0.62) !important;
+        color: var(--readable-text) !important;
+        border-color: rgba(67, 91, 111, 0.12) !important;
+        box-shadow: none !important;
+    }
+
+    :root[data-theme="system"] body .management-modal .modal-scroll > div,
+    :root[data-theme="system"] body .dns-modal-scroll > div,
+    :root[data-theme="system"] body .agg-modal > div:not(.action-bar),
+    :root[data-theme="system"] body .auto-select-rule-row,
+    :root[data-theme="system"] body .custom-select-option {
+        background: rgba(255, 255, 255, 0.56) !important;
+        color: var(--readable-text) !important;
+    }
+
+    :root[data-theme="system"] body .rule-action-badge,
+    :root[data-theme="system"] body .rule-group-tag {
+        color: var(--readable-sub) !important;
+        background: rgba(255, 255, 255, 0.58) !important;
+    }
+}
+
+/* Readability guardrails: keep all copy legible in dark, light, and system-light themes. */
+body {
+    --readable-text: #f8fbff;
+    --readable-sub: #d8e7f2;
+    --readable-muted: #b8cfe1;
+    --readable-on-accent: #07111f;
+}
+
+:root[data-theme="light"] body {
+    --readable-text: #071427;
+    --readable-sub: #243b50;
+    --readable-muted: #4b6278;
+    --readable-on-accent: #071427;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] body {
+        --readable-text: #071427;
+        --readable-sub: #243b50;
+        --readable-muted: #4b6278;
+        --readable-on-accent: #071427;
+    }
+}
+
+body,
+body input,
+body textarea,
+body select,
+body .node-detail-title,
+body .node-group-name,
+body .node-name-cell,
+body .selected-node-display,
+body .auto-node-name,
+body .help-topic-title,
+body .modal-title,
+body .settings-switch-copy strong,
+body .settings-form-row strong,
+body .site-target-name,
+body .site-result-name,
+body .log-table th,
+body .log-table td,
+body .win-explorer-table th,
+body .win-explorer-table td {
+    color: var(--readable-text) !important;
+}
+
+body small,
+body .node-detail-subtitle,
+body .node-group-meta,
+body .selected-node-label,
+body .selected-node-group-display,
+body .selected-node-protocol-display,
+body .auto-node-source,
+body .auto-node-metrics,
+body .settings-switch-copy small,
+body .settings-form-row small,
+body .help-card p,
+body .help-topic-body,
+body .stats-label,
+body .site-target-url,
+body .site-result-message,
+body .empty-state,
+body .source-traffic-inline,
+body .custom-select-option,
+body .custom-select-button,
+body .traffic-pill {
+    color: var(--readable-sub) !important;
+}
+
+body .text-dim,
+body .latency.unknown,
+body .log-muted,
+body .node-card-meta,
+body .auto-select-card-subtitle,
+body .auto-select-rule-summary,
+body .help-muted {
+    color: var(--readable-muted) !important;
+}
+
+body .btn-primary,
+body .btn-success,
+body .btn-danger,
+body .btn-update,
+body .btn-delete,
+body .btn-action-primary,
+body .btn-mini-danger,
+body .settings-save-button,
+body .auto-select-run-button,
+body .auto-select-draw-rule,
+body .help-jump-button-primary,
+body .tabs-expand-button,
+body .node-group-current-badge,
+body[data-network-state] .proxy-mode-strip:not(.island-mode-strip) .proxy-mode-button.active,
+body[data-network-state] input:checked + .slider {
+    color: var(--readable-on-accent) !important;
+}
+
+body.tabs-collapsed .selected-node-display,
+body.tabs-collapsed .selected-node-label,
+body.tabs-collapsed .selected-node-group-display,
+body.tabs-collapsed .selected-node-protocol-display {
+    color: var(--home-mode-text, var(--readable-text)) !important;
+}
+
+:root[data-theme="light"] body.tabs-collapsed .selected-node-display,
+:root[data-theme="light"] body.tabs-collapsed .selected-node-label,
+:root[data-theme="light"] body.tabs-collapsed .selected-node-group-display,
+:root[data-theme="light"] body.tabs-collapsed .selected-node-protocol-display {
+    color: var(--home-mode-text, var(--readable-text)) !important;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] body.tabs-collapsed .selected-node-display,
+    :root[data-theme="system"] body.tabs-collapsed .selected-node-label,
+    :root[data-theme="system"] body.tabs-collapsed .selected-node-group-display,
+    :root[data-theme="system"] body.tabs-collapsed .selected-node-protocol-display {
+        color: var(--home-mode-text, var(--readable-text)) !important;
+    }
+}
+
+body.tabs-collapsed .connection-speed-strip,
+body.tabs-collapsed[data-network-state] .connection-speed-strip,
+:root[data-theme="light"] body.tabs-collapsed .connection-speed-strip,
+:root[data-theme="light"] body.tabs-collapsed[data-network-state] .connection-speed-strip {
+    min-height: 64px !important;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    border: 0 !important;
+}
+
+body.tabs-collapsed .home-speed-item,
+body.tabs-collapsed[data-network-state] .home-speed-item,
+:root[data-theme="light"] body.tabs-collapsed .home-speed-item,
+:root[data-theme="light"] body.tabs-collapsed[data-network-state] .home-speed-item {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: 0 !important;
+}
+
+:root[data-theme="light"] body.tabs-collapsed .home-speed-up {
+    color: color-mix(in srgb, var(--home-mode-accent) 76%, #263842) !important;
+}
+
+:root[data-theme="light"] body.tabs-collapsed .home-speed-down {
+    color: color-mix(in srgb, var(--home-mode-accent-2) 76%, #263842) !important;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] body.tabs-collapsed .connection-speed-strip,
+    :root[data-theme="system"] body.tabs-collapsed[data-network-state] .connection-speed-strip {
+        min-height: 64px !important;
+        background: transparent !important;
+        background-image: none !important;
+        box-shadow: none !important;
+        border: 0 !important;
+    }
+
+    :root[data-theme="system"] body.tabs-collapsed .home-speed-item,
+    :root[data-theme="system"] body.tabs-collapsed[data-network-state] .home-speed-item {
+        background: transparent !important;
+        box-shadow: none !important;
+        border: 0 !important;
+    }
+
+    :root[data-theme="system"] body.tabs-collapsed .home-speed-up {
+        color: color-mix(in srgb, var(--home-mode-accent) 76%, #263842) !important;
+    }
+
+    :root[data-theme="system"] body.tabs-collapsed .home-speed-down {
+        color: color-mix(in srgb, var(--home-mode-accent-2) 76%, #263842) !important;
+    }
+}
+
+/* Speed readouts are status text, not buttons: one mode color for both upload and download. */
+body[data-network-state="direct"] {
+    --home-speed-color: rgba(255, 255, 255, 0.78);
+}
+
+body[data-network-state="proxy"] {
+    --home-speed-color: #74b7d2;
+}
+
+body[data-network-state="tun"] {
+    --home-speed-color: #d1b66b;
+}
+
+body[data-network-state="proxy_tun"] {
+    --home-speed-color: #a18bcf;
+}
+
+body.tabs-collapsed .home-speed-up,
+body.tabs-collapsed .home-speed-down,
+body.tabs-collapsed[data-network-state] .home-speed-up,
+body.tabs-collapsed[data-network-state] .home-speed-down {
+    color: var(--home-speed-color) !important;
+}
+
+:root[data-theme="light"] body[data-network-state="direct"] {
+    --home-speed-color: #18272d;
+}
+
+:root[data-theme="light"] body[data-network-state="proxy"] {
+    --home-speed-color: #2f6f86;
+}
+
+:root[data-theme="light"] body[data-network-state="tun"] {
+    --home-speed-color: #765817;
+}
+
+:root[data-theme="light"] body[data-network-state="proxy_tun"] {
+    --home-speed-color: #60458a;
+}
+
+:root[data-theme="light"] body.tabs-collapsed .home-speed-up,
+:root[data-theme="light"] body.tabs-collapsed .home-speed-down,
+:root[data-theme="light"] body.tabs-collapsed[data-network-state] .home-speed-up,
+:root[data-theme="light"] body.tabs-collapsed[data-network-state] .home-speed-down {
+    color: var(--home-speed-color) !important;
+}
+
+@media (prefers-color-scheme: light) {
+    :root[data-theme="system"] body[data-network-state="direct"] {
+        --home-speed-color: #18272d;
+    }
+
+    :root[data-theme="system"] body[data-network-state="proxy"] {
+        --home-speed-color: #2f6f86;
+    }
+
+    :root[data-theme="system"] body[data-network-state="tun"] {
+        --home-speed-color: #765817;
+    }
+
+    :root[data-theme="system"] body[data-network-state="proxy_tun"] {
+        --home-speed-color: #60458a;
+    }
+
+    :root[data-theme="system"] body.tabs-collapsed .home-speed-up,
+    :root[data-theme="system"] body.tabs-collapsed .home-speed-down,
+    :root[data-theme="system"] body.tabs-collapsed[data-network-state] .home-speed-up,
+    :root[data-theme="system"] body.tabs-collapsed[data-network-state] .home-speed-down {
+        color: var(--home-speed-color) !important;
+    }
 }

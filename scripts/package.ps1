@@ -8,10 +8,12 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$version = if ($env:WING_VERSION) { $env:WING_VERSION } else { "1.0.4.8" }
+$version = if ($env:WING_VERSION) { $env:WING_VERSION } else { "1.0.5" }
 $fileVersion = $version
 if ($version -match '^(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)$') {
     $fileVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).$($Matches[4])$($Matches[5])"
+} elseif ($version -match '^(\d+)\.(\d+)\.(\d+)$') {
+    $fileVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
 }
 $issFile = Join-Path $repoRoot "installer\wing.iss"
 $setupExe = Join-Path $repoRoot "dist\wing-$version-windows-x64-setup.exe"

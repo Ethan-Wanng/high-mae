@@ -84,11 +84,19 @@ func GetPIDByLocalPort(port uint16) (uint32, error) {
 	return 0, fmt.Errorf("port %d not found in TCP table", port)
 }
 
+const (
+	cmdlineCacheTTL        = 3 * time.Second
+	maxCmdlineCacheEntries = 1000
+)
+
+type cmdlineCacheEntry struct {
+	value     string
+	expiresAt time.Time
+}
+
 var (
-	cmdlineCache   = make(map[uint32]string)
+	cmdlineCache   = make(map[uint32]cmdlineCacheEntry)
 	cmdlineCacheMu sync.RWMutex
-	cacheTTL       = 3 * time.Second
-	lastCleanup    time.Time
 )
 
 // GetCommandLineByPID retrieves the process name and full command line of a PID with caching
@@ -97,12 +105,14 @@ func GetCommandLineByPID(pid uint32) (string, error) {
 		return "", fmt.Errorf("invalid PID")
 	}
 
+	now := time.Now()
+
 	// Read cache
 	cmdlineCacheMu.RLock()
-	cmd, exists := cmdlineCache[pid]
+	entry, exists := cmdlineCache[pid]
 	cmdlineCacheMu.RUnlock()
-	if exists {
-		return cmd, nil
+	if exists && now.Before(entry.expiresAt) {
+		return entry.value, nil
 	}
 
 	// Fetch via PowerShell Get-CimInstance (highly compatible and stable on Windows).
@@ -123,10 +133,18 @@ func GetCommandLineByPID(pid uint32) (string, error) {
 
 	// Write cache
 	cmdlineCacheMu.Lock()
-	if len(cmdlineCache) > 1000 { // Prevent unbounded growth
-		cmdlineCache = make(map[uint32]string)
+	for cachedPID, cachedEntry := range cmdlineCache {
+		if now.After(cachedEntry.expiresAt) {
+			delete(cmdlineCache, cachedPID)
+		}
 	}
-	cmdlineCache[pid] = cmdline
+	if len(cmdlineCache) >= maxCmdlineCacheEntries {
+		cmdlineCache = make(map[uint32]cmdlineCacheEntry)
+	}
+	cmdlineCache[pid] = cmdlineCacheEntry{
+		value:     cmdline,
+		expiresAt: now.Add(cmdlineCacheTTL),
+	}
 	cmdlineCacheMu.Unlock()
 
 	return cmdline, nil

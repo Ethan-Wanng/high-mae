@@ -1,9 +1,9 @@
 #define MyAppName "wing"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.4.8"
+#define MyAppVersion "1.0.5"
 #endif
 #ifndef MyAppFileVersion
-#define MyAppFileVersion "1.0.4.76"
+#define MyAppFileVersion "1.0.5.0"
 #endif
 #define MyAppPublisher "Ethan-Wanng"
 #define MyAppURL "https://github.com/Ethan-Wanng/high-mae"

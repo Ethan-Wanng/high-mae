@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -598,6 +599,21 @@ func firstNonZero(values map[string]int64, keys ...string) int64 {
 	return 0
 }
 
+func safeSubscriptionLabel(raw string) string {
+	clean := strings.TrimSpace(raw)
+	if clean == "" {
+		return "<empty>"
+	}
+	parsed, err := url.Parse(clean)
+	if err != nil || parsed.Host == "" {
+		return fmt.Sprintf("<local input, %d bytes>", len(clean))
+	}
+	if parsed.Scheme == "" {
+		return parsed.Host
+	}
+	return parsed.Scheme + "://" + parsed.Host
+}
+
 func ParseSubscription(input string) ([]protocol.Node, error) {
 	nodes, _, err := ParseSubscriptionWithInfo(input)
 	return nodes, err
@@ -896,7 +912,7 @@ func UpdateAllSubscriptions() {
 				RefreshNodeMenu(nodes)
 			}
 		} else {
-			fmt.Printf("⚠️ 链接更新失败或无节点: %s\n", info.URL)
+			fmt.Printf("⚠️ 链接更新失败或无节点: %s\n", safeSubscriptionLabel(info.URL))
 		}
 	}
 

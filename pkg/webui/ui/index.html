@@ -76,22 +76,39 @@
                         <div id="selectedNodeGroupDisplay" class="selected-node-group-display">来源组: --</div>
                         <div id="selectedNodeProtocolDisplay" class="selected-node-protocol-display">协议 --</div>
                     </div>
+                    <div class="selected-node-label">当前节点</div>
                     <div class="selected-node-main-row">
                         <div id="selectedNodeDisplay" class="selected-node-display">当前节点: 正在加载...</div>
+                    </div>
+                    <div class="connection-mode-row">
                         <div class="proxy-mode-strip" aria-label="代理模式">
                             <button class="proxy-mode-button" data-preset="direct" onclick="activateProxyPreset('direct')" title="直连" aria-label="直连">
                                 <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14"></path><path d="m13 7 5 5-5 5"></path></svg>
+                                <span class="proxy-mode-label">直连</span>
                             </button>
                             <button class="proxy-mode-button" data-preset="proxy" onclick="activateProxyPreset('proxy')" title="代理" aria-label="代理">
                                 <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16"></path><path d="M12 4a12 12 0 0 1 0 16"></path><path d="M12 4a12 12 0 0 0 0 16"></path></svg>
+                                <span class="proxy-mode-label">代理</span>
                             </button>
                             <button class="proxy-mode-button" data-preset="tun" onclick="activateProxyPreset('tun')" title="TUN" aria-label="TUN">
                                 <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7v5c0 5-3.4 8.4-8 9-4.6-.6-8-4-8-9V7l8-4Z"></path><path d="M9 12h6"></path></svg>
+                                <span class="proxy-mode-label">TUN</span>
                             </button>
                             <button class="proxy-mode-button" data-preset="proxy_tun" onclick="activateProxyPreset('proxy_tun')" title="代理+TUN" aria-label="代理+TUN">
                                 <svg class="proxy-mode-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7v5c0 5-3.4 8.4-8 9-4.6-.6-8-4-8-9V7l8-4Z"></path><path d="M8 12h8"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                <span class="proxy-mode-label">代理+TUN</span>
                             </button>
                         </div>
+                    </div>
+                </div>
+                <div class="connection-speed-strip" aria-label="实时速度">
+                    <div class="home-speed-item home-speed-up">
+                        <svg class="speed-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5"></path><path d="m6 11 6-6 6 6"></path></svg>
+                        <span id="homeSpeedOut">0 B/s</span>
+                    </div>
+                    <div class="home-speed-item home-speed-down">
+                        <svg class="speed-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"></path><path d="m18 13-6 6-6-6"></path></svg>
+                        <span id="homeSpeedIn">0 B/s</span>
                     </div>
                 </div>
             </div>
@@ -410,7 +427,7 @@
                                     <strong>代理服务</strong>
                                     <small>开启系统 HTTP/SOCKS 代理入口。</small>
                                 </span>
-                                <span class="toggle"><input type="checkbox" id="chkProxy" onchange="doAction('proxy', this.checked)"><span class="slider"></span></span>
+                                <span class="toggle"><input type="checkbox" id="chkProxy" onchange="activateProxyToggle('proxy', this.checked)"><span class="slider"></span></span>
                             </label>
                             <label class="settings-switch-card">
                                 <span class="settings-switch-copy">
@@ -424,7 +441,7 @@
                                     <strong>隧道连接</strong>
                                     <small>接管不遵循系统代理的应用流量。</small>
                                 </span>
-                                <span class="toggle"><input type="checkbox" id="chkTun" onchange="doAction('tun', this.checked)"><span class="slider"></span></span>
+                                <span class="toggle"><input type="checkbox" id="chkTun" onchange="activateProxyToggle('tun', this.checked)"><span class="slider"></span></span>
                             </label>
                             <label class="settings-switch-card">
                                 <span class="settings-switch-copy">

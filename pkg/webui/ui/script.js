@@ -30,10 +30,15 @@ let autoSelectQueuedRun = null;
 let autoSelectAbortController = null;
 let autoSelectRunSeq = 0;
 let autoSelectRuleChangeRestartTimer = null;
+let autoSelectResumeAfterModeSwitch = false;
 let nodeGroupAnimationSeq = 0;
 let autoSelectEditingRuleId = "";
 let autoSelectLastDrawnRuleId = "";
 let lastConnectionStatus = {};
+let modeSwitchInFlight = false;
+let queuedProxyPreset = null;
+let modeSwitchTarget = null;
+let modeSwitchStartedAt = 0;
 let appUpdateInfo = null;
 let appUpdateNoticeShown = false;
 let islandIdleTimer = null;
@@ -46,6 +51,10 @@ let shareQRCodeURL = "";
 
 const statusPollIntervalMs = 5000;
 const dashboardPollIntervalMs = 10000;
+const proxyPresetNames = new Set(['direct', 'proxy', 'tun', 'proxy_tun']);
+const modeSwitchGraceMs = 18000;
+const modeSwitchSettleMs = 14000;
+const autoSelectModeRetryMs = 3000;
 
 const nativeFetch = window.fetch.bind(window);
 window.fetch = (input, init = {}) => {
@@ -370,21 +379,133 @@ async function loadStatus() {
     try {
         const res = await fetch('/api/status');
         const st = await res.json();
-        lastConnectionStatus = st || {};
+        const viewStatus = modeStatusForDisplay(st || {});
+        lastConnectionStatus = viewStatus || {};
         const proxyEl = document.getElementById('chkProxy');
         const modeEl = document.getElementById('chkMode');
         const tunEl = document.getElementById('chkTun');
         const webrtcEl = document.getElementById('chkWebRTC');
         const speedEl = document.getElementById('speedMonitor');
-        if (proxyEl) proxyEl.checked = st.proxy;
-        if (modeEl) modeEl.checked = (st.mode === 'Global');
-        if (tunEl) tunEl.checked = st.tun;
-        if (webrtcEl) webrtcEl.checked = st.webrtc;
+        const homeSpeedOutEl = document.getElementById('homeSpeedOut');
+        const homeSpeedInEl = document.getElementById('homeSpeedIn');
+        if (proxyEl) proxyEl.checked = !!viewStatus.proxy;
+        if (modeEl) modeEl.checked = (viewStatus.mode === 'Global');
+        if (tunEl) tunEl.checked = !!viewStatus.tun;
+        if (webrtcEl) webrtcEl.checked = !!viewStatus.webrtc;
         if (speedEl) speedEl.innerHTML = '↑ ' + st.speedOut + ' &nbsp; ↓ ' + st.speedIn;
-        updateConnectionState(st);
+        if (homeSpeedOutEl) homeSpeedOutEl.textContent = st.speedOut || '0 B/s';
+        if (homeSpeedInEl) homeSpeedInEl.textContent = st.speedIn || '0 B/s';
+        updateConnectionState(viewStatus);
         renderFreeTrafficState(st.freeTraffic);
         updateConnectionNodeSummary();
     } catch(e) {}
+}
+
+function normalizeProxyPreset(preset) {
+    return proxyPresetNames.has(preset) ? preset : 'direct';
+}
+
+function statusForProxyPreset(preset) {
+    const normalized = normalizeProxyPreset(preset);
+    return {
+        proxy: normalized === 'proxy' || normalized === 'proxy_tun',
+        tun: normalized === 'tun' || normalized === 'proxy_tun'
+    };
+}
+
+function presetFromProxyTun(proxyOn, tunOn) {
+    if (proxyOn && tunOn) return 'proxy_tun';
+    if (proxyOn) return 'proxy';
+    if (tunOn) return 'tun';
+    return 'direct';
+}
+
+function statusMatchesProxyPreset(status, preset) {
+    const target = statusForProxyPreset(preset);
+    return !!status?.proxy === target.proxy && !!status?.tun === target.tun;
+}
+
+function isModeSwitchBusy() {
+    return modeSwitchInFlight || !!modeSwitchTarget;
+}
+
+function isStatusModePending(status) {
+    return !!status?.proxyPending || !!status?.tunPending;
+}
+
+function shouldHoldModeTarget(status) {
+    if (!modeSwitchTarget || !modeSwitchStartedAt) return false;
+    if (Date.now() - modeSwitchStartedAt > modeSwitchGraceMs) return false;
+    return isStatusModePending(status) || !statusMatchesProxyPreset(status, modeSwitchTarget);
+}
+
+function modeStatusForDisplay(status = {}) {
+    if (!shouldHoldModeTarget(status)) return status;
+    const target = statusForProxyPreset(modeSwitchTarget);
+    return { ...status, proxy: target.proxy, tun: target.tun, tunnel: target.tun };
+}
+
+function currentProxyTunStatus() {
+    const proxyControl = document.getElementById('chkProxy');
+    const tunControl = document.getElementById('chkTun');
+    return {
+        proxy: proxyControl ? !!proxyControl.checked : !!lastConnectionStatus.proxy,
+        tun: tunControl ? !!tunControl.checked : !!lastConnectionStatus.tun
+    };
+}
+
+function setModeControls(proxyOn, tunOn) {
+    const proxyControl = document.getElementById('chkProxy');
+    const tunControl = document.getElementById('chkTun');
+    if (proxyControl) proxyControl.checked = !!proxyOn;
+    if (tunControl) tunControl.checked = !!tunOn;
+}
+
+function applyModePresetLocally(preset) {
+    const target = statusForProxyPreset(preset);
+    setModeControls(target.proxy, target.tun);
+    lastConnectionStatus = {
+        ...(lastConnectionStatus || {}),
+        proxy: target.proxy,
+        tun: target.tun,
+        tunnel: target.tun
+    };
+    updateConnectionState(lastConnectionStatus);
+}
+
+async function readStatusSnapshot(signal) {
+    if (signal?.aborted) return null;
+    try {
+        const res = await fetch('/api/status', { signal });
+        if (!res.ok) return null;
+        return await res.json();
+    } catch(e) {
+        return null;
+    }
+}
+
+function setModeSwitchTarget(preset) {
+    modeSwitchTarget = normalizeProxyPreset(preset);
+    modeSwitchStartedAt = Date.now();
+}
+
+async function waitForModePreset(preset, signal) {
+    const startedAt = Date.now();
+    let sawExpectedPendingState = false;
+    while (Date.now() - startedAt < modeSwitchSettleMs) {
+        if (signal?.aborted) return { ok: false, aborted: true };
+        const status = await readStatusSnapshot(signal);
+        if (status && statusMatchesProxyPreset(status, preset)) {
+            if (!isStatusModePending(status)) {
+                lastConnectionStatus = status;
+                applyModePresetLocally(preset);
+                return { ok: true };
+            }
+            sawExpectedPendingState = true;
+        }
+        await sleep(sawExpectedPendingState ? 350 : 220, signal);
+    }
+    return { ok: true, pending: sawExpectedPendingState };
 }
 
 function updateConnectionState(status = {}) {
@@ -415,7 +536,7 @@ function effectiveThemeMode() {
 
 function currentModeLogoSrc() {
     const state = document.body?.dataset?.networkState || 'direct';
-    if (state === 'proxy_tun') return 'logo-mark-proxy-tun.png';
+    if (state === 'proxy_tun') return 'logo-mark-app.png';
     if (state === 'proxy') return 'logo-mark-proxy.png';
     if (state === 'tun') return 'logo-mark-tun.png';
     return effectiveThemeMode() === 'light' ? 'logo-mark-direct-light.png' : 'logo-mark-direct-dark.png';
@@ -709,21 +830,23 @@ function renderNodes(options = {}) {
     grid.innerHTML = `
         <section class="node-card-table">
             <div class="source-card-deck"></div>
+            ${selectedGroup ? `
             <div class="node-deck-window">
                 ${showDetailHeader ? `
                 <div class="node-detail-header">
                     <div class="node-detail-heading">
                         <div class="node-detail-title-row">
-                            <div class="node-detail-title">${selectedGroup ? `${escapeHTML(selectedGroup.name)}${selectedGroupTraffic}` : "未展开组"}</div>
-                            <div class="node-detail-actions">${selectedGroup ? renderSelectedGroupActions(selectedGroup) : ''}</div>
+                            <div class="node-detail-title">${escapeHTML(selectedGroup.name)}${selectedGroupTraffic}</div>
+                            <div class="node-detail-actions">${renderSelectedGroupActions(selectedGroup)}</div>
                         </div>
-                        <div class="node-detail-subtitle">${selectedGroup ? `${selectedNodes.length} 个节点${keyword ? "匹配当前搜索" : ""}` : "点击上方订阅组展开节点"}</div>
+                        <div class="node-detail-subtitle">${selectedNodes.length} 个节点${keyword ? "匹配当前搜索" : ""}</div>
                     </div>
                 </div>
                 ` : ''}
                 <div class="node-inline-toolbar-slot"></div>
                 <div class="node-detail-body"></div>
             </div>
+            ` : ''}
         </section>
     `;
 
@@ -732,26 +855,24 @@ function renderNodes(options = {}) {
         const item = document.createElement('button');
         const isSelected = selectedGroup && group.fileName === selectedGroup.fileName;
         const showActive = !autoSelectConfig?.enabled && group.active;
-        item.className = `source-push-card ${isSelected ? 'selected' : ''} ${showActive ? 'active' : ''}`;
+        item.className = `source-push-card ${isSelected ? 'selected is-browsing-source' : ''} ${showActive ? 'active is-current-source' : ''}`;
         item.dataset.fileName = group.fileName;
         item.onclick = () => selectNodeGroup(group.fileName);
         const traffic = '';
         item.innerHTML = `
             <span class="source-card-shine"></span>
             <span class="node-group-name"><span class="node-group-name-text">${escapeHTML(group.name)}</span>${traffic}</span>
-            <span class="node-group-meta">${showActive ? '当前 · ' : ''}${group.count || 0} 节点</span>
+            <span class="node-group-meta">${showActive ? '<span class="node-group-current-badge">当前</span>' : ''}<span>${group.count || 0} 节点</span></span>
         `;
         list.appendChild(item);
     });
 
-    if (selectedGroup) mountNodeInlineToolbar(grid.querySelector('.node-inline-toolbar-slot'));
     restoreNodeSearchFocus(searchFocus);
-
-    const body = grid.querySelector('.node-detail-body');
     if (!selectedGroup) {
-        body.innerHTML = '<div class="empty-state">点击上方订阅组展开节点列表。</div>';
         return;
     }
+    mountNodeInlineToolbar(grid.querySelector('.node-inline-toolbar-slot'));
+    const body = grid.querySelector('.node-detail-body');
     if (!selectedNodes.length) {
         body.innerHTML = '<div class="empty-state">没有匹配的节点。</div>';
         return;
@@ -1026,28 +1147,6 @@ async function switchAggregateGroup(fileName) {
     await loadNodes();
 }
 
-async function deleteAggregateGroup() {
-    const sel = document.getElementById('aggregateSelect');
-    const file = sel.value;
-    const name = sel.options[sel.selectedIndex]?.text || file;
-    if (!file) return;
-    if (!confirm('确定要删除聚合组「' + name + '」吗？')) return;
-    const btn = document.getElementById('btnDeleteAgg');
-    btn.disabled = true;
-    btn.textContent = '🗑 删除中...';
-    try {
-        const res = await fetch('/api/delete_aggregate_group?file=' + encodeURIComponent(file), { method: 'POST' });
-        if (res.ok) {
-            loadAggregateGroups();
-            loadNodes();
-        }
-    } catch(e) {
-        alert('请求失败');
-    }
-    btn.disabled = false;
-    btn.textContent = '🗑 删除聚合组';
-}
-
 function renderSupplierTraffic(fileName) {
     const el = document.getElementById('supplierTraffic');
     if (!el) return;
@@ -1133,34 +1232,6 @@ async function useFreeTraffic() {
     if (btn.textContent === '启用中') btn.textContent = oldText;
     btn.disabled = false;
     loadStatus();
-}
-
-async function selectDirect() {
-    const btn = document.getElementById('btnDirect');
-    const oldText = btn?.textContent || '直连';
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = '切换中';
-    }
-    try {
-        const res = await fetch('/api/direct', { method: 'POST' });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data.ok === false) {
-            showToast(data.msg || '切换直连失败', 'error');
-            return;
-        }
-        allNodesList = allNodesList.map(n => ({ ...n, active: false }));
-        showToast(data.msg || '已不选择节点，当前为直连', 'success');
-        await loadNodes();
-        loadStatus();
-    } catch(e) {
-        showToast('切换直连请求失败', 'error');
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = oldText;
-        }
-    }
 }
 
 function showToast(msg, type = 'info', duration = 4000) {
@@ -1270,7 +1341,8 @@ async function doAction(type, desiredState = null, options = {}) {
     if (options.signal) {
         options.signal.addEventListener('abort', abortRequest, { once: true });
     }
-    const timeout = setTimeout(abortRequest, (type === 'tun' || type === 'tunnel') ? 12000 : 5000);
+    const modeActionTimeoutMs = (type === 'proxy' || type === 'tun' || type === 'tunnel') ? 30000 : 8000;
+    const timeout = setTimeout(abortRequest, modeActionTimeoutMs);
     try {
         const params = new URLSearchParams({ type });
         if (typeof desiredState === 'boolean') {
@@ -1307,30 +1379,99 @@ async function doAction(type, desiredState = null, options = {}) {
     }
 }
 
+async function waitForActionSlot(type, signal, timeoutMs = 2200) {
+    const deadline = Date.now() + timeoutMs;
+    while (pendingActions.has(type) && Date.now() < deadline) {
+        await sleep(90, signal);
+    }
+}
+
 async function activateProxyPreset(preset, options = {}) {
-    if (options.runContext) assertAutoSelectActive(options.runContext, options);
+    const autoSelectAssertOptions = options.runContext ? { ...options, allowDuringModeSwitch: true } : options;
+    if (options.runContext) assertAutoSelectActive(options.runContext, autoSelectAssertOptions);
     if (options.signal?.aborted) return { ok: false, aborted: true };
-    const proxyControl = document.getElementById('chkProxy');
-    const tunControl = document.getElementById('chkTun');
-    const proxyOn = proxyControl ? !!proxyControl.checked : !!lastConnectionStatus.proxy;
-    const tunOn = tunControl ? !!tunControl.checked : !!lastConnectionStatus.tun;
-    const wantProxy = preset === 'proxy' || preset === 'proxy_tun';
-    const wantTun = preset === 'tun' || preset === 'proxy_tun';
-    if (proxyOn !== wantProxy) {
-        const result = await doAction('proxy', wantProxy, { signal: options.signal, silent: options.silent });
-        if (result?.ok === false) return result;
-        if (options.runContext) assertAutoSelectActive(options.runContext, options);
-        await sleep(250, options.signal);
+    pauseAutoSelectForModeSwitch(options);
+    const firstPreset = normalizeProxyPreset(preset);
+    if (modeSwitchInFlight) {
+        queuedProxyPreset = firstPreset;
+        setModeSwitchTarget(firstPreset);
+        applyModePresetLocally(firstPreset);
+        return { ok: true, queued: true };
     }
-    if (options.runContext) assertAutoSelectActive(options.runContext, options);
-    if (tunOn !== wantTun) {
-        const result = await doAction('tun', wantTun, { signal: options.signal, silent: options.silent });
-        if (result?.ok === false) return result;
+
+    modeSwitchInFlight = true;
+    let currentPreset = firstPreset;
+    let lastResult = { ok: true };
+    try {
+        while (currentPreset) {
+            queuedProxyPreset = null;
+            setModeSwitchTarget(currentPreset);
+            applyModePresetLocally(currentPreset);
+
+            const target = statusForProxyPreset(currentPreset);
+            const snapshot = await readStatusSnapshot(options.signal);
+            const current = snapshot
+                ? { proxy: !!snapshot.proxy, tun: !!snapshot.tun }
+                : currentProxyTunStatus();
+
+            if (current.proxy !== target.proxy) {
+                await waitForActionSlot('proxy', options.signal);
+                lastResult = await doAction('proxy', target.proxy, { signal: options.signal, silent: options.silent });
+                if (lastResult?.ok === false) return lastResult;
+                if (lastResult?.restarting) return lastResult;
+                if (options.runContext) assertAutoSelectActive(options.runContext, autoSelectAssertOptions);
+                applyModePresetLocally(queuedProxyPreset || currentPreset);
+                await sleep(180, options.signal);
+                if (queuedProxyPreset && queuedProxyPreset !== currentPreset) {
+                    currentPreset = queuedProxyPreset;
+                    continue;
+                }
+            }
+
+            if (options.runContext) assertAutoSelectActive(options.runContext, autoSelectAssertOptions);
+            if (current.tun !== target.tun) {
+                await waitForActionSlot('tun', options.signal);
+                lastResult = await doAction('tun', target.tun, { signal: options.signal, silent: options.silent });
+                if (lastResult?.ok === false) return lastResult;
+                if (lastResult?.restarting) return lastResult;
+                applyModePresetLocally(queuedProxyPreset || currentPreset);
+            }
+
+            if (options.runContext) assertAutoSelectActive(options.runContext, autoSelectAssertOptions);
+            await waitForModePreset(currentPreset, options.signal);
+            if (queuedProxyPreset && queuedProxyPreset !== currentPreset) {
+                currentPreset = queuedProxyPreset;
+                continue;
+            }
+            currentPreset = null;
+        }
+        return lastResult || { ok: true };
+    } catch(e) {
+        if (e?.message === 'auto_select_stopped' || options.signal?.aborted) {
+            return { ok: false, aborted: true };
+        }
+        if (!options.silent) showToast('切换请求失败，请检查 wing 是否仍在运行。', 'error');
+        return { ok: false, error: e?.message || 'mode switch failed' };
+    } finally {
+        modeSwitchInFlight = false;
+        queuedProxyPreset = null;
+        modeSwitchTarget = null;
+        modeSwitchStartedAt = 0;
+        setTimeout(loadStatus, 350);
+        setTimeout(loadStatus, 1800);
+        setTimeout(loadStatus, 5000);
+        resumeAutoSelectAfterModeSwitch();
     }
-    if (options.runContext) assertAutoSelectActive(options.runContext, options);
-    setTimeout(loadStatus, 350);
-    setTimeout(loadStatus, 1800);
-    return { ok: true };
+}
+
+function activateProxyToggle(type, checked, options = {}) {
+    const current = currentProxyTunStatus();
+    if (type === 'proxy') {
+        current.proxy = !!checked;
+    } else if (type === 'tun' || type === 'tunnel') {
+        current.tun = !!checked;
+    }
+    return activateProxyPreset(presetFromProxyTun(current.proxy, current.tun), options);
 }
 
 async function loadSystemConfig() {
@@ -1531,10 +1672,14 @@ function currentNodeGroupLabel(activeNode) {
 
 
 
-async function switchNode(idx) {
+async function switchNode(idx, options = {}) {
     if (switchingNodeIndex !== null) {
-        showToast('节点正在切换中，请稍候。', 'info');
-        return;
+        if (!options.silent) showToast('节点正在切换中，请稍候。', 'info');
+        return false;
+    }
+    if (isModeSwitchBusy()) {
+        if (!options.silent) showToast('模式正在切换中，请稍候再切换节点。', 'info');
+        return false;
     }
     switchingNodeIndex = idx;
     const previousNodes = allNodesList.map(n => ({ ...n }));
@@ -1549,17 +1694,21 @@ async function switchNode(idx) {
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data.ok === false) {
             allNodesList = previousNodes;
-            showToast(data.msg || '节点切换失败', 'error');
-            return;
+            if (!options.silent) showToast(data.msg || '节点切换失败', 'error');
+            return false;
         }
-        if (data.msg) showToast(data.msg, 'info', 1800);
+        if (data.msg && !options.silent) showToast(data.msg, 'info', 1800);
         setTimeout(loadNodes, 500);
         setTimeout(loadNodes, 1800);
         setTimeout(loadNodes, 4500);
         loadStatus();
+        return true;
     } catch(e) {
         allNodesList = previousNodes;
-        showToast(e.name === 'AbortError' ? '节点切换请求超时，请稍后查看当前节点状态。' : '节点切换请求失败。', 'error');
+        if (!options.silent) {
+            showToast(e.name === 'AbortError' ? '节点切换请求超时，请稍后查看当前节点状态。' : '节点切换请求失败。', 'error');
+        }
+        return false;
     } finally {
         clearTimeout(timeout);
         setTimeout(() => {
@@ -2215,8 +2364,8 @@ function setAutoSelectNowButtonBusy(isBusy) {
     btn.disabled = !!isBusy || !autoSelectConfig?.enabled;
 }
 
-function stopAutoSelectSelection() {
-    if (autoSelectTimer) {
+function stopAutoSelectSelection(options = {}) {
+    if (!options.keepTimer && autoSelectTimer) {
         clearInterval(autoSelectTimer);
         autoSelectTimer = null;
     }
@@ -2233,6 +2382,26 @@ function stopAutoSelectSelection() {
     setAutoSelectNowButtonBusy(false);
 }
 
+function hasAutoSelectWork() {
+    return autoSelectRunning || !!autoSelectAbortController || !!autoSelectRunTimer || !!autoSelectQueuedRun;
+}
+
+function pauseAutoSelectForModeSwitch(options = {}) {
+    if (options.runContext || !autoSelectConfig?.enabled || !hasAutoSelectWork()) return false;
+    autoSelectResumeAfterModeSwitch = true;
+    stopAutoSelectSelection({ keepTimer: true });
+    if (!options.silent) showToast('已暂停自动选择，优先切换模式。', 'info', 1800);
+    return true;
+}
+
+function resumeAutoSelectAfterModeSwitch() {
+    if (!autoSelectResumeAfterModeSwitch) return;
+    autoSelectResumeAfterModeSwitch = false;
+    if (!autoSelectConfig?.enabled) return;
+    scheduleAutoSelectTimer();
+    scheduleAutoSelectRun(3600);
+}
+
 function autoSelectStoppedError() {
     return new Error('auto_select_stopped');
 }
@@ -2242,6 +2411,9 @@ function assertAutoSelectActive(runContext, options = {}) {
         throw autoSelectStoppedError();
     }
     if (!options.force && !autoSelectConfig?.enabled) {
+        throw autoSelectStoppedError();
+    }
+    if (!options.allowDuringModeSwitch && isModeSwitchBusy()) {
         throw autoSelectStoppedError();
     }
 }
@@ -2661,24 +2833,6 @@ function syncAutoSelectPickerValue(inputId, pickerId) {
     input.value = values.join(',');
 }
 
-function autoSelectRuleValueEditor(rule) {
-    const values = autoSelectRuleValues(rule);
-    if (!autoSelectRuleUsesPicker(rule.type)) {
-        return `<input type="text" value="${escapeAttr(values.join(','))}" data-auto-select-action="rule-value" data-rule-id="${escapeAttr(rule.id)}">`;
-    }
-    const options = selectableAutoSelectValues(rule.type);
-    if (!options.length) {
-        return `<input type="text" value="${escapeAttr(values.join(','))}" data-auto-select-action="rule-value" data-rule-id="${escapeAttr(rule.id)}">`;
-    }
-    const selected = new Set(values);
-    return `<div class="auto-select-picker compact">${options.map(value => `
-        <label class="auto-select-check">
-            <input type="checkbox" ${selected.has(value) ? 'checked' : ''} data-auto-select-action="rule-picked" data-rule-id="${escapeAttr(rule.id)}" data-value="${escapeAttr(value)}">
-            <span>${escapeHTML(value)}</span>
-        </label>
-    `).join('')}</div>`;
-}
-
 function updateAutoSelectRuleType(encodedId, type) {
     const id = decodeAutoSelectParam(encodedId);
     const rule = autoSelectConfig?.rules?.find(r => r.id === id);
@@ -2947,14 +3101,6 @@ function autoSelectRuleCardRank(type) {
     return ranks[type] || 'RL';
 }
 
-function autoSelectRuleSuit(type) {
-    if (String(type || '').startsWith('exclude')) return '弃';
-    if (type === 'include_protocol' || type === 'exclude_protocol') return '协';
-    if (type === 'include_subscription' || type === 'include_aggregate_group') return '组';
-    if (type === 'include_node') return '点';
-    return '选';
-}
-
 function autoSelectRuleDescription(rule) {
     const values = autoSelectRuleValues(rule).join('、') || rule.value || '';
     switch (rule.type) {
@@ -3116,26 +3262,6 @@ function autoSelectCandidates(fileName = '') {
     return [];
 }
 
-function bestAutoSelectNode(fileName = selectedNodeGroupFile) {
-    const candidates = autoSelectCandidates(fileName)
-        .filter(n => n.latency > 0)
-        .filter(nodePassesAutoSelectRules);
-    candidates.sort((a, b) => a.latency - b.latency);
-    return candidates[0] || null;
-}
-
-function maybeAutoSelectNode(fileName = selectedNodeGroupFile) {
-    if (!autoSelectConfig?.enabled || switchingNodeIndex !== null) return;
-    const best = bestAutoSelectNode(fileName);
-    if (!best) {
-        showToast(`${autoSelectScopeName(autoSelectConfig.scope)}自动选择未找到可用节点`, 'warning');
-        return;
-    }
-    if (best.active) return;
-    showToast(`自动选择 ${best.name} · ${best.latency} ms`, 'success');
-    switchNode(best.index);
-}
-
 function sleep(ms, signal) {
     if (signal?.aborted) return Promise.reject(autoSelectStoppedError());
     return new Promise((resolve, reject) => {
@@ -3194,7 +3320,8 @@ async function switchNodeAndWait(idx, runContext, options = {}) {
     assertAutoSelectActive(runContext, options);
     const node = allNodesList.find(n => n.index === idx);
     if (node?.active) return true;
-    await switchNode(idx);
+    const accepted = await switchNode(idx, { silent: options.silent });
+    if (!accepted) return false;
     await sleep(5500, runContext.signal);
     assertAutoSelectActive(runContext, options);
     await loadNodes();
@@ -3239,6 +3366,13 @@ async function pickAutoSelectNodeWithSiteRules(candidates, runContext, options =
 async function runAutoSelectCycle(options = {}) {
     if (!autoSelectConfig?.enabled && !options.force) {
         if (!options.silent) showToast('请先开启自动选择节点', 'warning');
+        return;
+    }
+    if (isModeSwitchBusy()) {
+        if (!options.silent) showToast('模式正在切换中，自动选择稍后运行。', 'info', 1800);
+        queueAutoSelectRun({ ...options, silent: true });
+        setAutoSelectNowButtonBusy(true);
+        drainAutoSelectQueuedRun(autoSelectModeRetryMs);
         return;
     }
     if (autoSelectRunning || switchingNodeIndex !== null) {
@@ -3420,29 +3554,6 @@ async function updateSupplier() {
 
     btn.disabled = false;
     btn.innerHTML = '🔄';
-}
-
-async function deleteSupplier() {
-    const sel = document.getElementById('supplierSelect');
-    const file = sel.value;
-    const name = sel.options[sel.selectedIndex]?.text || file;
-    if (!file) return;
-    if (!confirm('确定要删除供应商「' + name + '」吗？\n此操作将同时删除对应的本地节点文件，不可恢复。')) return;
-    const btn = document.getElementById('btnDelete');
-    btn.disabled = true;
-    btn.textContent = '🗑 删除中...';
-    try {
-        const res = await fetch('/api/delete_supplier?file=' + encodeURIComponent(file), { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-            loadSuppliers();
-            loadNodes();
-        }
-    } catch(e) {
-        alert('请求失败');
-    }
-    btn.disabled = false;
-    btn.textContent = '🗑 删除订阅';
 }
 
 async function updateSupplierFile(encodedFile, btn, event) {
@@ -4179,15 +4290,6 @@ function escapeAttr(value) {
         .replace(/>/g, '&gt;');
 }
 
-function escapeHtml(value) {
-    return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
 function ruleTypeOptions(selected) {
     const types = [
         ['domain_suffix', '域名后缀'],
@@ -4901,10 +5003,6 @@ function renderRules() {
     });
     list.innerHTML = html;
     scheduleCustomSelectSync();
-}
-
-function cmdRuleTypeName(type) {
-    return type === 'exact' ? '完整命令' : '命令前缀';
 }
 
 function renderCmdRules() {

@@ -124,37 +124,6 @@ func SecureWriteFile(filename string, data []byte) error {
 	return storage.Write(filename, finalData)
 }
 
-func writeFileBestEffortAtomic(filename string, data []byte, perm os.FileMode) error {
-	dir := "."
-	if idx := strings.LastIndexAny(filename, `\/`); idx >= 0 {
-		dir = filename[:idx]
-	}
-	tmp, err := os.CreateTemp(dir, ".wing-*")
-	if err != nil {
-		return os.WriteFile(filename, data, perm)
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, filename); err != nil {
-		if removeErr := os.Remove(filename); removeErr != nil && !os.IsNotExist(removeErr) {
-			return err
-		}
-		return os.Rename(tmpName, filename)
-	}
-	return nil
-}
-
 func SecureReadFile(filename string) ([]byte, error) {
 	data, err := storage.ReadOrMigrateFile(filename)
 	if err != nil {

@@ -40,12 +40,14 @@ var (
 	// Cache latency to avoid re-testing constantly
 	latencyCache sync.Map
 	speedCache   sync.Map
-	// TUN 切换中标记，防止轮询期间闪烁
-	tunPending       atomic.Bool
-	tunPendingState  atomic.Bool
-	nodeSwitching    atomic.Bool
-	startupStateMu   sync.Mutex
-	startupStateDone bool
+	// 模式切换中标记，防止轮询期间闪烁，也避免请求卡在网络切换锁上。
+	proxyPending      atomic.Bool
+	proxyPendingState atomic.Bool
+	tunPending        atomic.Bool
+	tunPendingState   atomic.Bool
+	nodeSwitching     atomic.Bool
+	startupStateMu    sync.Mutex
+	startupStateDone  bool
 )
 
 type AggregateGroup struct {
@@ -206,7 +208,17 @@ var (
 const (
 	apiRequestHeader      = "X-Wing-Request"
 	apiRequestHeaderValue = "webui"
+	smallJSONBodyLimit    = 64 * 1024
+	defaultJSONBodyLimit  = 1 << 20
+	largeJSONBodyLimit    = 8 << 20
 )
+
+func decodeLimitedJSON(w http.ResponseWriter, r *http.Request, dst any, limit int64) error {
+	if limit <= 0 {
+		limit = defaultJSONBodyLimit
+	}
+	return json.NewDecoder(http.MaxBytesReader(w, r.Body, limit)).Decode(dst)
+}
 
 func localAPIHandler(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -439,7 +451,7 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 					Type:       n.Type,
 					Latency:    latency,
 					Speed:      speed,
-					Active:     n.Name == common.ActiveNodeName,
+					Active:     s.FileName == sub.CurrentConfigFile && n.Name == common.ActiveNodeName,
 					Group:      s.Name,
 					FileName:   s.FileName,
 					SubIndex:   subIdx,
@@ -472,7 +484,7 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 					Type:       n.Type,
 					Latency:    latency,
 					Speed:      speed,
-					Active:     n.Name == common.ActiveNodeName,
+					Active:     g.FileName == sub.CurrentConfigFile && n.Name == common.ActiveNodeName,
 					Group:      g.Name,
 					FileName:   g.FileName,
 					SubIndex:   subIdx,
@@ -503,7 +515,7 @@ func rulesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost {
 		var groups []routing.RuleGroup
-		if err := json.NewDecoder(r.Body).Decode(&groups); err != nil {
+		if err := decodeLimitedJSON(w, r, &groups, defaultJSONBodyLimit); err != nil {
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
@@ -532,7 +544,7 @@ func applyRulesHandler(w http.ResponseWriter, r *http.Request) {
 		RuleGroups []routing.RuleGroup `json:"ruleGroups"`
 		CmdRules   []routing.CmdRule   `json:"cmdRules"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeLimitedJSON(w, r, &req, defaultJSONBodyLimit); err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
@@ -752,7 +764,7 @@ func cmdRulesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost {
 		var rules []routing.CmdRule
-		if err := json.NewDecoder(r.Body).Decode(&rules); err != nil {
+		if err := decodeLimitedJSON(w, r, &rules, defaultJSONBodyLimit); err != nil {
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
@@ -826,7 +838,7 @@ func createAggregatedGroupHandler(w http.ResponseWriter, r *http.Request) {
 		Name  string          `json:"name"`
 		Nodes []protocol.Node `json:"nodes"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeLimitedJSON(w, r, &req, largeJSONBodyLimit); err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
@@ -886,6 +898,23 @@ func aggregateGroupByFile(fileName string) (AggregateGroup, bool) {
 		}
 	}
 	return AggregateGroup{}, false
+}
+
+func subscriptionByFile(fileName string) (sub.SubInfo, bool) {
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		return sub.SubInfo{}, false
+	}
+	links, err := sub.ReadSubscriptions()
+	if err != nil {
+		return sub.SubInfo{}, false
+	}
+	for _, link := range links {
+		if link.FileName == fileName {
+			return link, true
+		}
+	}
+	return sub.SubInfo{}, false
 }
 
 func isManagedAggregateGroupFileName(fileName string) bool {
@@ -1235,7 +1264,7 @@ func qrCodeHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text string `json:"text"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
+	if err := decodeLimitedJSON(w, r, &req, smallJSONBodyLimit); err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
@@ -1400,6 +1429,7 @@ func speedtestHandler(w http.ResponseWriter, r *http.Request) {
 	if cleanup != nil {
 		defer cleanup()
 	}
+	defer client.CloseIdleConnections()
 	client.Timeout = 0
 
 	var sample bandwidthSample
@@ -1546,7 +1576,7 @@ func addNodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req map[string]string
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeLimitedJSON(w, r, &req, largeJSONBodyLimit); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
@@ -1629,20 +1659,28 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 func getStatusHandler(w http.ResponseWriter, r *http.Request) {
 	EnsureStartupState()
 
+	proxyState := common.IsSystemProxyOn
+	proxyIsPending := proxyPending.Load()
+	if proxyIsPending {
+		proxyState = proxyPendingState.Load()
+	}
 	tunState := common.IsTunModeOn
-	if tunPending.Load() {
+	tunIsPending := tunPending.Load()
+	if tunIsPending {
 		tunState = tunPendingState.Load()
 	}
 	speedIn, speedOut := stats.GetCurrentSpeeds()
 	status := map[string]interface{}{
-		"proxy":       common.IsSystemProxyOn,
-		"mode":        common.ProxyMode,
-		"tun":         tunState,
-		"tunnel":      tunState,
-		"webrtc":      common.IsWebRTCPolicyOn,
-		"speedIn":     speedIn,
-		"speedOut":    speedOut,
-		"freeTraffic": freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
+		"proxy":        proxyState,
+		"proxyPending": proxyIsPending,
+		"mode":         common.ProxyMode,
+		"tun":          tunState,
+		"tunnel":       tunState,
+		"tunPending":   tunIsPending,
+		"webrtc":       common.IsWebRTCPolicyOn,
+		"speedIn":      speedIn,
+		"speedOut":     speedOut,
+		"freeTraffic":  freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
@@ -1707,7 +1745,7 @@ func autoSelectConfigHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "config": raw})
 	case http.MethodPost:
-		body, err := io.ReadAll(io.LimitReader(r.Body, 128*1024))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128*1024))
 		if err != nil || len(body) == 0 || !json.Valid(body) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "自动选择配置格式错误"})
 			return
@@ -1739,7 +1777,7 @@ func siteTargetsHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(readSiteTestTargets())
 	case http.MethodPost:
 		var target SiteTestTarget
-		if err := json.NewDecoder(r.Body).Decode(&target); err != nil {
+		if err := decodeLimitedJSON(w, r, &target, defaultJSONBodyLimit); err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "请求格式错误"})
 			return
 		}
@@ -2156,11 +2194,30 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 	switch actionType {
 	case "proxy":
 		target := requestedBool(r, !common.IsSystemProxyOn)
-		if err := proxy.SetSystemProxyEnabled(target); err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "系统代理切换失败: " + err.Error(), "proxy": common.IsSystemProxyOn})
+		if proxyPending.Load() {
+			if proxyPendingState.Load() == target {
+				json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "proxy": target})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "系统代理正在切换中，请稍候。"})
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "proxy": common.IsSystemProxyOn})
+		if common.IsSystemProxyOn == target {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "proxy": common.IsSystemProxyOn})
+			return
+		}
+		if !proxyPending.CompareAndSwap(false, true) {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "系统代理正在切换中，请稍候。"})
+			return
+		}
+		proxyPendingState.Store(target)
+		utils.SafeGo("webui system proxy toggle", func() {
+			defer proxyPending.Store(false)
+			if err := proxy.SetSystemProxyEnabled(target); err != nil {
+				fmt.Printf("系统代理切换失败: %v\n", err)
+			}
+		})
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "proxy": target})
 		return
 	case "mode":
 		targetGlobal := requestedBool(r, common.ProxyMode != "Global")
@@ -2187,6 +2244,7 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 					json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "requiresAdmin": true, "msg": "自动请求管理员权限失败: " + err.Error()})
 					return
 				}
+				proxy.SetShutdownNetworkModeOverride(common.IsSystemProxyOn, true)
 				scheduleExitAfterAdminRestart("auto admin restart")
 				json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "restarting": true, "msg": "正在请求管理员权限并重启 wing..."})
 				return
@@ -2209,7 +2267,7 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
 		})
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "tun": tunTarget})
 		return
 	case "webrtc":
 		common.IsWebRTCPolicyOn = requestedBool(r, !common.IsWebRTCPolicyOn)
@@ -2319,9 +2377,14 @@ func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
 
 func switchSupplierHandler(w http.ResponseWriter, r *http.Request) {
 	fileName := r.URL.Query().Get("file")
-	nodes, err := protocol.ParseNodes(fileName)
+	supplier, ok := subscriptionByFile(fileName)
+	if !ok {
+		http.Error(w, "Supplier not found", http.StatusNotFound)
+		return
+	}
+	nodes, err := protocol.ParseNodes(supplier.FileName)
 	if err == nil && len(nodes) > 0 {
-		sub.SetActiveConfigFile(fileName)
+		sub.SetActiveConfigFile(supplier.FileName)
 		common.AllNodes = nodes
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
@@ -2334,16 +2397,8 @@ func switchSupplierHandler(w http.ResponseWriter, r *http.Request) {
 
 func updateSupplierHandler(w http.ResponseWriter, r *http.Request) {
 	fileName := r.URL.Query().Get("file")
-	links, _ := sub.ReadSubscriptions()
-
-	var target *sub.SubInfo
-	for i := range links {
-		if links[i].FileName == fileName {
-			target = &links[i]
-			break
-		}
-	}
-	if target == nil {
+	target, ok := subscriptionByFile(fileName)
+	if !ok {
 		http.Error(w, "Supplier not found", http.StatusNotFound)
 		return
 	}
@@ -2400,21 +2455,12 @@ func setSupplierUpdateIntervalHandler(w http.ResponseWriter, r *http.Request) {
 
 func deleteSupplierHandler(w http.ResponseWriter, r *http.Request) {
 	fileName := r.URL.Query().Get("file")
-	links, _ := sub.ReadSubscriptions()
-
-	found := false
-	for _, l := range links {
-		if l.FileName == fileName {
-			sub.DeleteSubscription(l.URL)
-			found = true
-			break
-		}
-	}
-
-	if !found {
+	target, ok := subscriptionByFile(fileName)
+	if !ok {
 		http.Error(w, "Supplier not found", http.StatusNotFound)
 		return
 	}
+	sub.DeleteSubscription(target.URL)
 
 	if sub.CurrentConfigFile == fileName {
 		common.AllNodes = nil
@@ -2527,7 +2573,7 @@ func aggGroupAddNodesHandler(w http.ResponseWriter, r *http.Request) {
 		File  string          `json:"file"`
 		Nodes []protocol.Node `json:"nodes"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeLimitedJSON(w, r, &req, largeJSONBodyLimit); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
@@ -2561,7 +2607,7 @@ func dnsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost {
 		var config proxy.DNSConfig
-		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+		if err := decodeLimitedJSON(w, r, &config, defaultJSONBodyLimit); err != nil {
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}

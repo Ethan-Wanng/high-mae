@@ -84,8 +84,11 @@ func onReady() {
 	utils.SafeGo("local http proxy", proxy.StartAnyTLSHttpServer)
 	utils.SafeGo("flutter ui show", ShowFlutterWindowWhenWebUIReady)
 	sub.StartAutoUpdateSubscriptions()
-	if err := utils.SetSystemProxy(common.IsSystemProxyOn); err != nil {
-		fmt.Printf("⚠️ 同步系统代理状态失败: %v\n", err)
+	restoreResult, err := proxy.RestoreLastNetworkMode()
+	if err != nil {
+		fmt.Printf("⚠️ 恢复上次代理模式失败: %v\n", err)
+	} else if restoreResult.HadStored && restoreResult.TunDisabledForPrivilege {
+		fmt.Println("⚠️ 上次代理模式包含 TUN，但当前不是管理员，已自动关闭 TUN。")
 	}
 
 	utils.SafeGo("tray menu loop", func() {
@@ -143,6 +146,9 @@ func onReady() {
 func onExit() {
 	defer utils.RecoverPanic("shutdown cleanup")
 
+	if err := proxy.SaveShutdownNetworkMode(); err != nil {
+		fmt.Printf("⚠️ 保存上次代理模式失败: %v\n", err)
+	}
 	_ = utils.SetSystemProxy(false)
 	if common.IsSystemDNSHijacked {
 		utils.SetSystemDNS(false, "")

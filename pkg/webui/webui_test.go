@@ -15,6 +15,8 @@ import (
 	"wing/pkg/proxy"
 	"wing/pkg/routing"
 	"wing/pkg/storage"
+	"wing/pkg/sub"
+	"wing/protocol"
 )
 
 func TestQRCodeHandlerReturnsPNG(t *testing.T) {
@@ -111,6 +113,46 @@ func TestSystemConfigHandlerPersistsBingRedirectGuard(t *testing.T) {
 	}
 }
 
+func TestGetStatusHandlerReportsPendingProxyTarget(t *testing.T) {
+	oldProxy := common.IsSystemProxyOn
+	oldMode := common.ProxyMode
+	oldStartupDone := startupStateDone
+	oldProxyPending := proxyPending.Load()
+	oldProxyPendingState := proxyPendingState.Load()
+	defer func() {
+		common.IsSystemProxyOn = oldProxy
+		common.ProxyMode = oldMode
+		proxyPending.Store(oldProxyPending)
+		proxyPendingState.Store(oldProxyPendingState)
+		startupStateMu.Lock()
+		startupStateDone = oldStartupDone
+		startupStateMu.Unlock()
+	}()
+
+	startupStateMu.Lock()
+	startupStateDone = true
+	startupStateMu.Unlock()
+	common.IsSystemProxyOn = false
+	common.ProxyMode = "Rule"
+	proxyPending.Store(true)
+	proxyPendingState.Store(true)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rr := httptest.NewRecorder()
+	getStatusHandler(rr, req)
+
+	var resp struct {
+		Proxy        bool `json:"proxy"`
+		ProxyPending bool `json:"proxyPending"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("status JSON error: %v", err)
+	}
+	if !resp.Proxy || !resp.ProxyPending {
+		t.Fatalf("status proxy/pending = %v/%v, want true/true", resp.Proxy, resp.ProxyPending)
+	}
+}
+
 func TestResetRulesHandlerRestoresDefaultRulesWithoutBingDirect(t *testing.T) {
 	_ = storage.Close()
 	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
@@ -197,6 +239,88 @@ func TestApplyRulesHandlerAppliesRoutingAndCmdRulesImmediately(t *testing.T) {
 	action, matched := routing.EvaluateCmdRouting("curl https://example.com/path")
 	if !matched || action != "direct" {
 		t.Fatalf("EvaluateCmdRouting immediately after save = %q/%v, want direct/true", action, matched)
+	}
+}
+
+func TestGetNodesMarksOnlyActiveSourceNodeActive(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	oldCurrentConfig := sub.CurrentConfigFile
+	oldActiveNodeName := common.ActiveNodeName
+	oldAllNodes := common.AllNodes
+	oldStartupDone := startupStateDone
+	defer func() {
+		sub.CurrentConfigFile = oldCurrentConfig
+		common.ActiveNodeName = oldActiveNodeName
+		common.AllNodes = oldAllNodes
+		startupStateMu.Lock()
+		startupStateDone = oldStartupDone
+		startupStateMu.Unlock()
+		globalNodesMu.Lock()
+		globalNodesCache = nil
+		globalNodesMu.Unlock()
+	}()
+
+	firstFile, _, err := sub.AppendSubscriptionWithTraffic("https://one.example/sub", nil)
+	if err != nil {
+		t.Fatalf("append first subscription: %v", err)
+	}
+	secondFile, _, err := sub.AppendSubscriptionWithTraffic("https://two.example/sub", nil)
+	if err != nil {
+		t.Fatalf("append second subscription: %v", err)
+	}
+	sameNameNode := protocol.Node{Type: "naive", Name: "same-name", Server: "example.com", Port: 443}
+	if err := sub.SaveNodesToYAML(firstFile, []protocol.Node{sameNameNode}); err != nil {
+		t.Fatalf("save first nodes: %v", err)
+	}
+	if err := sub.SaveNodesToYAML(secondFile, []protocol.Node{sameNameNode}); err != nil {
+		t.Fatalf("save second nodes: %v", err)
+	}
+
+	sub.CurrentConfigFile = secondFile
+	common.ActiveNodeName = "same-name"
+	startupStateMu.Lock()
+	startupStateDone = true
+	startupStateMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes", nil)
+	rr := httptest.NewRecorder()
+	getNodes(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	var nodes []GlobalNodeInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &nodes); err != nil {
+		t.Fatalf("response JSON error: %v", err)
+	}
+	activeByFile := map[string]bool{}
+	for _, node := range nodes {
+		if node.Name == "same-name" {
+			activeByFile[node.FileName] = node.Active
+		}
+	}
+	if activeByFile[firstFile] {
+		t.Fatalf("node from inactive file %s was marked active", firstFile)
+	}
+	if !activeByFile[secondFile] {
+		t.Fatalf("node from current file %s was not marked active", secondFile)
+	}
+}
+
+func TestSwitchSupplierRejectsUnknownFile(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/switch_supplier?file=../config.yml", nil)
+	rr := httptest.NewRecorder()
+	switchSupplierHandler(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected unknown supplier file to be rejected, got %d", rr.Code)
 	}
 }
 

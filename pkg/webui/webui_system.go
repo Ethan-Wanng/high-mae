@@ -31,7 +31,7 @@ func systemConfigHandler(w http.ResponseWriter, r *http.Request) {
 			StartupEnabled        *bool  `json:"startupEnabled"`
 			ThemeMode             string `json:"themeMode"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := decodeLimitedJSON(w, r, &req, smallJSONBodyLimit); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
