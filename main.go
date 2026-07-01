@@ -59,9 +59,14 @@ func onReady() {
 	systray.AddSeparator()
 
 	mImportLink := systray.AddMenuItem("📋 导入节点/订阅", "从剪贴板自动解析并添加节点")
+	common.MSupplierMenu = systray.AddMenuItem("🗂 订阅供应商", "切换当前订阅供应商")
+	common.MNodeMenu = systray.AddMenuItem("🧭 选择节点", "切换当前代理节点")
+	common.MTestAll = systray.AddMenuItem("⚡ 极速测速所有节点 (TCP)", "测试当前节点列表延迟")
 	systray.AddSeparator()
 
 	webui.EnsureStartupState()
+	sub.RefreshSupplierMenu()
+	sub.RefreshNodeMenu(nil)
 
 	if len(common.AllNodes) == 0 {
 		fmt.Println("⚠️ 启动时未找到有效的配置文件，节点列表将为空。请通过面板导入节点或订阅。")

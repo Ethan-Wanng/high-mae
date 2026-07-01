@@ -369,7 +369,9 @@ func loadStartupStateLocked() error {
 	activeClient := common.ActiveClient
 	common.ClientMu.RUnlock()
 	if activeClient == nil || activeName == "" {
-		proxy.SwitchNode(targetNode)
+		if err := proxy.SwitchNode(targetNode); err != nil {
+			fmt.Printf("⚠️ 初始化上次节点失败: %v\n", err)
+		}
 	}
 	return nil
 }
@@ -1140,7 +1142,11 @@ func switchAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 		if len(common.AllNodes) > 0 {
-			proxy.SwitchNode(common.AllNodes[0])
+			if err := proxy.SwitchNode(common.AllNodes[0]); err != nil {
+				json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "聚合组已切换，但节点初始化失败: " + err.Error()})
+				return
+			}
+			sub.RefreshNodeMenu(nil)
 		}
 	}
 	w.WriteHeader(http.StatusOK)
@@ -1215,7 +1221,11 @@ func switchNodeHandler(w http.ResponseWriter, r *http.Request) {
 		// Double check to make sure index is valid in common.AllNodes
 		if node.SubIndex >= 0 && node.SubIndex < len(common.AllNodes) {
 			targetNode := common.AllNodes[node.SubIndex]
-			proxy.SwitchNode(targetNode)
+			if err := proxy.SwitchNode(targetNode); err != nil {
+				fmt.Printf("节点切换失败: %v\n", err)
+				return
+			}
+			sub.RefreshNodeMenu(nil)
 		}
 	})
 
@@ -1238,6 +1248,7 @@ func directNodeHandler(w http.ResponseWriter, r *http.Request) {
 	if common.MCurrentNode != nil {
 		common.MCurrentNode.SetTitle("当前节点: 直连")
 	}
+	sub.RefreshNodeMenu(nil)
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "已不选择节点，当前为直连"})
 }
 
@@ -1315,7 +1326,11 @@ func deleteNodeHandler(w http.ResponseWriter, r *http.Request) {
 		sub.RefreshNodeMenu(nil)
 		if targetNode.Name == common.ActiveNodeName {
 			if len(nodes) > 0 {
-				proxy.SwitchNode(nodes[0])
+				if err := proxy.SwitchNode(nodes[0]); err != nil {
+					json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "节点已删除，但备用节点初始化失败: " + err.Error()})
+					return
+				}
+				sub.RefreshNodeMenu(nil)
 			} else {
 				common.ActiveNodeName = ""
 				if common.MCurrentNode != nil {
@@ -1669,18 +1684,27 @@ func getStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if tunIsPending {
 		tunState = tunPendingState.Load()
 	}
+	common.ClientMu.RLock()
+	activeNode := common.ActiveNode
+	activeNodeName := common.ActiveNodeName
+	common.ClientMu.RUnlock()
 	speedIn, speedOut := stats.GetCurrentSpeeds()
 	status := map[string]interface{}{
-		"proxy":        proxyState,
-		"proxyPending": proxyIsPending,
-		"mode":         common.ProxyMode,
-		"tun":          tunState,
-		"tunnel":       tunState,
-		"tunPending":   tunIsPending,
-		"webrtc":       common.IsWebRTCPolicyOn,
-		"speedIn":      speedIn,
-		"speedOut":     speedOut,
-		"freeTraffic":  freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
+		"proxy":              proxyState,
+		"proxyPending":       proxyIsPending,
+		"mode":               common.ProxyMode,
+		"tun":                tunState,
+		"tunnel":             tunState,
+		"tunPending":         tunIsPending,
+		"webrtc":             common.IsWebRTCPolicyOn,
+		"speedIn":            speedIn,
+		"speedOut":           speedOut,
+		"activeNodeName":     activeNodeName,
+		"activeNodeType":     activeNode.Type,
+		"activeNodeGroup":    activeNode.Group,
+		"activeNodeFileName": sub.CurrentConfigFile,
+		"activeNodeSource":   activeNode.SourceFile,
+		"freeTraffic":        freeflow.Snapshot(freeflow.IsNodeName(activeNodeName)),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
@@ -1711,7 +1735,10 @@ func freeTrafficHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "免费流量暂时不可用。"})
 		return
 	}
-	proxy.SwitchNode(node)
+	if err := proxy.SwitchNode(node); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "免费流量节点初始化失败: " + err.Error(), "traffic": state})
+		return
+	}
 	if !common.IsSystemProxyOn {
 		if err := proxy.SetSystemProxyEnabled(true); err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "免费流量已切换，但开启系统代理失败: " + err.Error()})
@@ -1721,6 +1748,7 @@ func freeTrafficHandler(w http.ResponseWriter, r *http.Request) {
 	if common.MCurrentNode != nil {
 		common.MCurrentNode.SetTitle("📍 当前节点: [免费流量]")
 	}
+	sub.RefreshNodeMenu(nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"ok":      true,
@@ -2389,7 +2417,11 @@ func switchSupplierHandler(w http.ResponseWriter, r *http.Request) {
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 		if len(common.AllNodes) > 0 {
-			proxy.SwitchNode(common.AllNodes[0])
+			if err := proxy.SwitchNode(common.AllNodes[0]); err != nil {
+				json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "供应商已切换，但节点初始化失败: " + err.Error()})
+				return
+			}
+			sub.RefreshNodeMenu(nil)
 		}
 	}
 	w.WriteHeader(http.StatusOK)

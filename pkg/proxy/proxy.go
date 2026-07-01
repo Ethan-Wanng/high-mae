@@ -52,7 +52,7 @@ func RunNetworkTransition(fn func()) {
 	fn()
 }
 
-func SwitchNode(node protocol.Node) {
+func SwitchNode(node protocol.Node) error {
 	networkTransitionMu.Lock()
 	defer networkTransitionMu.Unlock()
 
@@ -62,7 +62,7 @@ func SwitchNode(node protocol.Node) {
 	if err != nil {
 		cleanupBypass()
 		log.Printf("节点 %s 初始化失败，保留当前可用节点: %v", node.Name, err)
-		return
+		return err
 	}
 
 	common.ClientMu.Lock()
@@ -100,6 +100,7 @@ func SwitchNode(node protocol.Node) {
 	}
 	_ = closeGenericClient("old active client", oldClient)
 	restartTunAfterNodeSwitch()
+	return nil
 }
 
 func restartTunAfterNodeSwitch() {

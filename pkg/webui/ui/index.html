@@ -501,11 +501,11 @@
                                     <strong>界面主题</strong>
                                     <small>选择浅色、深色或跟随系统。</small>
                                 </div>
-                                <select id="themeModeSelect" class="settings-select" onchange="saveThemeMode(this.value)">
-                                    <option value="system">跟随系统</option>
-                                    <option value="dark">深色</option>
-                                    <option value="light">浅色</option>
-                                </select>
+                                <div class="settings-theme-options" role="radiogroup" aria-label="界面主题">
+                                    <button type="button" class="settings-theme-option" data-theme-option="system" role="radio" aria-checked="false" onclick="saveThemeMode('system')">跟随系统</button>
+                                    <button type="button" class="settings-theme-option" data-theme-option="dark" role="radio" aria-checked="false" onclick="saveThemeMode('dark')">深色</button>
+                                    <button type="button" class="settings-theme-option" data-theme-option="light" role="radio" aria-checked="false" onclick="saveThemeMode('light')">浅色</button>
+                                </div>
                             </div>
                         </div>
                     </div>

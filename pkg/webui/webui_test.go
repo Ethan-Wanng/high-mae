@@ -153,6 +153,52 @@ func TestGetStatusHandlerReportsPendingProxyTarget(t *testing.T) {
 	}
 }
 
+func TestGetStatusHandlerReportsActiveNode(t *testing.T) {
+	oldStartupDone := startupStateDone
+	oldCurrentConfig := sub.CurrentConfigFile
+	common.ClientMu.RLock()
+	oldActiveNode := common.ActiveNode
+	oldActiveNodeName := common.ActiveNodeName
+	common.ClientMu.RUnlock()
+	defer func() {
+		sub.CurrentConfigFile = oldCurrentConfig
+		common.ClientMu.Lock()
+		common.ActiveNode = oldActiveNode
+		common.ActiveNodeName = oldActiveNodeName
+		common.ClientMu.Unlock()
+		startupStateMu.Lock()
+		startupStateDone = oldStartupDone
+		startupStateMu.Unlock()
+	}()
+
+	startupStateMu.Lock()
+	startupStateDone = true
+	startupStateMu.Unlock()
+	sub.CurrentConfigFile = "sub_active.yml"
+	common.ClientMu.Lock()
+	common.ActiveNode = protocol.Node{Name: "active-node", Type: "hysteria2", Group: "Group A", SourceFile: "source.yml"}
+	common.ActiveNodeName = "active-node"
+	common.ClientMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rr := httptest.NewRecorder()
+	getStatusHandler(rr, req)
+
+	var resp struct {
+		ActiveNodeName     string `json:"activeNodeName"`
+		ActiveNodeType     string `json:"activeNodeType"`
+		ActiveNodeGroup    string `json:"activeNodeGroup"`
+		ActiveNodeFileName string `json:"activeNodeFileName"`
+		ActiveNodeSource   string `json:"activeNodeSource"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("status JSON error: %v", err)
+	}
+	if resp.ActiveNodeName != "active-node" || resp.ActiveNodeType != "hysteria2" || resp.ActiveNodeGroup != "Group A" || resp.ActiveNodeFileName != "sub_active.yml" || resp.ActiveNodeSource != "source.yml" {
+		t.Fatalf("active node status = %+v, want active node fields", resp)
+	}
+}
+
 func TestResetRulesHandlerRestoresDefaultRulesWithoutBingDirect(t *testing.T) {
 	_ = storage.Close()
 	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))

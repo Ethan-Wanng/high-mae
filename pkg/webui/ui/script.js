@@ -35,6 +35,7 @@ let nodeGroupAnimationSeq = 0;
 let autoSelectEditingRuleId = "";
 let autoSelectLastDrawnRuleId = "";
 let lastConnectionStatus = {};
+let statusActiveNode = null;
 let modeSwitchInFlight = false;
 let queuedProxyPreset = null;
 let modeSwitchTarget = null;
@@ -395,9 +396,13 @@ async function loadStatus() {
         if (speedEl) speedEl.innerHTML = '↑ ' + st.speedOut + ' &nbsp; ↓ ' + st.speedIn;
         if (homeSpeedOutEl) homeSpeedOutEl.textContent = st.speedOut || '0 B/s';
         if (homeSpeedInEl) homeSpeedInEl.textContent = st.speedIn || '0 B/s';
+        const activeNodeChanged = reconcileActiveNodeFromStatus(st || {});
         updateConnectionState(viewStatus);
         renderFreeTrafficState(st.freeTraffic);
         updateConnectionNodeSummary();
+        if (activeNodeChanged && activeTab === 'nodes') {
+            renderNodes();
+        }
     } catch(e) {}
 }
 
@@ -528,6 +533,54 @@ function updateConnectionState(status = {}) {
     updateModeLogos();
 }
 
+function activeStatusNode(status = {}) {
+    const name = (status.activeNodeName || '').trim();
+    if (!name) return null;
+    return {
+        name,
+        type: status.activeNodeType || '',
+        group: status.activeNodeGroup || '',
+        fileName: status.activeNodeFileName || '',
+        sourceFile: status.activeNodeSource || ''
+    };
+}
+
+function hasActiveNodeStatus(status = {}) {
+    return Object.prototype.hasOwnProperty.call(status, 'activeNodeName');
+}
+
+function nodeMatchesActiveStatus(node, active) {
+    if (!node || !active?.name) return false;
+    if (node.name !== active.name) return false;
+    if (active.fileName && node.fileName !== active.fileName) return false;
+    if (active.type && String(node.type || '').toLowerCase() !== String(active.type).toLowerCase()) return false;
+    return true;
+}
+
+function reconcileActiveNodeFromStatus(status = {}) {
+    if (!hasActiveNodeStatus(status)) return false;
+    const active = activeStatusNode(status);
+    let changed = false;
+    let matchedNode = null;
+    allNodesList = (allNodesList || []).map(node => {
+        const isActive = !!active && nodeMatchesActiveStatus(node, active);
+        if (isActive && !matchedNode) matchedNode = node;
+        if (!!node.active === isActive) return node;
+        changed = true;
+        return { ...node, active: isActive };
+    });
+    const nextStatusNode = matchedNode || active;
+    const prevKey = statusActiveNode
+        ? [statusActiveNode.fileName || '', statusActiveNode.type || '', statusActiveNode.name || ''].join('|')
+        : '';
+    const nextKey = nextStatusNode
+        ? [nextStatusNode.fileName || '', nextStatusNode.type || '', nextStatusNode.name || ''].join('|')
+        : '';
+    if (prevKey !== nextKey) changed = true;
+    statusActiveNode = nextStatusNode;
+    return changed;
+}
+
 function effectiveThemeMode() {
     const theme = document.documentElement.dataset.theme || localStorage.getItem('wing_theme_mode') || 'system';
     if (theme === 'light' || theme === 'dark') return theme;
@@ -552,7 +605,7 @@ function updateModeLogos() {
 }
 
 function updateConnectionNodeSummary() {
-    const activeNode = allNodesList.find(n => n.active);
+    const activeNode = allNodesList.find(n => n.active) || statusActiveNode;
     const nodeDisplayEl = document.getElementById('selectedNodeDisplay');
     const islandNameEl = document.getElementById('islandNodeName');
     const islandLabelEl = document.getElementById('islandNodeLabel');
@@ -1488,19 +1541,35 @@ async function loadSystemConfig() {
         if (autoRestartEl) autoRestartEl.checked = !!config.autoRestartAsAdmin;
         const startupEl = document.getElementById('chkStartupEnabled');
         if (startupEl) startupEl.checked = !!config.startupEnabled;
-        const themeEl = document.getElementById('themeModeSelect');
         const themeMode = ['light', 'dark', 'system'].includes(config.themeMode) ? config.themeMode : 'system';
-        if (themeEl) themeEl.value = themeMode;
         applyThemeMode(themeMode);
     } catch(e) {
         showToast('系统设置加载失败', 'warning', 2200);
     }
 }
 
+function normalizedThemeMode(mode) {
+    return ['light', 'dark', 'system'].includes(mode) ? mode : 'system';
+}
+
+function currentThemeMode() {
+    return normalizedThemeMode(document.documentElement.dataset.theme || localStorage.getItem('wing_theme_mode') || 'system');
+}
+
+function setThemeModeControl(mode) {
+    const theme = normalizedThemeMode(mode);
+    document.querySelectorAll('[data-theme-option]').forEach(button => {
+        const active = button.dataset.themeOption === theme;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+}
+
 function applyThemeMode(mode) {
-    const theme = ['light', 'dark', 'system'].includes(mode) ? mode : 'system';
+    const theme = normalizedThemeMode(mode);
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('wing_theme_mode', theme);
+    setThemeModeControl(theme);
     updateModeLogos();
 }
 
@@ -1524,14 +1593,13 @@ function buildSystemConfigPayload() {
     const preferIPv6El = document.getElementById('chkPreferIPv6');
     const autoRestartEl = document.getElementById('chkAutoRestartAsAdmin');
     const startupEl = document.getElementById('chkStartupEnabled');
-    const themeEl = document.getElementById('themeModeSelect');
     return {
         proxyPort: String(portNum),
         preventBingCNRedirect: !!bingGuardEl?.checked,
         preferIPv6: !!preferIPv6El?.checked,
         autoRestartAsAdmin: !!autoRestartEl?.checked,
         startupEnabled: !!startupEl?.checked,
-        themeMode: themeEl?.value || 'system'
+        themeMode: currentThemeMode()
     };
 }
 
@@ -1632,6 +1700,7 @@ async function loadNodes() {
         const res = await fetch('/api/nodes');
         const nodes = await res.json();
         allNodesList = nodes || [];
+        reconcileActiveNodeFromStatus(lastConnectionStatus || {});
         updateConnectionNodeSummary();
         renderNodes();
     } catch(e) {}
@@ -5529,6 +5598,7 @@ window.onload = async () => {
     initDesktopWheelDamping();
     initIslandBehavior();
     initCustomSelects();
+    setThemeModeControl(currentThemeMode());
     showSettingsSubtab(currentSettingsSubtab);
     checkAppUpdate({ silent: true });
     await loadSystemConfig();

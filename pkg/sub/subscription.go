@@ -323,6 +323,29 @@ func SetActiveConfigFile(fileName string) {
 	}
 }
 
+func trayNodeMatchesActive(node protocol.Node) bool {
+	common.ClientMu.RLock()
+	activeName := common.ActiveNodeName
+	activeNode := common.ActiveNode
+	common.ClientMu.RUnlock()
+	if strings.TrimSpace(activeName) == "" || node.Name != activeName {
+		return false
+	}
+	return sameNodeEndpoint(node, activeNode)
+}
+
+func sameNodeEndpoint(left, right protocol.Node) bool {
+	if right.Name == "" {
+		return true
+	}
+	return strings.EqualFold(left.Type, right.Type) &&
+		strings.EqualFold(left.Server, right.Server) &&
+		left.Port == right.Port &&
+		left.UUID == right.UUID &&
+		left.Username == right.Username &&
+		left.Password == right.Password
+}
+
 func RefreshNodeMenu(newNodes []protocol.Node) {
 	if common.NodeMenuCancel != nil {
 		common.NodeMenuCancel()
@@ -342,11 +365,21 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 		return
 	}
 
+	if len(common.AllNodes) == 0 {
+		item := common.MNodeMenu.AddSubMenuItem("暂无可选节点", "")
+		item.Disable()
+		common.NodeMenuItems = append(common.NodeMenuItems, item)
+		return
+	}
+
 	for _, node := range common.AllNodes {
 		itemLabel := fmt.Sprintf("[%s] %s", strings.ToUpper(node.Type), node.Name)
 		item := common.MNodeMenu.AddSubMenuItem(itemLabel, "")
 		common.NodeMenuItems = append(common.NodeMenuItems, item)
 		nodeParents = append(nodeParents, item)
+		if trayNodeMatchesActive(node) {
+			item.Check()
+		}
 
 		n := node
 		parent := item
@@ -356,11 +389,14 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 				case <-ctx.Done():
 					return
 				case <-parent.ClickedCh:
+					if err := proxy.SwitchNode(n); err != nil {
+						utils.ShowWindowsMsgBox("切换节点失败", fmt.Sprintf("节点 %s 初始化失败:\n%v", n.Name, err))
+						continue
+					}
 					for _, mi := range nodeParents {
 						mi.Uncheck()
 					}
 					parent.Check()
-					proxy.SwitchNode(n)
 				}
 			}
 		})
@@ -418,8 +454,14 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 	if len(newNodes) > 0 {
 		firstNewIndex := len(common.AllNodes) - len(newNodes)
 		if firstNewIndex >= 0 && firstNewIndex < len(nodeParents) {
-			nodeParents[firstNewIndex].Check()
-			proxy.SwitchNode(common.AllNodes[firstNewIndex])
+			if err := proxy.SwitchNode(common.AllNodes[firstNewIndex]); err == nil {
+				for _, mi := range nodeParents {
+					mi.Uncheck()
+				}
+				nodeParents[firstNewIndex].Check()
+			} else {
+				utils.ShowWindowsMsgBox("切换节点失败", fmt.Sprintf("节点 %s 初始化失败:\n%v", common.AllNodes[firstNewIndex].Name, err))
+			}
 		}
 	}
 }
@@ -441,6 +483,13 @@ func RefreshSupplierMenu() {
 	common.SupplierMenuItems = nil
 
 	links, _ := ReadSubscriptions()
+	if len(links) == 0 {
+		item := common.MSupplierMenu.AddSubMenuItem("暂无订阅供应商", "")
+		item.Disable()
+		common.SupplierMenuItems = append(common.SupplierMenuItems, item)
+		return
+	}
+
 	for _, sub := range links {
 		item := common.MSupplierMenu.AddSubMenuItem(sub.Name, sub.URL)
 		common.SupplierMenuItems = append(common.SupplierMenuItems, item)
@@ -476,7 +525,11 @@ func RefreshSupplierMenu() {
 
 						RefreshNodeMenu(nil)
 						if len(common.AllNodes) > 0 {
-							proxy.SwitchNode(common.AllNodes[0])
+							if err := proxy.SwitchNode(common.AllNodes[0]); err != nil {
+								utils.ShowWindowsMsgBox("切换失败", fmt.Sprintf("供应商已切换，但节点 %s 初始化失败:\n%v", common.AllNodes[0].Name, err))
+							} else {
+								RefreshNodeMenu(nil)
+							}
 						}
 					} else {
 						utils.ShowWindowsMsgBox("切换失败", "无法读取该供应商的节点数据，请尝试更新订阅。")
