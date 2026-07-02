@@ -122,7 +122,8 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 	var cleanup func()
 
 	var routeAdded bool
-	if common.IsTunModeOn && newIP != "" && newIP != common.GlobalNodeIP {
+	state := common.SnapshotRuntimeState()
+	if state.TunModeOn && newIP != "" && newIP != state.GlobalNodeIP {
 		realGateway := utils.GetDefaultGateway()
 		if realGateway != "" {
 			// 先尝试删除可能残留的旧路由，避免冲突
@@ -134,7 +135,7 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 
 	var realIP string
 	var localAddr *net.TCPAddr
-	if common.IsTunModeOn {
+	if state.TunModeOn {
 		realIP = common.RealLocalIPBeforeTun
 		if realIP == "" {
 			realIP = utils.GetRealLocalIP()
@@ -400,7 +401,7 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 		network = "udp"
 	}
 
-	if common.IsTunModeOn {
+	if common.GetTunModeOn() {
 		realIP := common.RealLocalIPBeforeTun
 		if realIP == "" {
 			realIP = utils.GetRealLocalIP()

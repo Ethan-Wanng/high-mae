@@ -71,15 +71,15 @@ func TestEvaluateCmdRoutingMatchesForwardedCmdCommand(t *testing.T) {
 
 func TestEvaluateRoutingCanGuardBingCNRedirect(t *testing.T) {
 	oldRules := RuleGroups
-	oldMode := common.ProxyMode
+	oldMode := common.GetProxyMode()
 	oldGuard := common.PreventBingCNRedirect
 	defer func() {
 		RuleGroups = oldRules
-		common.ProxyMode = oldMode
+		common.SetProxyMode(oldMode)
 		common.PreventBingCNRedirect = oldGuard
 	}()
 
-	common.ProxyMode = "Rule"
+	common.SetProxyMode("Rule")
 	RuleGroups = normalizeRuleGroups([]RuleGroup{
 		{
 			ID:     "direct",
@@ -155,13 +155,13 @@ func TestRemoveLegacyBingDirectDefaultsKeepsExplicitActions(t *testing.T) {
 
 func TestRuleGroupSnapshotsAreIsolated(t *testing.T) {
 	oldRules := GetRuleGroups()
-	oldMode := common.ProxyMode
+	oldMode := common.GetProxyMode()
 	defer func() {
 		setRuleGroups(oldRules)
-		common.ProxyMode = oldMode
+		common.SetProxyMode(oldMode)
 	}()
 
-	common.ProxyMode = "Rule"
+	common.SetProxyMode("Rule")
 	setRuleGroups([]RuleGroup{
 		{
 			ID:     "direct",

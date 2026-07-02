@@ -40,7 +40,7 @@ func (s *Socks5TLSAdapter) CreateProxy(ctx context.Context, dest metadata.Socksa
 
 	// 2. 建立 TCP 连接
 	var localAddr net.Addr
-	if common.IsTunModeOn {
+	if common.GetTunModeOn() {
 		realIP := s.LocalIP
 		if realIP == "" {
 			realIP = utils.GetRealLocalIP()

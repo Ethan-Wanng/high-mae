@@ -65,14 +65,7 @@ func SwitchNode(node protocol.Node) error {
 		return err
 	}
 
-	common.ClientMu.Lock()
-	oldClient := common.ActiveClient
-	common.GlobalNodeServer = node.Server
-	common.GlobalNodeIP = newIP
-	common.ActiveNode = node
-	common.ActiveNodeName = node.Name
-	common.ActiveClient = newClient
-	common.ClientMu.Unlock()
+	oldClient := common.SetActiveClient(node, newIP, newClient)
 
 	if node.Name != "" {
 		_ = storage.Write("last_active_node_name", []byte(node.Name))
@@ -104,14 +97,13 @@ func SwitchNode(node protocol.Node) error {
 }
 
 func restartTunAfterNodeSwitch() {
-	if !common.IsTunModeOn {
+	if !common.GetTunModeOn() {
 		return
 	}
-	nodeServer := common.GlobalNodeServer
-	nodeIP := common.GlobalNodeIP
-	if err := RestartTun(nodeServer, nodeIP); err != nil {
+	activeNode, _, nodeIP := common.GetActiveNodeSnapshot()
+	if err := RestartTun(activeNode.Server, nodeIP); err != nil {
 		log.Printf("重启 TUN 失败: %v", err)
-		common.IsTunModeOn = false
+		common.SetTunModeOn(false)
 		if common.MToggleTun != nil {
 			common.MToggleTun.SetTitle("🔌 隧道连接: [已关闭]")
 		}
@@ -605,7 +597,7 @@ func CreateNodeClient(node protocol.Node) (common.GenericClient, error) {
 
 func CreateNodeClientWithResolvedIP(node protocol.Node, newIP string) (common.GenericClient, error) {
 	var realIP string
-	if common.IsTunModeOn {
+	if common.GetTunModeOn() {
 		realIP = common.RealLocalIPBeforeTun
 		if realIP == "" {
 			realIP = utils.GetRealLocalIP()
@@ -719,12 +711,13 @@ func GetNodeForRoute(action string) (protocol.Node, bool) {
 	if action == "" {
 		return protocol.Node{}, false
 	}
-	for _, n := range common.AllNodes {
+	nodes := common.GetAllNodes()
+	for _, n := range nodes {
 		if strings.EqualFold(n.Name, action) {
 			return n, true
 		}
 	}
-	for _, n := range common.AllNodes {
+	for _, n := range nodes {
 		if strings.EqualFold(n.Group, action) {
 			return n, true
 		}

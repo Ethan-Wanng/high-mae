@@ -56,6 +56,7 @@ const proxyPresetNames = new Set(['direct', 'proxy', 'tun', 'proxy_tun']);
 const modeSwitchGraceMs = 18000;
 const modeSwitchSettleMs = 14000;
 const autoSelectModeRetryMs = 3000;
+const apiRequestToken = document.querySelector('meta[name="wing-api-token"]')?.getAttribute('content') || '';
 
 const nativeFetch = window.fetch.bind(window);
 window.fetch = (input, init = {}) => {
@@ -66,6 +67,7 @@ window.fetch = (input, init = {}) => {
     }
     const headers = new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined));
     headers.set('X-Wing-Request', 'webui');
+    if (apiRequestToken) headers.set('X-Wing-Token', apiRequestToken);
     return nativeFetch(input, { ...init, headers });
 };
 
@@ -88,8 +90,36 @@ let customSelectMutating = false;
 let customSelectInitialized = false;
 
 function eventElement(event) {
-    return event.target instanceof Element ? event.target : null;
+    const target = event?.target;
+    if (target instanceof Element) return target;
+    return target instanceof Node ? target.parentElement : null;
 }
+
+function handleNodeGroupActionButton(button, event) {
+    if (!button) return false;
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    const action = button.dataset?.nodeGroupAction || "";
+    const fileName = button.dataset?.fileName || "";
+    if (action === "activate-aggregate") {
+        switchAggregateGroup(fileName);
+    } else if (action === "open-aggregate-modal") {
+        openAggGroupModal(fileName || "new");
+    }
+    return false;
+}
+
+window.handleNodeGroupActionButton = handleNodeGroupActionButton;
+
+document.addEventListener('click', event => {
+    const target = eventElement(event);
+    const button = target?.closest('[data-node-group-action]');
+    if (!button) return;
+    handleNodeGroupActionButton(button, event);
+}, true);
 
 function initCustomSelects() {
     if (customSelectInitialized) {
@@ -224,11 +254,51 @@ function initDesktopWheelDamping() {
     const finePointer = window.matchMedia?.('(pointer: fine)').matches ?? true;
     if (!finePointer) return;
 
-    const wheelScale = 0.24;
-    const preciseWheelScale = 0.72;
+    const wheelScale = 0.30;
+    const preciseWheelScale = 0.78;
+    const panelWheelScale = 2.15;
+    const panelPreciseWheelScale = 1.85;
     const trackpadThreshold = 48;
     const lineHeight = 16;
     const scrollAnimations = new WeakMap();
+    const fastScrollSelector = [
+        '.modal-scroll',
+        '.rule-modal-scroll',
+        '.dns-modal-scroll',
+        '.rule-list-scroll',
+        '.cmd-rule-panel',
+        '.cmd-rule-list',
+        '.rule-action-selector-drawer',
+        '.custom-select-menu',
+        '.help-topic-body',
+        '.auto-select-picker',
+        '.auto-select-rule-modal-body',
+        '.auto-select-rule-list',
+        '.auto-select-site-list',
+        '.auto-select-group-list',
+        '.auto-node-list',
+        '.source-card-deck',
+        '.folder-content',
+        '.site-target-list',
+        '.layout-side-panel',
+        '.log-table-wrapper',
+        '.agg-source-modal',
+        '.agg-source-picker',
+        '.agg-node-detail-body',
+        '#dnsServerList',
+        '#dnsRuleList',
+        '#aggCurrentNodeList',
+        '#aggNodeList'
+    ].join(',');
+    const wheelLockSelector = [
+        '.modal-overlay',
+        '.modal',
+        '.management-modal',
+        '.help-topic-modal',
+        '.auto-select-rule-modal',
+        '.agg-source-modal',
+        '.node-deck-window'
+    ].join(',');
 
     const normalizeWheelDelta = event => {
         if (event.deltaMode === 1) {
@@ -241,7 +311,7 @@ function initDesktopWheelDamping() {
         return { x: event.deltaX, y: event.deltaY };
     };
 
-    const canScroll = (element, axis, delta) => {
+    const hasScrollableRange = (element, axis) => {
         if (!element) return false;
         const isRoot = element === document.scrollingElement || element === document.documentElement || element === document.body;
         if (!isRoot) {
@@ -253,12 +323,98 @@ function initDesktopWheelDamping() {
         const maxScroll = axis === 'y'
             ? element.scrollHeight - element.clientHeight
             : element.scrollWidth - element.clientWidth;
-        if (maxScroll <= 1) return false;
+        return maxScroll > 1;
+    };
+
+    const canScroll = (element, axis, delta) => {
+        if (!hasScrollableRange(element, axis)) return false;
+        const maxScroll = axis === 'y'
+            ? element.scrollHeight - element.clientHeight
+            : element.scrollWidth - element.clientWidth;
 
         const current = axis === 'y' ? element.scrollTop : element.scrollLeft;
         if (delta < 0) return current > 0;
         if (delta > 0) return current < maxScroll - 1;
         return true;
+    };
+
+    const pointInside = (element, event) => {
+        if (!event || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return true;
+        const rect = element.getBoundingClientRect();
+        return event.clientX >= rect.left && event.clientX <= rect.right
+            && event.clientY >= rect.top && event.clientY <= rect.bottom;
+    };
+
+    const elementCandidates = (start, event) => {
+        const candidates = [];
+        const seen = new Set();
+        const add = item => {
+            if (!(item instanceof Element) || seen.has(item)) return;
+            seen.add(item);
+            candidates.push(item);
+        };
+
+        const path = typeof event?.composedPath === 'function' ? event.composedPath() : [];
+        path.forEach(add);
+        if (Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)) {
+            document.elementsFromPoint(event.clientX, event.clientY).forEach(add);
+        }
+        let element = start;
+        while (element && element !== document.body) {
+            add(element);
+            element = element.parentElement;
+        }
+        return candidates;
+    };
+
+    const findPriorityScrollTarget = (start, axis, delta, event) => {
+        const candidates = elementCandidates(start, event);
+        const seen = new Set();
+        for (const item of candidates) {
+            const priority = item.matches(fastScrollSelector) ? item : item.closest(fastScrollSelector);
+            if (!priority || seen.has(priority)) continue;
+            seen.add(priority);
+            if (hasScrollableRange(priority, axis)) {
+                return {
+                    target: priority,
+                    canMove: canScroll(priority, axis, delta),
+                    fast: true,
+                    locked: true
+                };
+            }
+        }
+
+        const lockScope = candidates
+            .map(item => item.matches(wheelLockSelector) ? item : item.closest(wheelLockSelector))
+            .find(Boolean);
+        if (!lockScope) return null;
+
+        const nested = Array.from(lockScope.querySelectorAll(fastScrollSelector))
+            .filter(item => hasScrollableRange(item, axis) && pointInside(item, event))
+            .sort((a, b) => {
+                if (a.contains(b)) return 1;
+                if (b.contains(a)) return -1;
+                return 0;
+            })[0];
+        if (nested) {
+            return {
+                target: nested,
+                canMove: canScroll(nested, axis, delta),
+                fast: true,
+                locked: true
+            };
+        }
+
+        if (hasScrollableRange(lockScope, axis)) {
+            return {
+                target: lockScope,
+                canMove: canScroll(lockScope, axis, delta),
+                fast: true,
+                locked: true
+            };
+        }
+
+        return { target: null, canMove: false, fast: true, locked: true };
     };
 
     const findScrollTarget = (start, axis, delta, event) => {
@@ -288,7 +444,7 @@ function initDesktopWheelDamping() {
         ? element.scrollHeight - element.clientHeight
         : element.scrollWidth - element.clientWidth;
 
-    const animateScroll = (element, axis, delta) => {
+    const animateScroll = (element, axis, delta, fast = false) => {
         const maxScroll = maxScrollFor(element, axis);
         const current = scrollPosition(element, axis);
         const state = scrollAnimations.get(element) || {};
@@ -299,7 +455,10 @@ function initDesktopWheelDamping() {
 
         const start = performance.now();
         const from = current;
-        const duration = Math.min(190, Math.max(120, Math.abs(target - from) * 0.85));
+        const minDuration = fast ? 24 : 120;
+        const maxDuration = fast ? 55 : 190;
+        const distanceFactor = fast ? 0.16 : 0.85;
+        const duration = Math.min(maxDuration, Math.max(minDuration, Math.abs(target - from) * distanceFactor));
         const animation = { target, frame: 0 };
         state[axis] = animation;
         scrollAnimations.set(element, state);
@@ -322,7 +481,12 @@ function initDesktopWheelDamping() {
         if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
         const target = event.target instanceof Element ? event.target : null;
         if (!target) return;
-        if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
+        const editableTarget = target.closest('input, textarea, select, [contenteditable="true"]');
+        if (editableTarget) {
+            const input = editableTarget instanceof HTMLInputElement ? editableTarget : null;
+            const passiveTextInput = input && /^(text|search|url|email|password|tel)$/i.test(input.type || 'text');
+            if (!passiveTextInput) return;
+        }
 
         const delta = normalizeWheelDelta(event);
         const largestDelta = Math.max(Math.abs(delta.x), Math.abs(delta.y));
@@ -330,17 +494,31 @@ function initDesktopWheelDamping() {
 
         const horizontalIntent = event.shiftKey || Math.abs(delta.x) > Math.abs(delta.y);
         const axis = horizontalIntent ? 'x' : 'y';
-        const scale = isPreciseWheel ? preciseWheelScale : wheelScale;
+        const probeAmount = axis === 'x' ? (delta.x || delta.y) : delta.y;
+        if (Math.abs(probeAmount) < 0.5) return;
+
+        const priorityTarget = findPriorityScrollTarget(target, axis, probeAmount, event);
+        if (priorityTarget?.locked && !priorityTarget.canMove) {
+            event.preventDefault();
+            return;
+        }
+
+        const scrollTarget = priorityTarget?.target || findScrollTarget(target, axis, probeAmount, event);
+        if (!scrollTarget) return;
+
+        const fastPanel = priorityTarget?.fast
+            || target.closest(fastScrollSelector)
+            || (scrollTarget instanceof Element && scrollTarget.closest(fastScrollSelector));
+        const scale = fastPanel
+            ? (isPreciseWheel ? panelPreciseWheelScale : panelWheelScale)
+            : (isPreciseWheel ? preciseWheelScale : wheelScale);
         const amount = axis === 'x'
             ? (delta.x || delta.y) * scale
             : delta.y * scale;
         if (Math.abs(amount) < 1) return;
 
-        const scrollTarget = findScrollTarget(target, axis, amount, event);
-        if (!scrollTarget) return;
-
         event.preventDefault();
-        animateScroll(scrollTarget, axis, amount);
+        animateScroll(scrollTarget, axis, amount, !!fastPanel);
     }, { passive: false });
 }
 
@@ -865,12 +1043,6 @@ function renderNodes(options = {}) {
     }
     const selectedGroup = groups.find(g => g.fileName === selectedNodeGroupFile);
 
-    if (!groups.length) {
-        restoreNodeSearchFocus(searchFocus);
-        grid.innerHTML = `<div class="empty-state">${nodeGroupMode === "aggregate" ? "暂无聚合组，可在系统设置中创建。" : "当前没有订阅组，点击 <strong>导入订阅</strong> 开始使用。"}</div>`;
-        return;
-    }
-
     const keyword = document.getElementById('nodeSearch')?.value.trim().toLowerCase() || "";
     groups.forEach(g => {
         g.count = allNodesList.filter(n => n.fileName === g.fileName).length;
@@ -878,14 +1050,12 @@ function renderNodes(options = {}) {
     const selectedNodes = selectedGroup ? filterNodeRows(allNodesList.filter(n => n.fileName === selectedGroup.fileName), keyword) : [];
     const groupList = groups;
     const selectedGroupTraffic = selectedGroup?.type === 'subscription' ? supplierTrafficInline(selectedGroup, { compact: false }) : '';
-    const showDetailHeader = nodeGroupMode !== "aggregate";
 
     grid.innerHTML = `
         <section class="node-card-table">
             <div class="source-card-deck"></div>
             ${selectedGroup ? `
             <div class="node-deck-window">
-                ${showDetailHeader ? `
                 <div class="node-detail-header">
                     <div class="node-detail-heading">
                         <div class="node-detail-title-row">
@@ -895,15 +1065,29 @@ function renderNodes(options = {}) {
                         <div class="node-detail-subtitle">${selectedNodes.length} 个节点${keyword ? "匹配当前搜索" : ""}</div>
                     </div>
                 </div>
-                ` : ''}
                 <div class="node-inline-toolbar-slot"></div>
                 <div class="node-detail-body"></div>
             </div>
+            ` : nodeGroupMode === "aggregate" ? `
+            <div class="empty-state">暂无选中的聚合组。点击上方“新建聚合组”，或选择已有聚合组后管理节点。</div>
             ` : ''}
         </section>
     `;
 
     const list = grid.querySelector('.source-card-deck');
+    if (nodeGroupMode === "aggregate") {
+        const createCard = document.createElement('button');
+        createCard.className = 'source-push-card source-create-card';
+        createCard.type = 'button';
+        createCard.onclick = () => openAggGroupModal('new');
+        createCard.innerHTML = `
+            <span class="source-card-shine"></span>
+            <span class="source-create-icon">+</span>
+            <span class="node-group-name"><span class="node-group-name-text">新建聚合组</span></span>
+            <span class="node-group-meta"><span>从订阅节点中挑选</span></span>
+        `;
+        list.appendChild(createCard);
+    }
     groupList.forEach(group => {
         const item = document.createElement('button');
         const isSelected = selectedGroup && group.fileName === selectedGroup.fileName;
@@ -922,6 +1106,9 @@ function renderNodes(options = {}) {
 
     restoreNodeSearchFocus(searchFocus);
     if (!selectedGroup) {
+        if (!groups.length && nodeGroupMode !== "aggregate") {
+            grid.querySelector('.node-card-table').insertAdjacentHTML('beforeend', '<div class="empty-state">当前没有订阅组，点击 <strong>导入订阅</strong> 开始使用。</div>');
+        }
         return;
     }
     mountNodeInlineToolbar(grid.querySelector('.node-inline-toolbar-slot'));
@@ -990,7 +1177,15 @@ function filterNodeRows(nodes, keyword) {
 }
 
 function renderSelectedGroupActions(group) {
-    if (!group || group.type !== "subscription") return "";
+    if (!group) return "";
+    if (group.type === "aggregate") {
+        const file = encodeURIComponent(group.fileName);
+        return `
+            <button class="btn-mini" type="button" title="管理聚合组节点" data-node-group-action="open-aggregate-modal" data-file-name="${escapeAttr(group.fileName)}" onclick="return handleNodeGroupActionButton(this, event)">管理节点</button>
+            <button class="btn-mini btn-mini-danger" title="删除聚合组" onclick="deleteAggregateGroupFile('${file}', event)">删除</button>
+        `;
+    }
+    if (group.type !== "subscription") return "";
     const file = encodeURIComponent(group.fileName);
     const interval = Number(group.updateIntervalMinutes || 360);
     return `
@@ -999,6 +1194,22 @@ function renderSelectedGroupActions(group) {
         <button class="btn-mini" title="自动更新间隔：${interval} 分钟" onclick="setSupplierInterval('${file}', ${interval}, event)">间隔 ${formatInterval(interval)}</button>
         <button class="btn-mini btn-mini-danger" title="删除订阅" onclick="deleteSupplierFile('${file}', event)">删除</button>
     `;
+}
+
+async function activateAggregateGroupFromButton(fileName, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    await switchAggregateGroup(fileName);
+}
+
+function openAggGroupModalFromButton(fileName, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    openAggGroupModal(fileName);
 }
 
 function renderNodeTable(nodes, options = {}) {
@@ -1191,9 +1402,25 @@ async function switchSupplier(fileName) {
 
 async function switchAggregateGroup(fileName) {
     if (!fileName) return;
-    await fetch('/api/switch_aggregate_group?file=' + encodeURIComponent(fileName), { method: 'POST' });
+    let data = {};
+    try {
+        const res = await fetch('/api/switch_aggregate_group?file=' + encodeURIComponent(fileName), { method: 'POST' });
+        try { data = await res.json(); } catch(e) { data = {}; }
+        if (!res.ok || data.ok === false) {
+            showToast(data.msg || '切换聚合组失败', 'error');
+            await loadAggregateGroups();
+            return;
+        }
+    } catch(e) {
+        showToast('切换聚合组失败', 'error');
+        await loadAggregateGroups();
+        return;
+    }
     aggregateGroupsCache.forEach(g => g.active = g.fileName === fileName);
     suppliersCache.forEach(s => s.active = false);
+    nodeGroupMode = 'aggregate';
+    selectedNodeGroupFile = fileName;
+    nodeGroupManualCollapsed = false;
     document.getElementById('aggregateSelect').value = fileName;
     document.getElementById('supplierSelect').value = '';
     renderSupplierTraffic(null);
@@ -3702,21 +3929,63 @@ async function deleteSupplierFile(encodedFile, event) {
     }
 }
 
+async function deleteAggregateGroupFile(encodedFile, event) {
+    if (event) event.stopPropagation();
+    const file = decodeURIComponent(encodedFile);
+    const group = aggregateGroupsCache.find(g => g.fileName === file);
+    const name = group?.name || file;
+    if (!file) return;
+    if (!confirm('确定要删除聚合组「' + name + '」吗？\n此操作会删除该聚合组，不会删除原订阅节点。')) return;
+    try {
+        const res = await fetch('/api/delete_aggregate_group?file=' + encodeURIComponent(file), { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast('聚合组已删除', 'success');
+            if (selectedNodeGroupFile === file) selectedNodeGroupFile = '';
+            await loadAggregateGroups();
+            await loadNodes();
+        } else {
+            showToast(data.msg || '删除聚合组失败', 'error');
+        }
+    } catch(e) {
+        showToast('删除聚合组请求失败', 'error');
+    }
+}
+
 async function shareSupplierFile(encodedFile, event) {
     if (event) event.stopPropagation();
     const file = decodeURIComponent(encodedFile);
     const supplier = suppliersCache.find(s => s.fileName === file);
-    if (!supplier || !supplier.url) {
+    if (!supplier) {
+        showToast('该订阅没有可分享的原始链接', 'warning');
+        return;
+    }
+    let url = '';
+    try {
+        url = await loadSupplierURL(file);
+    } catch(e) {
+        showToast('读取订阅链接失败', 'error');
+        return;
+    }
+    if (!url) {
         showToast('该订阅没有可分享的原始链接', 'warning');
         return;
     }
     let copied = false;
     try {
-        await copyText(supplier.url);
+        await copyText(url);
         copied = true;
     } catch(e) {}
-    await showShareModal('订阅组：' + (supplier.name || file), supplier.url);
+    await showShareModal('订阅组：' + (supplier.name || file), url);
     showToast(copied ? '订阅链接已复制到剪贴板' : '已生成订阅二维码，复制链接失败', copied ? 'success' : 'warning');
+}
+
+async function loadSupplierURL(file) {
+    const res = await fetch('/api/supplier_url?file=' + encodeURIComponent(file), { method: 'POST' });
+    if (!res.ok) throw new Error('supplier url request failed');
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.msg || 'supplier url unavailable');
+    return data.url || '';
 }
 
 async function createQRCodeURL(text) {
@@ -3830,9 +4099,11 @@ function jumpFromHelp(target, value = '') {
             runSoon(openDNSModal);
             break;
         case 'aggregate':
-            showTab('settings');
-            showSettingsSubtab('manage');
-            runSoon(openAggGroupModal);
+            showTab('nodes');
+            runSoon(() => {
+                setNodeGroupMode('aggregate');
+                if (value === 'new') openAggGroupModal('new');
+            });
             break;
         default:
             showTab('help');
@@ -3849,7 +4120,7 @@ const helpTopics = {
             <div class="help-mini-map">
                 <div><strong>节点入口</strong><span>订阅组、聚合组和自动选择都在“节点管理”。这里决定当前出口是谁。</span></div>
                 <div><strong>运行模式</strong><span>设置里的代理服务、全局路由、TUN、WebRTC 决定流量怎么被接管。</span></div>
-                <div><strong>规则中心</strong><span>规则分流、DNS、聚合组在“设置 / 管理”。这里决定哪些域名、进程和节点组合怎么处理。</span></div>
+                <div><strong>规则中心</strong><span>规则分流和 DNS 在“设置 / 管理”。聚合组直接在“节点管理 / 聚合组”里组合节点。</span></div>
                 <div><strong>验证工具</strong><span>极速测速看节点延迟，测试网站看目标服务是否真的可用。</span></div>
                 <div><strong>状态看板</strong><span>看板展示流量、连接和日志，用来判断当前状态是否符合预期。</span></div>
             </div>
@@ -3859,7 +4130,7 @@ const helpTopics = {
                 <li>设置 / 运行：开关系统代理、全局路由、TUN 和 WebRTC 防泄露。</li>
                 <li>设置 / 偏好：端口、IPv6、启动项、管理员重启和主题等长期偏好。</li>
                 <li>设置 / 入口：导入订阅、手动添加节点、临时出口和免费流量入口。</li>
-                <li>设置 / 管理：规则分流、DNS 规则和聚合组配置。</li>
+                <li>设置 / 管理：规则分流和 DNS 规则。</li>
                 <li>测试网站：检查当前出口能否访问指定网站。</li>
                 <li>数据看板：查看流量和运行状态，辅助排查异常。</li>
             </ul>
@@ -3869,14 +4140,14 @@ const helpTopics = {
                 <li>回到“节点管理”选择一个节点，或打开“自动选择”。</li>
                 <li>到“运行”开启代理服务，必要时开启 TUN。</li>
                 <li>用“测试网站”和“数据看板”确认访问、延迟和流量状态。</li>
-                <li>需要精细控制时，再进入“管理”配置规则、DNS 和聚合组。</li>
+                <li>需要精细控制时，再进入“管理”配置规则和 DNS；聚合组在节点页完成。</li>
             </ol>
             ${helpJumpButtons([
                 { label: '节点管理', target: 'nodes', value: 'subscription', primary: true },
                 { label: '自动选择', target: 'nodes', value: 'auto' },
                 { label: '运行开关', target: 'settings', value: 'run' },
                 { label: '入口操作', target: 'settings', value: 'entry' },
-                { label: '规则 / DNS / 聚合组', target: 'settings', value: 'manage' },
+                { label: '规则 / DNS', target: 'settings', value: 'manage' },
                 { label: '测试网站', target: 'sitecheck' },
                 { label: '数据看板', target: 'dashboard' }
             ], '直接跳转')}
@@ -3970,7 +4241,7 @@ const helpTopics = {
                 { label: '打开自动选择', target: 'nodes', value: 'auto', primary: true },
                 { label: '查看订阅组', target: 'nodes', value: 'subscription' },
                 { label: '查看聚合组', target: 'nodes', value: 'aggregate' },
-                { label: '管理聚合组', target: 'aggregate' }
+                { label: '新建聚合组', target: 'aggregate', value: 'new' }
             ])}
             <h3>立即选择和删除候选</h3>
             <ul>
@@ -5382,93 +5653,209 @@ function closeDNSModal() {
 }
 
 let allSubsNodesCache = [];
-let expandedAggSubs = {};
 let selectedAggNodes = {};
 let aggEditFile = '';
 let aggCurrentNodesList = [];
+let aggExistingNodeKeys = new Set();
+let aggSearchQuery = '';
+let selectedAggSubIndex = 0;
 
-async function openAggGroupModal() {
+async function openAggGroupModal(target = '') {
     document.getElementById('aggGroupModal').style.display = 'flex';
+    const requestedFile = typeof target === 'string' && target !== 'new' ? target : '';
+    const forceNew = target === 'new' || target?.mode === 'new';
     const list = document.getElementById('aggNodeList');
-    list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">加载中...</div>';
+    const rows = document.getElementById('aggNodeRows');
+    const searchInput = document.getElementById('aggNodeSearch');
+    aggSearchQuery = '';
+    selectedAggSubIndex = 0;
+    if (searchInput) searchInput.value = '';
+    if (list) list.innerHTML = '<div class="empty-state">加载中...</div>';
+    if (rows) rows.innerHTML = '<div class="empty-state">正在读取订阅节点...</div>';
 
-    // 构建模式选择器
     const sel = document.getElementById('aggModeSelect');
-    sel.innerHTML = '<option value="new">➕ 新建分组</option>';
+    sel.innerHTML = '<option value="new">新建分组</option>';
     aggregateGroupsCache.forEach(g => {
         const opt = document.createElement('option');
         opt.value = g.fileName;
-        opt.textContent = '✏️ ' + g.name;
+        opt.textContent = g.name;
         sel.appendChild(opt);
     });
 
-    // 如果已选中聚合组，默认进入编辑模式
-    const currentAggFile = document.getElementById('aggregateSelect').value;
-    if (currentAggFile) {
+    const currentAggFile = requestedFile || selectedNodeGroupFile || document.getElementById('aggregateSelect')?.value || '';
+    if (forceNew) {
+        sel.value = 'new';
+    } else if (currentAggFile && aggregateGroupsCache.some(g => g.fileName === currentAggFile)) {
         sel.value = currentAggFile;
     }
     scheduleCustomSelectSync();
 
-    onAggModeChange(sel.value);
+    selectedAggNodes = {};
+    await onAggModeChange(sel.value);
+    updateAggSelectionSummary();
 
-    // 加载所有订阅节点
     try {
         const res = await fetch('/api/all_nodes_all_subs');
         const groups = await res.json();
-        allSubsNodesCache = groups || [];
-        expandedAggSubs = {};
-        selectedAggNodes = {};
+        allSubsNodesCache = Array.isArray(groups) ? groups : [];
+        syncAggSelectionFromExisting();
         renderAggSubscriptions();
     } catch(e) {
-        list.innerHTML = '<div style="text-align:center;color:var(--danger);padding:20px;">加载失败</div>';
+        if (list) list.innerHTML = '<div class="empty-state" style="color:var(--danger);">加载失败</div>';
+        if (rows) rows.innerHTML = '<div class="empty-state" style="color:var(--danger);">加载失败</div>';
     }
 }
 
 async function onAggModeChange(value) {
     aggEditFile = (value === 'new') ? '' : value;
-    const currentSection = document.getElementById('aggCurrentSection');
+    const newConfig = document.getElementById('aggNewConfig');
     const nameInput = document.getElementById('aggGroupName');
     const btnSubmit = document.getElementById('btnAggSubmit');
+    const title = document.getElementById('aggGroupModalTitle');
+    const subtitle = document.getElementById('aggGroupModalSubtitle');
 
     if (aggEditFile) {
-        currentSection.style.display = 'block';
-        btnSubmit.textContent = '添加选中节点到此分组';
         const group = aggregateGroupsCache.find(g => g.fileName === aggEditFile);
-        nameInput.value = group ? group.name : '';
-        nameInput.disabled = true;
+        if (title) title.textContent = group ? `管理 ${group.name} 节点` : '管理聚合组节点';
+        if (subtitle) subtitle.textContent = '切换节点的已选和未选状态';
+        if (newConfig) newConfig.hidden = true;
+        if (btnSubmit) btnSubmit.textContent = '保存节点';
+        if (nameInput) {
+            nameInput.value = group ? group.name : '';
+            nameInput.disabled = true;
+        }
         try {
             const res = await fetch('/api/aggregate_group_nodes?file=' + encodeURIComponent(aggEditFile));
             aggCurrentNodesList = await res.json() || [];
         } catch(e) { aggCurrentNodesList = []; }
-        renderAggCurrentNodes();
+        rebuildAggExistingNodeKeys();
     } else {
-        currentSection.style.display = 'none';
-        nameInput.value = '';
-        nameInput.disabled = false;
-        btnSubmit.textContent = '保存聚合分组';
+        if (title) title.textContent = '新建聚合组';
+        if (subtitle) subtitle.textContent = '从订阅组中选择节点，保存为聚合组';
+        if (newConfig) newConfig.hidden = false;
+        if (nameInput) {
+            nameInput.value = '';
+            nameInput.disabled = false;
+            setTimeout(() => nameInput.focus(), 0);
+        }
+        if (btnSubmit) btnSubmit.textContent = '创建聚合组';
         aggCurrentNodesList = [];
+        rebuildAggExistingNodeKeys();
     }
+    updateAggSelectionSummary();
 }
 
-function renderAggCurrentNodes() {
-    const list = document.getElementById('aggCurrentNodeList');
-    if (!aggCurrentNodesList || aggCurrentNodesList.length === 0) {
-        list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:12px;">暂无节点</div>';
-        return;
+function aggNodeField(node, ...names) {
+    for (const name of names) {
+        const value = node?.[name];
+        if (value !== undefined && value !== null && String(value).trim() !== '') return value;
     }
-    let html = '';
-    aggCurrentNodesList.forEach((n, idx) => {
-        html += `
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px;border-bottom:1px solid rgba(148,163,184,0.1);font-size:13px;">
-                <div style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                    <span style="color:var(--text-dim);font-size:11px;margin-right:6px;">[${n.Type}]</span>
-                    <span>${n.Name}</span>
-                </div>
-                <button class="btn-ghost" style="padding:3px 8px;font-size:11px;border-color:rgba(239,68,68,0.3);color:var(--danger);flex-shrink:0;margin-left:8px;" onclick="removeAggNode(${idx})">移除</button>
-            </div>
-        `;
+    return '';
+}
+
+function aggFirstNonEmpty(...values) {
+    for (const value of values) {
+        if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+    }
+    return '';
+}
+
+function aggNodeName(node) {
+    return node?.Name || node?.name || '未命名节点';
+}
+
+function aggNodeType(node) {
+    return node?.Type || node?.type || '未知类型';
+}
+
+function aggNodeMeta(node) {
+    const type = aggNodeType(node);
+    const server = node?.Server || node?.server || node?.Address || node?.address || node?.Host || node?.host || '';
+    return [type, server].filter(Boolean).join(' · ');
+}
+
+function aggSubName(group) {
+    return group?.subName || group?.name || group?.Name || '未命名订阅';
+}
+
+function aggSubNodes(group) {
+    if (Array.isArray(group?.nodes)) return group.nodes;
+    if (Array.isArray(group?.Nodes)) return group.Nodes;
+    return [];
+}
+
+function selectedAggCount() {
+    return Object.keys(selectedAggNodes).length;
+}
+
+function aggNodeIdentityKey(node) {
+    let network = String(aggNodeField(node, 'Network', 'network')).trim().toLowerCase();
+    if (network === 'tcp') network = '';
+    const wsOpts = node?.WSOpts || node?.['ws-opts'] || node?.wsOpts || {};
+    return [
+        aggNodeField(node, 'Type', 'type'),
+        aggNodeName(node),
+        aggNodeField(node, 'Server', 'server'),
+        aggNodeField(node, 'Port', 'port'),
+        aggNodeField(node, 'PortRange', 'portRange', 'port-range'),
+        aggNodeField(node, 'UUID', 'uuid'),
+        aggNodeField(node, 'Username', 'username'),
+        aggNodeField(node, 'Password', 'password'),
+        aggNodeField(node, 'HashedPassword', 'hashedPassword', 'hashed-password'),
+        aggFirstNonEmpty(aggNodeField(node, 'Method', 'method'), aggNodeField(node, 'Cipher', 'cipher')),
+        aggFirstNonEmpty(aggNodeField(node, 'SNI', 'sni'), aggNodeField(node, 'ServerName', 'serverName', 'servername')),
+        aggNodeField(node, 'Flow', 'flow'),
+        aggFirstNonEmpty(aggNodeField(node, 'WSPath', 'wsPath', 'ws-path'), wsOpts?.Path, wsOpts?.path),
+        aggNodeField(node, 'Host', 'host'),
+        aggNodeField(node, 'Obfs', 'obfs'),
+        aggNodeField(node, 'ObfsPassword', 'obfsPassword', 'obfs-password'),
+        aggNodeField(node, 'Transport', 'transport'),
+        network
+    ].map(value => String(value ?? '')).join('|');
+}
+
+function aggNodeMembershipKeys(node) {
+    const keys = new Set();
+    const sourceFile = String(aggNodeField(node, 'SourceFile', 'sourceFile', 'source-file')).trim();
+    const sourceKey = String(aggNodeField(node, 'SourceKey', 'sourceKey', 'source-key')).trim();
+    const sourceName = String(aggNodeField(node, 'SourceName', 'sourceName', 'source-name')).trim();
+    const type = String(aggNodeType(node)).trim().toLowerCase();
+    const name = String(aggNodeName(node)).trim().toLowerCase();
+    const identity = aggNodeIdentityKey(node);
+
+    if (sourceKey) keys.add('source-key:' + sourceKey);
+    if (identity) keys.add('identity:' + identity);
+    if (sourceFile && sourceKey) keys.add('source-file-key:' + sourceFile + '|' + sourceKey);
+    if (sourceFile && sourceName && type) keys.add('source-name-type:' + sourceFile + '|' + sourceName.toLowerCase() + '|' + type);
+    if (sourceFile && name && type) keys.add('source-name-type:' + sourceFile + '|' + name + '|' + type);
+    if (name && type) keys.add('name-type:' + name + '|' + type);
+    return keys;
+}
+
+function rebuildAggExistingNodeKeys() {
+    aggExistingNodeKeys = new Set();
+    if (!aggEditFile || !Array.isArray(aggCurrentNodesList)) return;
+    aggCurrentNodesList.forEach(node => {
+        aggNodeMembershipKeys(node).forEach(key => aggExistingNodeKeys.add(key));
     });
-    list.innerHTML = html;
+}
+
+function isAggNodeExisting(node) {
+    if (!aggEditFile || !aggExistingNodeKeys.size) return false;
+    for (const key of aggNodeMembershipKeys(node)) {
+        if (aggExistingNodeKeys.has(key)) return true;
+    }
+    return false;
+}
+
+function syncAggSelectionFromExisting() {
+    if (!aggEditFile) return;
+    selectedAggNodes = {};
+    allSubsNodesCache.forEach((group, gIdx) => {
+        aggSubNodes(group).forEach((node, nIdx) => {
+            if (isAggNodeExisting(node)) selectedAggNodes[`${gIdx}_${nIdx}`] = true;
+        });
+    });
 }
 
 async function removeAggNode(idx) {
@@ -5480,54 +5867,134 @@ async function removeAggNode(idx) {
             showToast('节点已移除', 'success');
             const res2 = await fetch('/api/aggregate_group_nodes?file=' + encodeURIComponent(aggEditFile));
             aggCurrentNodesList = await res2.json() || [];
-            renderAggCurrentNodes();
-            if (document.getElementById('aggregateSelect').value === aggEditFile) loadNodes();
+            rebuildAggExistingNodeKeys();
+            renderAggSubscriptions();
+            if (selectedNodeGroupFile === aggEditFile || document.getElementById('aggregateSelect').value === aggEditFile) {
+                await loadNodes();
+            }
         }
     } catch(e) { showToast('移除失败', 'error'); }
 }
 
 function renderAggSubscriptions() {
     const list = document.getElementById('aggNodeList');
-    if (!allSubsNodesCache || allSubsNodesCache.length === 0) {
-        list.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">暂无任何订阅</div>';
+    const hint = document.getElementById('aggPickerHint');
+    const groups = Array.isArray(allSubsNodesCache) ? allSubsNodesCache : [];
+    const totalNodes = groups.reduce((sum, group) => sum + aggSubNodes(group).length, 0);
+    if (!list) return;
+    if (!groups.length) {
+        list.innerHTML = '<div class="empty-state">暂无任何订阅</div>';
+        renderAggNodeRows();
+        updateAggSelectionSummary();
         return;
     }
-    let html = '';
-    allSubsNodesCache.forEach((group, gIdx) => {
-        const expanded = !!expandedAggSubs[gIdx];
-        html += `
-            <div style="margin-top:10px;">
-                <button class="btn-ghost" style="width:100%;display:flex;justify-content:space-between;align-items:center;text-align:left;" onclick="toggleAggSubscription(${gIdx})">
-                    <span>${expanded ? '▾' : '▸'} ${group.subName}</span>
-                    <span style="font-size:11px;opacity:0.65;">${group.nodes.length} 个节点</span>
-                </button>
-                <div id="aggSubNodes_${gIdx}" style="display:${expanded ? 'block' : 'none'};padding-left:10px;">
+
+    if (selectedAggSubIndex < 0 || selectedAggSubIndex >= groups.length) selectedAggSubIndex = 0;
+    list.innerHTML = groups.map((group, gIdx) => {
+        const groupName = aggSubName(group);
+        const nodes = aggSubNodes(group);
+        const selectedInGroup = nodes.reduce((count, _node, nIdx) => count + (selectedAggNodes[`${gIdx}_${nIdx}`] ? 1 : 0), 0);
+        const active = gIdx === selectedAggSubIndex;
+        return `
+            <button type="button" class="source-push-card ${active ? 'selected is-browsing-source' : ''}" onclick="selectAggSubscription(${gIdx})">
+                <span class="source-card-shine"></span>
+                <span class="node-group-name"><span class="node-group-name-text">${escapeHTML(groupName)}</span></span>
+                <span class="node-group-meta">${selectedInGroup ? `<span class="node-group-current-badge">${selectedInGroup} 已选</span>` : ''}<span>${nodes.length} 节点</span></span>
+            </button>
         `;
-        if (expanded) {
-            group.nodes.forEach((n, nIdx) => {
-                html += `
-                    <label style="display:flex;align-items:center;padding:8px;border-bottom:1px solid rgba(148,163,184,0.1);cursor:pointer;font-size:13px;transition:all 0.2s;">
-                        <input type="checkbox" id="aggNodeCheck_${gIdx}_${nIdx}" ${selectedAggNodes[gIdx + '_' + nIdx] ? 'checked' : ''} onchange="setAggNodeSelected(${gIdx}, ${nIdx}, this.checked)" style="margin-right:10px;">
-                        <span style="flex:1;">${n.Name}</span>
-                        <span style="color:var(--text-dim);font-size:11px;">[${n.Type}]</span>
-                    </label>
-                `;
-            });
-        }
-        html += '</div></div>';
-    });
-    list.innerHTML = html;
+    }).join('');
+
+    if (hint) hint.textContent = `${groups.length} 个订阅 · ${totalNodes} 个节点`;
+    renderAggNodeRows();
+    updateAggSelectionSummary();
 }
 
-function toggleAggSubscription(gIdx) {
-    expandedAggSubs[gIdx] = !expandedAggSubs[gIdx];
+function selectAggSubscription(gIdx) {
+    selectedAggSubIndex = gIdx;
+    aggSearchQuery = '';
+    const searchInput = document.getElementById('aggNodeSearch');
+    if (searchInput) searchInput.value = '';
     renderAggSubscriptions();
+}
+
+function filterAggNodes(value) {
+    aggSearchQuery = value || '';
+    renderAggSubscriptions();
+}
+
+function clearAggSelection() {
+    if (selectedAggCount() === 0) return;
+    selectedAggNodes = {};
+    renderAggSubscriptions();
+}
+
+function renderAggNodeRows() {
+    const rows = document.getElementById('aggNodeRows');
+    const title = document.getElementById('aggSelectedSourceTitle');
+    const hint = document.getElementById('aggPickerHint');
+    if (!rows) return;
+    const group = allSubsNodesCache[selectedAggSubIndex];
+    if (!group) {
+        if (title) title.textContent = '选择订阅组';
+        if (hint) hint.textContent = '选择一个订阅组后勾选节点';
+        rows.innerHTML = '<div class="empty-state">请选择上方订阅组。</div>';
+        return;
+    }
+    const groupName = aggSubName(group);
+    const nodes = aggSubNodes(group);
+    const query = aggSearchQuery.trim().toLowerCase();
+    const filtered = nodes
+        .map((node, nIdx) => ({ node, nIdx }))
+        .filter(({ node }) => !query || `${groupName} ${aggNodeName(node)} ${aggNodeMeta(node)}`.toLowerCase().includes(query));
+    const selectedInGroup = nodes.reduce((count, _node, nIdx) => count + (selectedAggNodes[`${selectedAggSubIndex}_${nIdx}`] ? 1 : 0), 0);
+    if (title) title.textContent = groupName;
+    if (hint) hint.textContent = `${filtered.length}/${nodes.length} 个节点${selectedInGroup ? ` · 已选 ${selectedInGroup}` : ''}`;
+    if (!filtered.length) {
+        rows.innerHTML = '<div class="empty-state">没有匹配的节点。</div>';
+        return;
+    }
+    rows.innerHTML = `
+        <div class="auto-node-list agg-select-node-list">
+            ${filtered.map(({ node, nIdx }, index) => {
+                const key = `${selectedAggSubIndex}_${nIdx}`;
+                const selected = !!selectedAggNodes[key];
+                return `
+                    <button type="button" class="auto-node-item agg-select-node-item ${selected ? 'active is-selected' : ''}" style="--deal-index:${Math.min(index, 18)}" onclick="toggleAggNodeSelected(${selectedAggSubIndex}, ${nIdx})" aria-pressed="${selected ? 'true' : 'false'}">
+                        <div class="auto-node-main">
+                            <span class="status-dot ${selected ? 'active' : ''}"></span>
+                            <div class="auto-node-name">${escapeHTML(aggNodeName(node))}</div>
+                            <div class="auto-node-source">${escapeHTML(groupName)}</div>
+                        </div>
+                        <div class="auto-node-metrics">
+                            <span class="node-type">${escapeHTML(aggNodeType(node))}</span>
+                            <span class="latency ${selected ? 'good' : 'unknown'}">${selected ? '已选' : '未选'}</span>
+                        </div>
+                    </button>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+function updateAggSelectionSummary() {
+    const count = selectedAggCount();
+    const counter = document.getElementById('aggSelectionCounter');
+    if (counter) counter.textContent = `${count} 已选`;
 }
 
 function setAggNodeSelected(gIdx, nIdx, checked) {
     const key = gIdx + '_' + nIdx;
     if (checked) selectedAggNodes[key] = true;
     else delete selectedAggNodes[key];
+    renderAggSubscriptions();
+}
+
+function toggleAggNodeSelected(gIdx, nIdx) {
+    const key = gIdx + '_' + nIdx;
+    if (selectedAggNodes[key]) delete selectedAggNodes[key];
+    else selectedAggNodes[key] = true;
+    renderAggSubscriptions();
+    updateAggSelectionSummary();
 }
 
 function closeAggGroupModal() {
@@ -5540,7 +6007,7 @@ function getSelectedAggNodes() {
         const parts = key.split('_');
         const gIdx = Number(parts[0]);
         const nIdx = Number(parts[1]);
-        const node = allSubsNodesCache[gIdx]?.nodes?.[nIdx];
+        const node = aggSubNodes(allSubsNodesCache[gIdx])?.[nIdx];
         if (node) nodes.push(node);
     });
     return nodes;
@@ -5550,25 +6017,26 @@ async function submitAggAction() {
     const selectedNodes = getSelectedAggNodes();
 
     if (aggEditFile) {
-        // 编辑模式：添加节点到已有分组
-        if (selectedNodes.length === 0) return showToast('请从下方订阅中勾选要添加的节点', 'warning');
+        // 编辑模式：把当前已选节点整体保存到已有分组。
         try {
-            const res = await fetch('/api/aggregate_group_add_nodes', {
+            const res = await fetch('/api/aggregate_group_set_nodes', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ file: aggEditFile, nodes: selectedNodes })
             });
             const data = await res.json();
             if (data.ok) {
-                showToast('成功添加 ' + selectedNodes.length + ' 个节点！', 'success');
-                selectedAggNodes = {};
-                renderAggSubscriptions();
+                showToast('已保存 ' + (data.count ?? selectedNodes.length) + ' 个节点', 'success');
                 const res2 = await fetch('/api/aggregate_group_nodes?file=' + encodeURIComponent(aggEditFile));
                 aggCurrentNodesList = await res2.json() || [];
-                renderAggCurrentNodes();
-                if (document.getElementById('aggregateSelect').value === aggEditFile) loadNodes();
+                rebuildAggExistingNodeKeys();
+                syncAggSelectionFromExisting();
+                renderAggSubscriptions();
+                if (selectedNodeGroupFile === aggEditFile || document.getElementById('aggregateSelect').value === aggEditFile) {
+                    await loadNodes();
+                }
             } else {
-                showToast('添加失败', 'error');
+                showToast(data.msg || '保存失败', 'error');
             }
         } catch(e) { showToast('请求失败', 'error'); }
     } else {
@@ -5586,7 +6054,11 @@ async function submitAggAction() {
             if (data.ok) {
                 showToast('聚合分组创建成功！', 'success');
                 closeAggGroupModal();
-                loadAggregateGroups();
+                nodeGroupMode = 'aggregate';
+                selectedNodeGroupFile = data.fileName || '';
+                nodeGroupManualCollapsed = false;
+                await loadAggregateGroups();
+                await loadNodes();
             } else {
                 showToast('创建失败', 'error');
             }

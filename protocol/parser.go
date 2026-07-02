@@ -85,6 +85,14 @@ type Node struct {
 	SourceName          string            `yaml:"source-name,omitempty"`
 }
 
+const (
+	maxSubscriptionInputBytes    = 8 << 20
+	maxSubscriptionResponseBytes = 8 << 20
+	maxSubscriptionDecodedBytes  = 8 << 20
+	maxSubscriptionGzipBytes     = 16 << 20
+	maxSubscriptionEncodedChars  = 12 << 20
+)
+
 func PreprocessYAML(data string) string {
 	// 预处理：万一有连续的 }{ 之间没有分隔符，强行插入 --- 分隔符
 	s := strings.ReplaceAll(data, "}\n{", "}\n---\n{")
@@ -138,19 +146,29 @@ func tryGzip(b []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer r.Close()
-	return io.ReadAll(r)
+	out, err := io.ReadAll(io.LimitReader(r, maxSubscriptionGzipBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > maxSubscriptionGzipBytes {
+		return nil, fmt.Errorf("gzip decoded subscription exceeds %d bytes", maxSubscriptionGzipBytes)
+	}
+	return out, nil
 }
 
 func tryBase64Variants(s string) ([]byte, bool) {
 	clean := strings.TrimSpace(s)
 	clean = strings.ReplaceAll(clean, "\r", "")
 	clean = strings.ReplaceAll(clean, "\n", "")
+	if len(clean) > maxSubscriptionEncodedChars {
+		return nil, false
+	}
 	var decoders = []func(string) ([]byte, error){
 		base64.StdEncoding.DecodeString, base64.RawStdEncoding.DecodeString,
 		base64.URLEncoding.DecodeString, base64.RawURLEncoding.DecodeString,
 	}
 	for _, dec := range decoders {
-		if out, err := dec(clean); err == nil && len(out) > 0 {
+		if out, err := dec(clean); err == nil && len(out) > 0 && len(out) <= maxSubscriptionDecodedBytes {
 			return out, true
 		}
 	}
@@ -181,12 +199,18 @@ func LoadInputWithUserAgentInfo(input string, userAgent string) (LoadInputResult
 func LoadInputWithUserAgentInfoContext(ctx context.Context, input string, userAgent string) (LoadInputResult, error) {
 	s := strings.TrimSpace(input)
 	s = strings.Trim(s, "“”\"'")
+	if len(s) > maxSubscriptionInputBytes {
+		return LoadInputResult{}, fmt.Errorf("subscription input exceeds %d bytes", maxSubscriptionInputBytes)
+	}
 
 	isSingleLine := !strings.Contains(s, "\n")
 	if isPlainHTTPRemoteInput(s, isSingleLine) && !allowInsecureSubscriptionInput() {
 		return LoadInputResult{}, fmt.Errorf("出于安全原因，默认拒绝明文 HTTP 订阅；请改用 HTTPS")
 	}
 	if (strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")) && isSingleLine && !strings.Contains(s, "@") {
+		if err := validateRemoteSubscriptionURL(ctx, s); err != nil {
+			return LoadInputResult{}, err
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s, nil)
 		if err != nil {
 			return LoadInputResult{}, err
@@ -215,6 +239,62 @@ func allowInsecureSubscriptionInput() bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
+func validateRemoteSubscriptionURL(ctx context.Context, raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && allowInsecureSubscriptionInput()) {
+		return fmt.Errorf("unsupported subscription URL scheme: %s", parsed.Scheme)
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return fmt.Errorf("subscription URL missing host")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if isBlockedSubscriptionIP(ip) {
+			return fmt.Errorf("subscription URL targets a local or private address")
+		}
+		return nil
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+	if err != nil {
+		return err
+	}
+	if len(addrs) == 0 {
+		return fmt.Errorf("subscription host resolved no addresses")
+	}
+	for _, addr := range addrs {
+		if isBlockedSubscriptionIP(addr.IP) {
+			return fmt.Errorf("subscription URL resolves to a local or private address")
+		}
+	}
+	return nil
+}
+
+func isBlockedSubscriptionIP(ip net.IP) bool {
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() ||
+		ip.IsMulticast()
+}
+
+func readLimitedSubscriptionBody(r io.Reader, limit int64) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("subscription response exceeds %d bytes", limit)
+	}
+	return body, nil
+}
+
 func doSubscriptionRequest(req *http.Request) (LoadInputResult, error) {
 	var lastErr error
 	attempts := []struct {
@@ -233,6 +313,12 @@ func doSubscriptionRequest(req *http.Request) (LoadInputResult, error) {
 		client := &http.Client{
 			Timeout:   20 * time.Second,
 			Transport: transport,
+			CheckRedirect: func(redirectReq *http.Request, via []*http.Request) error {
+				if len(via) >= 5 {
+					return fmt.Errorf("stopped after 5 redirects")
+				}
+				return validateRemoteSubscriptionURL(redirectReq.Context(), redirectReq.URL.String())
+			},
 		}
 		resp, err := client.Do(clone)
 		if err != nil {
@@ -241,7 +327,7 @@ func doSubscriptionRequest(req *http.Request) (LoadInputResult, error) {
 			continue
 		}
 
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := readLimitedSubscriptionBody(resp.Body, maxSubscriptionResponseBytes)
 		resp.Body.Close()
 		transport.CloseIdleConnections()
 		if readErr != nil {
@@ -278,6 +364,9 @@ func subscriptionTransport(proxy func(*http.Request) (*url.URL, error), http2 bo
 }
 
 func NormalizeSubscription(raw []byte) (string, error) {
+	if len(raw) > maxSubscriptionResponseBytes {
+		return "", fmt.Errorf("subscription input exceeds %d bytes", maxSubscriptionResponseBytes)
+	}
 	b := bytes.TrimSpace(raw)
 	b = bytes.TrimPrefix(b, []byte{0xEF, 0xBB, 0xBF})
 	s := string(b)

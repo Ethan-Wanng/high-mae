@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -30,10 +31,10 @@ func ParseSS(link string) (Node, error) {
 	if colon < 0 {
 		return Node{}, fmt.Errorf("invalid ss auth")
 	}
-	hp := strings.Split(hostPort, ":")
-	if len(hp) != 2 {
+	host, portText, err := net.SplitHostPort(hostPort)
+	if err != nil {
 		return Node{}, fmt.Errorf("invalid ss hostport")
 	}
-	port, _ := strconv.Atoi(hp[1])
-	return Node{Type: "ss", Name: name, Server: hp[0], Port: port, Method: auth[:colon], Password: auth[colon+1:]}, nil
+	port, _ := strconv.Atoi(portText)
+	return Node{Type: "ss", Name: name, Server: host, Port: port, Method: auth[:colon], Password: auth[colon+1:]}, nil
 }

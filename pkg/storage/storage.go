@@ -99,6 +99,14 @@ func normalizeKey(key string) []byte {
 	return []byte(clean)
 }
 
+func isSafeMigrationFileKey(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" || key == "." || key == ".." || filepath.IsAbs(key) {
+		return false
+	}
+	return !strings.ContainsAny(key, `/\`) && filepath.Base(key) == key
+}
+
 func Read(key string) ([]byte, error) {
 	database, err := getDB()
 	if err != nil {
@@ -147,16 +155,22 @@ func Delete(key string) error {
 }
 
 func ReadOrMigrateFile(key string) ([]byte, error) {
-	if fileData, ok := readNewerFile(key); ok {
-		if err := Write(key, fileData); err != nil {
-			return nil, err
+	if isSafeMigrationFileKey(key) {
+		if fileData, ok := readNewerFile(key); ok {
+			if err := Write(key, fileData); err != nil {
+				return nil, err
+			}
+			return fileData, nil
 		}
-		return fileData, nil
 	}
 
 	data, err := Read(key)
 	if err == nil || !errors.Is(err, os.ErrNotExist) {
 		return data, err
+	}
+
+	if !isSafeMigrationFileKey(key) {
+		return nil, os.ErrNotExist
 	}
 
 	data, err = os.ReadFile(key)
@@ -170,6 +184,9 @@ func ReadOrMigrateFile(key string) ([]byte, error) {
 }
 
 func readNewerFile(key string) ([]byte, bool) {
+	if !isSafeMigrationFileKey(key) {
+		return nil, false
+	}
 	fileInfo, err := os.Stat(key)
 	if err != nil {
 		return nil, false

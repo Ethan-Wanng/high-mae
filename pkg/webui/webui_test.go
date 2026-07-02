@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -114,14 +115,14 @@ func TestSystemConfigHandlerPersistsBingRedirectGuard(t *testing.T) {
 }
 
 func TestGetStatusHandlerReportsPendingProxyTarget(t *testing.T) {
-	oldProxy := common.IsSystemProxyOn
-	oldMode := common.ProxyMode
+	oldProxy := common.GetSystemProxyOn()
+	oldMode := common.GetProxyMode()
 	oldStartupDone := startupStateDone
 	oldProxyPending := proxyPending.Load()
 	oldProxyPendingState := proxyPendingState.Load()
 	defer func() {
-		common.IsSystemProxyOn = oldProxy
-		common.ProxyMode = oldMode
+		common.SetSystemProxyOn(oldProxy)
+		common.SetProxyMode(oldMode)
 		proxyPending.Store(oldProxyPending)
 		proxyPendingState.Store(oldProxyPendingState)
 		startupStateMu.Lock()
@@ -132,8 +133,8 @@ func TestGetStatusHandlerReportsPendingProxyTarget(t *testing.T) {
 	startupStateMu.Lock()
 	startupStateDone = true
 	startupStateMu.Unlock()
-	common.IsSystemProxyOn = false
-	common.ProxyMode = "Rule"
+	common.SetSystemProxyOn(false)
+	common.SetProxyMode("Rule")
 	proxyPending.Store(true)
 	proxyPendingState.Store(true)
 
@@ -156,16 +157,10 @@ func TestGetStatusHandlerReportsPendingProxyTarget(t *testing.T) {
 func TestGetStatusHandlerReportsActiveNode(t *testing.T) {
 	oldStartupDone := startupStateDone
 	oldCurrentConfig := sub.CurrentConfigFile
-	common.ClientMu.RLock()
-	oldActiveNode := common.ActiveNode
-	oldActiveNodeName := common.ActiveNodeName
-	common.ClientMu.RUnlock()
+	oldActiveNode, _ := common.ActiveNodeSnapshot()
 	defer func() {
 		sub.CurrentConfigFile = oldCurrentConfig
-		common.ClientMu.Lock()
-		common.ActiveNode = oldActiveNode
-		common.ActiveNodeName = oldActiveNodeName
-		common.ClientMu.Unlock()
+		common.SetActiveNode(oldActiveNode)
 		startupStateMu.Lock()
 		startupStateDone = oldStartupDone
 		startupStateMu.Unlock()
@@ -175,10 +170,7 @@ func TestGetStatusHandlerReportsActiveNode(t *testing.T) {
 	startupStateDone = true
 	startupStateMu.Unlock()
 	sub.CurrentConfigFile = "sub_active.yml"
-	common.ClientMu.Lock()
-	common.ActiveNode = protocol.Node{Name: "active-node", Type: "hysteria2", Group: "Group A", SourceFile: "source.yml"}
-	common.ActiveNodeName = "active-node"
-	common.ClientMu.Unlock()
+	common.SetActiveNode(protocol.Node{Name: "active-node", Type: "hysteria2", Group: "Group A", SourceFile: "source.yml"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	rr := httptest.NewRecorder()
@@ -253,16 +245,16 @@ func TestApplyRulesHandlerAppliesRoutingAndCmdRulesImmediately(t *testing.T) {
 
 	oldGroups := routing.GetRuleGroups()
 	oldCmdRules := routing.GetCmdRules()
-	oldMode := common.ProxyMode
-	oldSystemProxy := common.IsSystemProxyOn
+	oldMode := common.GetProxyMode()
+	oldSystemProxy := common.GetSystemProxyOn()
 	defer func() {
 		_ = routing.SaveAllRules(oldGroups, oldCmdRules)
-		common.ProxyMode = oldMode
-		common.IsSystemProxyOn = oldSystemProxy
+		common.SetProxyMode(oldMode)
+		common.SetSystemProxyOn(oldSystemProxy)
 	}()
 
-	common.ProxyMode = "Rule"
-	common.IsSystemProxyOn = false
+	common.SetProxyMode("Rule")
+	common.SetSystemProxyOn(false)
 	payload := `{
 		"ruleGroups":[
 			{"id":"direct","name":"Direct","action":"direct","rules":[{"type":"domain","value":"Example.COM"}]}
@@ -294,13 +286,13 @@ func TestGetNodesMarksOnlyActiveSourceNodeActive(t *testing.T) {
 	t.Cleanup(func() { _ = storage.Close() })
 
 	oldCurrentConfig := sub.CurrentConfigFile
-	oldActiveNodeName := common.ActiveNodeName
-	oldAllNodes := common.AllNodes
+	oldActiveNode, _ := common.ActiveNodeSnapshot()
+	oldAllNodes := common.GetAllNodes()
 	oldStartupDone := startupStateDone
 	defer func() {
 		sub.CurrentConfigFile = oldCurrentConfig
-		common.ActiveNodeName = oldActiveNodeName
-		common.AllNodes = oldAllNodes
+		common.SetActiveNode(oldActiveNode)
+		common.SetAllNodes(oldAllNodes)
 		startupStateMu.Lock()
 		startupStateDone = oldStartupDone
 		startupStateMu.Unlock()
@@ -326,7 +318,7 @@ func TestGetNodesMarksOnlyActiveSourceNodeActive(t *testing.T) {
 	}
 
 	sub.CurrentConfigFile = secondFile
-	common.ActiveNodeName = "same-name"
+	common.SetActiveNode(protocol.Node{Name: "same-name"})
 	startupStateMu.Lock()
 	startupStateDone = true
 	startupStateMu.Unlock()
@@ -367,6 +359,205 @@ func TestSwitchSupplierRejectsUnknownFile(t *testing.T) {
 
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected unknown supplier file to be rejected, got %d", rr.Code)
+	}
+}
+
+func TestGetSuppliersHandlerRedactsSubscriptionURL(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	oldStartupDone := startupStateDone
+	defer func() {
+		startupStateMu.Lock()
+		startupStateDone = oldStartupDone
+		startupStateMu.Unlock()
+	}()
+	startupStateMu.Lock()
+	startupStateDone = true
+	startupStateMu.Unlock()
+
+	secretURL := "https://user:pass@example.com/subscription/token-secret?token=abc123&password=hidden"
+	if _, _, err := sub.AppendSubscriptionWithTraffic(secretURL, nil); err != nil {
+		t.Fatalf("append subscription: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/suppliers", nil)
+	rr := httptest.NewRecorder()
+	getSuppliersHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	var suppliers []struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &suppliers); err != nil {
+		t.Fatalf("response JSON error: %v", err)
+	}
+	if len(suppliers) != 1 {
+		t.Fatalf("supplier count = %d, want 1", len(suppliers))
+	}
+	got := suppliers[0].URL
+	for _, leaked := range []string{"user", "pass", "token-secret", "abc123", "hidden"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("redacted supplier URL %q leaked %q", got, leaked)
+		}
+	}
+	if got != "https://example.com/<redacted>" {
+		t.Fatalf("redacted supplier URL = %q, want host-only redaction", got)
+	}
+}
+
+func TestSupplierURLHandlerReturnsOriginalURLOnPost(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	secretURL := "https://example.com/subscription/token-secret?token=abc123"
+	fileName, _, err := sub.AppendSubscriptionWithTraffic(secretURL, nil)
+	if err != nil {
+		t.Fatalf("append subscription: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/supplier_url?file="+url.QueryEscape(fileName), nil)
+	rr := httptest.NewRecorder()
+	supplierURLHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	var resp struct {
+		OK  bool   `json:"ok"`
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response JSON error: %v", err)
+	}
+	if !resp.OK || resp.URL != secretURL {
+		t.Fatalf("supplier URL response = %+v, want original URL", resp)
+	}
+}
+
+func TestCreateAggregatedGroupUsesUniqueFileNames(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	node := protocol.Node{
+		Type:     "ss",
+		Name:     "node-a",
+		Server:   "example.com",
+		Port:     443,
+		Method:   "aes-128-gcm",
+		Password: "secret",
+	}
+	var fileNames []string
+	for _, name := range []string{"group-a", "group-b"} {
+		payload, err := json.Marshal(map[string]interface{}{
+			"name":  name,
+			"nodes": []protocol.Node{node},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/create_aggregated_group", strings.NewReader(string(payload)))
+		rr := httptest.NewRecorder()
+		createAggregatedGroupHandler(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("createAggregatedGroupHandler status = %d, body=%s", rr.Code, rr.Body.String())
+		}
+		var resp struct {
+			OK       bool   `json:"ok"`
+			FileName string `json:"fileName"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("response JSON error: %v", err)
+		}
+		if !resp.OK || resp.FileName == "" {
+			t.Fatalf("create response = %+v, want ok with fileName", resp)
+		}
+		if !isManagedAggregateGroupFileName(resp.FileName) {
+			t.Fatalf("created aggregate file %q is not a managed group file", resp.FileName)
+		}
+		fileNames = append(fileNames, resp.FileName)
+	}
+	if fileNames[0] == fileNames[1] {
+		t.Fatalf("aggregate groups reused file name %q", fileNames[0])
+	}
+
+	groups, err := ReadAggregateGroups()
+	if err != nil {
+		t.Fatalf("ReadAggregateGroups() error = %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("ReadAggregateGroups() len = %d, want 2", len(groups))
+	}
+	for _, fileName := range fileNames {
+		nodes, err := protocol.ParseNodes(fileName)
+		if err != nil {
+			t.Fatalf("ParseNodes(%q) error = %v", fileName, err)
+		}
+		if len(nodes) != 1 || nodes[0].Name != node.Name {
+			t.Fatalf("ParseNodes(%q) = %+v, want one node", fileName, nodes)
+		}
+	}
+}
+
+func TestSwitchAggregateGroupRejectsMissingNodeFile(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	if err := SaveAggregateGroups([]AggregateGroup{{Name: "broken", FileName: "group_missing.yml"}}); err != nil {
+		t.Fatalf("SaveAggregateGroups() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/switch_aggregate_group?file=group_missing.yml", nil)
+	rr := httptest.NewRecorder()
+	switchAggregateGroupHandler(rr, req)
+
+	if rr.Code == http.StatusOK {
+		t.Fatalf("switchAggregateGroupHandler status = %d, body=%s; want error for missing node file", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		OK  bool   `json:"ok"`
+		Msg string `json:"msg"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response JSON error: %v", err)
+	}
+	if resp.OK || resp.Msg == "" {
+		t.Fatalf("response = %+v, want explicit failure", resp)
+	}
+}
+
+func TestStateChangingHandlersRejectGet(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		handler http.HandlerFunc
+	}{
+		{name: "switch supplier", path: "/api/switch_supplier?file=sub_1.yml", handler: switchSupplierHandler},
+		{name: "supplier url", path: "/api/supplier_url?file=sub_1.yml", handler: supplierURLHandler},
+		{name: "update supplier", path: "/api/update_supplier?file=sub_1.yml", handler: updateSupplierHandler},
+		{name: "delete supplier", path: "/api/delete_supplier?file=sub_1.yml", handler: deleteSupplierHandler},
+		{name: "switch aggregate group", path: "/api/switch_aggregate_group?file=group_1.yml", handler: switchAggregateGroupHandler},
+		{name: "delete aggregate group", path: "/api/delete_aggregate_group?file=group_1.yml", handler: deleteAggregateGroupHandler},
+		{name: "set aggregate group nodes", path: "/api/aggregate_group_set_nodes", handler: aggGroupSetNodesHandler},
+		{name: "test all", path: "/api/test_all", handler: testAllHandler},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rr := httptest.NewRecorder()
+			tt.handler(rr, req)
+			if rr.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+			}
+		})
 	}
 }
 

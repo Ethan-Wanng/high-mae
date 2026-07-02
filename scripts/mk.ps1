@@ -7,6 +7,9 @@ $ErrorActionPreference = "Stop"
 $tags = "with_quic,with_utls,with_gvisor,with_naive_outbound,with_purego"
 # 链接器参数: -s -w 去除调试信息, -H windowsgui 隐藏控制台窗口
 $ldflags = "-s -w -H windowsgui"
+if (-not [string]::IsNullOrWhiteSpace($env:WING_FREE_FLOW_NODE_LINK)) {
+    $ldflags += " -X wing/pkg/freeflow.packagedNodeLink=$($env:WING_FREE_FLOW_NODE_LINK)"
+}
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $goCache = Join-Path $repoRoot ".gocache"
 $legacyGoModCache = Join-Path $repoRoot "gomodcache2"
@@ -16,6 +19,8 @@ $flutterDist = Join-Path $repoRoot "build\bin\flutter_ui"
 $backendExe = Join-Path $repoRoot "build\bin\wing.exe"
 $portablePackageScript = Join-Path $repoRoot "scripts\package-portable.ps1"
 $innoPackageScript = Join-Path $repoRoot "scripts\package.ps1"
+$cronetWindowsAMD64Version = "v0.0.0-20260309101654-0cbdcfddded9"
+$cronetDllSha256 = "8ef1f8bbde77f954af1ae47bee1819ac8dc2354bb0e1d4baba3dad9e58d7a6f7"
 
 function Stop-BuildOutputProcesses {
     param([string[]]$TargetRoots)
@@ -86,6 +91,18 @@ function Invoke-WithProjectGoCache {
     }
 }
 
+function Assert-CronetDllHash {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path -PathType Leaf)) {
+        throw "未找到 libcronet.dll: $Path"
+    }
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    if ($actual -ne $cronetDllSha256) {
+        throw "libcronet.dll 完整性校验失败: $Path sha256=$actual, want=$cronetDllSha256"
+    }
+}
+
 function Copy-CronetDll {
     Write-Host "🔍 检查并定位 libcronet.dll..." -ForegroundColor Cyan
     $destRoot = Join-Path $repoRoot "libcronet.dll"
@@ -93,6 +110,8 @@ function Copy-CronetDll {
     New-Item -ItemType Directory -Path (Split-Path -Parent $destBuild) -Force | Out-Null
 
     if ((Test-Path $destRoot) -and (Test-Path $destBuild)) {
+        Assert-CronetDllHash $destRoot
+        Assert-CronetDllHash $destBuild
         Write-Host "✅ libcronet.dll 已存在于合适的位置。" -ForegroundColor Green
         return
     }
@@ -103,14 +122,17 @@ function Copy-CronetDll {
         $goPath = Join-Path $env:USERPROFILE "go"
     }
 
-    $modPath = Join-Path $goPath "pkg\mod\github.com\sagernet\cronet-go\lib\windows_amd64@*\libcronet.dll"
-    $dlls = Get-ChildItem -Path $modPath -ErrorAction SilentlyContinue | Select-Object -First 1
+    $modPath = Join-Path $goPath "pkg\mod\github.com\sagernet\cronet-go\lib\windows_amd64@$cronetWindowsAMD64Version\libcronet.dll"
+    $dlls = Get-Item -LiteralPath $modPath -ErrorAction SilentlyContinue
 
     if ($dlls) {
         $srcPath = $dlls.FullName
         Write-Host "📍 找到缓存的 libcronet.dll: $srcPath" -ForegroundColor Green
+        Assert-CronetDllHash $srcPath
         Copy-Item $srcPath -Destination $destRoot -Force
         Copy-Item $srcPath -Destination $destBuild -Force
+        Assert-CronetDllHash $destRoot
+        Assert-CronetDllHash $destBuild
         Write-Host "✅ 成功拷贝 libcronet.dll 到项目根目录及 build/bin/" -ForegroundColor Green
     } else {
         Write-Warning "⚠️ 未能在 Go 模块缓存中找到 libcronet.dll，如果运行或测速 QUIC (Naive) 协议节点，可能需要手动放置该 DLL 到当前目录。"
@@ -269,7 +291,7 @@ switch ($args[0]) {
     default {
         Write-Host "用法: .\mk.ps1 [build|package|installer|portable|backend|test|run|ui|inno]"
         Write-Host "  build  - 构建 Flutter 控制面板与 Go 后端"
-        Write-Host "  package - 构建并生成 dist\wing-1.0.5-windows-x64-setup.exe 标准安装包"
+        Write-Host "  package - 构建并生成 dist\wing-1.0.5.2-windows-x64-setup.exe 标准安装包"
         Write-Host "  installer - 同 package，生成标准 Windows 安装包"
         Write-Host "  portable - 生成旧版自解压单文件安装包，可能更容易被安全软件误报"
         Write-Host "  backend - 仅构建 Go 后端"

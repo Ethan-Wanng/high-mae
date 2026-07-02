@@ -140,7 +140,7 @@ func handleSOCKS5(conn net.Conn) {
 
 	// 模拟 HTTP CONNECT 请求转发给本地 HTTPProxyHandler 处理
 	// 这样可以复用所有路由规则和统计逻辑
-	proxyConn, err := net.Dial("tcp", "127.0.0.1:"+common.LocalHttpPort)
+	proxyConn, err := net.DialTimeout("tcp", "127.0.0.1:"+common.LocalHttpPort, 5*time.Second)
 	if err != nil {
 		return
 	}

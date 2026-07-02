@@ -25,6 +25,12 @@ func ParseVMess(link string) (Node, error) {
 	name := getString(v, "ps")
 	server := getString(v, "add")
 	uuid := getString(v, "id")
+	if server == "" {
+		return Node{}, fmt.Errorf("vmess server is empty")
+	}
+	if uuid == "" {
+		return Node{}, fmt.Errorf("vmess uuid is empty")
+	}
 	port, err := getPort(v["port"])
 	if err != nil {
 		return Node{}, err

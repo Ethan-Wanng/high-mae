@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${WING_VERSION:-1.0.5}"
+VERSION="${WING_VERSION:-1.0.5.2}"
 ARCH="${WING_ARCH:-$(uname -m)}"
 case "$ARCH" in
   x86_64|amd64) DIST_ARCH="x64" ;;
@@ -10,6 +10,10 @@ case "$ARCH" in
   *) DIST_ARCH="$ARCH" ;;
 esac
 TAGS="with_quic,with_utls,with_gvisor,with_naive_outbound,with_purego"
+LDFLAGS="-s -w"
+if [[ -n "${WING_FREE_FLOW_NODE_LINK:-}" ]]; then
+  LDFLAGS="$LDFLAGS -X wing/pkg/freeflow.packagedNodeLink=${WING_FREE_FLOW_NODE_LINK}"
+fi
 DIST="$ROOT/dist"
 WORK="$DIST/macos-package"
 APP="$WORK/root/Applications/wing.app"
@@ -27,7 +31,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 echo "Building wing macOS app (${DIST_ARCH})..."
-(cd "$ROOT" && go build -tags "$TAGS" -ldflags "-s -w" -o "$MACOS/wing" .)
+(cd "$ROOT" && go build -tags "$TAGS" -ldflags "$LDFLAGS" -o "$MACOS/wing" .)
 chmod +x "$MACOS/wing"
 
 if [[ -f "$ROOT/assets/icon.ico" ]]; then

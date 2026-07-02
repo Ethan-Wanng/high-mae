@@ -42,3 +42,32 @@ func TestGetHistory(t *testing.T) {
 		t.Errorf("US-Proxy was not found in traffic results")
 	}
 }
+
+func TestConnLogAccessorsReturnCopies(t *testing.T) {
+	ClearConnLogs()
+	id := AddConnLog("example.com", "node-a")
+	UpdateConnLog(id, 1, 2, false)
+
+	logs := GetConnLogs()
+	if len(logs) != 1 {
+		t.Fatalf("GetConnLogs() len = %d, want 1", len(logs))
+	}
+	logs[0].Target = "mutated"
+
+	recent := GetRecentConnLogs(1)
+	if len(recent) != 1 {
+		t.Fatalf("GetRecentConnLogs() len = %d, want 1", len(recent))
+	}
+	if recent[0].Target != "example.com" {
+		t.Fatalf("recent log target = %q, want original target", recent[0].Target)
+	}
+	recent[0].Target = "mutated-again"
+
+	history := GetHistory(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if len(history.Logs) != 1 {
+		t.Fatalf("GetHistory() len = %d, want 1", len(history.Logs))
+	}
+	if history.Logs[0].Target != "example.com" {
+		t.Fatalf("history log target = %q, want original target", history.Logs[0].Target)
+	}
+}

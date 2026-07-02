@@ -93,7 +93,7 @@ type HTTPProxyHandler struct{}
 
 func dialDirect(targetAddr string) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	if common.IsTunModeOn && common.RealLocalIPBeforeTun != "" {
+	if common.GetTunModeOn() && common.RealLocalIPBeforeTun != "" {
 		if ip := net.ParseIP(common.RealLocalIPBeforeTun); ip != nil {
 			dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: 0}
 		}
@@ -105,10 +105,8 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	atomic.AddInt32(&stats.ActiveConnections, 1)
 	defer atomic.AddInt32(&stats.ActiveConnections, -1)
 
-	common.ClientMu.RLock()
-	client := common.ActiveClient
-	nodeName := common.ActiveNodeName
-	common.ClientMu.RUnlock()
+	client := common.GetActiveClient()
+	_, nodeName := common.ActiveNodeSnapshot()
 
 	targetAddr := req.Host
 	if !strings.Contains(targetAddr, ":") {

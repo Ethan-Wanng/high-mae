@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>wing 控制面板</title>
-    <link rel="stylesheet" href="style.css?v=20260623-auto-select-tabs">
+    <link rel="stylesheet" href="style.css?v=20260702-manage-nodes">
 </head>
 
 <body class="tabs-collapsed">
@@ -541,10 +541,6 @@
                                 <span>DNS 规则管理</span>
                                 <small>服务器、分流规则和自动覆写</small>
                             </button>
-                            <button class="settings-management-button" onclick="openAggGroupModal()">
-                                <span>聚合分组管理</span>
-                                <small>把多个订阅节点组合成候选池</small>
-                            </button>
                         </div>
                     </div>
                 </section>
@@ -746,32 +742,54 @@
     </div>
 
     <div class="modal-overlay" id="aggGroupModal">
-        <div class="modal agg-modal management-modal" style="width: min(900px, 100%);">
-            <h2>聚合分组管理</h2>
-            <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
-                <select id="aggModeSelect" onchange="onAggModeChange(this.value)" style="min-width:200px;"></select>
-                <input type="text" id="aggGroupName" placeholder="分组名称"
-                    style="flex:1;min-width:160px;background:rgba(255,255,255,0.05);border:1px solid rgba(148,163,184,0.18);color:white;padding:10px;border-radius:12px;outline:none;">
-            </div>
-            <div id="aggCurrentSection" style="display:none;margin-bottom:14px;">
-                <div style="font-size:13px;color:var(--text-sub);margin-bottom:8px;">📋 当前节点</div>
-                <div id="aggCurrentNodeList"
-                    style="max-height:200px;overflow-y:auto;border:1px solid rgba(148,163,184,0.18);border-radius:12px;padding:8px;background:rgba(255,255,255,0.02);">
+        <div class="modal agg-modal agg-source-modal management-modal" role="dialog" aria-modal="true" aria-labelledby="aggGroupModalTitle">
+            <select id="aggModeSelect" onchange="onAggModeChange(this.value)" hidden></select>
+
+            <div class="agg-source-modal-header">
+                <div class="agg-source-title">
+                    <h2 id="aggGroupModalTitle">新建聚合组</h2>
+                    <div id="aggGroupModalSubtitle">从订阅组中选择节点，保存为聚合组</div>
                 </div>
+                <div class="agg-selection-pill" id="aggSelectionCounter">0 已选</div>
             </div>
-            <div style="font-size:13px;color:var(--text-sub);margin-bottom:8px;">📦 从订阅中选择节点</div>
-            <div id="aggNodeList"
-                style="max-height: 250px; overflow-y: auto; margin-bottom: 14px; border: 1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 10px; background: rgba(255,255,255,0.02);">
-                <div style="text-align:center;color:var(--text-dim);padding:20px;">加载中...</div>
+
+            <div class="agg-source-form" id="aggNewConfig">
+                <input type="text" id="aggGroupName" placeholder="聚合组名称">
             </div>
-            <div class="action-bar">
+
+            <section class="node-card-table agg-source-picker">
+                <div class="source-card-deck" id="aggNodeList">
+                    <div class="empty-state">加载中...</div>
+                </div>
+                <div class="node-deck-window">
+                    <div class="node-detail-header">
+                        <div class="node-detail-heading">
+                            <div class="node-detail-title-row">
+                                <div class="node-detail-title" id="aggSelectedSourceTitle">选择订阅组</div>
+                                <div class="node-detail-actions">
+                                    <button type="button" class="btn-mini" onclick="clearAggSelection()">清空选择</button>
+                                </div>
+                            </div>
+                            <div class="node-detail-subtitle" id="aggPickerHint">选择一个订阅组后勾选节点</div>
+                        </div>
+                    </div>
+                    <div class="agg-search-row">
+                        <input type="search" id="aggNodeSearch" placeholder="搜索当前订阅组节点" oninput="filterAggNodes(this.value)">
+                    </div>
+                    <div class="node-detail-body agg-node-detail-body" id="aggNodeRows">
+                        <div class="empty-state">请选择上方订阅组。</div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="action-bar agg-action-bar">
                 <button class="btn-ghost" onclick="closeAggGroupModal()">关闭</button>
-                <button class="btn-success" id="btnAggSubmit" onclick="submitAggAction()">保存聚合分组</button>
+                <button class="btn-success" id="btnAggSubmit" onclick="submitAggAction()">创建聚合组</button>
             </div>
         </div>
     </div>
 
-    <script src="script.js?v=20260623-auto-select-tabs"></script>
+    <script src="script.js?v=20260702-manage-nodes"></script>
 </body>
 
 </html>

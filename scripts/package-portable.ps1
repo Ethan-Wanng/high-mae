@@ -9,6 +9,16 @@ $distDir = Join-Path $repoRoot "dist"
 $stubDir = Join-Path $repoRoot "installer\stub"
 $stubPayload = Join-Path $stubDir "wing-payload.zip"
 $installerExe = Join-Path $distDir "wing-installer.exe"
+$cronetDllSha256 = "8ef1f8bbde77f954af1ae47bee1819ac8dc2354bb0e1d4baba3dad9e58d7a6f7"
+
+function Assert-CronetDllHash {
+    param([string]$Path)
+
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    if ($actual -ne $cronetDllSha256) {
+        throw "libcronet.dll 完整性校验失败: $Path sha256=$actual, want=$cronetDllSha256"
+    }
+}
 
 $requiredFiles = @(
     (Join-Path $binDir "wing.exe"),
@@ -22,6 +32,7 @@ foreach ($file in $requiredFiles) {
         throw "缺少打包输入文件: $file。请先运行 .\scripts\mk.ps1 build"
     }
 }
+Assert-CronetDllHash (Join-Path $binDir "libcronet.dll")
 
 New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 

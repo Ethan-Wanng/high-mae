@@ -40,8 +40,11 @@ func TestSaveNodesToYAMLEncryptsStoredNodeSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read raw node data: %v", err)
 	}
-	if !bytes.HasPrefix(raw, []byte(secure.MagicHeader)) {
-		t.Fatalf("node data was not encrypted at rest: %q", raw[:min(len(raw), 32)])
+	if !bytes.HasPrefix(raw, []byte(secure.MagicHeaderV2)) {
+		t.Fatalf("node data was not encrypted with current format: %q", raw[:min(len(raw), 32)])
+	}
+	if bytes.Contains(raw, []byte(node.UUID)) || bytes.Contains(raw, []byte(node.Password)) {
+		t.Fatalf("node data leaked plaintext secret: %q", raw[:min(len(raw), 32)])
 	}
 
 	nodes, err := protocol.ParseNodes("nodes.yml")
@@ -64,8 +67,11 @@ func TestAppendSubscriptionEncryptsStoredSubscriptionURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read raw subscription data: %v", err)
 	}
-	if !bytes.HasPrefix(raw, []byte(secure.MagicHeader)) {
-		t.Fatalf("subscription data was not encrypted at rest: %q", raw[:min(len(raw), 32)])
+	if !bytes.HasPrefix(raw, []byte(secure.MagicHeaderV2)) {
+		t.Fatalf("subscription data was not encrypted with current format: %q", raw[:min(len(raw), 32)])
+	}
+	if bytes.Contains(raw, []byte("https://example.com/sub")) {
+		t.Fatalf("subscription data leaked plaintext URL: %q", raw[:min(len(raw), 32)])
 	}
 
 	links, err := ReadSubscriptions()

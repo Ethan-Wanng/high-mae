@@ -99,14 +99,15 @@ func systemConfigHandler(w http.ResponseWriter, r *http.Request) {
 					applyErr = err
 					return
 				}
-				if common.IsSystemProxyOn {
+				state := common.SnapshotRuntimeState()
+				if state.SystemProxyOn {
 					if err := utils.SetSystemProxy(true); err != nil {
 						applyErr = err
 						return
 					}
 				}
-				if common.IsTunModeOn {
-					applyErr = proxy.RestartTun(common.GlobalNodeServer, common.GlobalNodeIP)
+				if state.TunModeOn {
+					applyErr = proxy.RestartTun(state.ActiveNode.Server, state.GlobalNodeIP)
 				}
 			})
 			if applyErr != nil {

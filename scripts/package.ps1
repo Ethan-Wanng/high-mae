@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$version = if ($env:WING_VERSION) { $env:WING_VERSION } else { "1.0.5" }
+$version = if ($env:WING_VERSION) { $env:WING_VERSION } else { "1.0.5.2" }
 $fileVersion = $version
 if ($version -match '^(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)$') {
     $fileVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).$($Matches[4])$($Matches[5])"
@@ -17,6 +17,16 @@ if ($version -match '^(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)$') {
 }
 $issFile = Join-Path $repoRoot "installer\wing.iss"
 $setupExe = Join-Path $repoRoot "dist\wing-$version-windows-x64-setup.exe"
+$cronetDllSha256 = "8ef1f8bbde77f954af1ae47bee1819ac8dc2354bb0e1d4baba3dad9e58d7a6f7"
+
+function Assert-CronetDllHash {
+    param([string]$Path)
+
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    if ($actual -ne $cronetDllSha256) {
+        throw "libcronet.dll 完整性校验失败: $Path sha256=$actual, want=$cronetDllSha256"
+    }
+}
 
 function Resolve-InnoCompilerCandidate {
     param([string]$Path)
@@ -137,6 +147,7 @@ foreach ($file in $requiredFiles) {
         throw "缺少打包输入文件: $file。请先运行 .\scripts\mk.ps1 build"
     }
 }
+Assert-CronetDllHash (Join-Path $repoRoot "build\bin\libcronet.dll")
 
 $iscc = Find-InnoCompiler
 if (-not $iscc) {

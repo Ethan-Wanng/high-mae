@@ -15,7 +15,7 @@ func SetSystemProxyEnabled(enabled bool) error {
 }
 
 func setSystemProxyEnabledLocked(enabled bool) error {
-	if common.IsSystemProxyOn == enabled {
+	if common.GetSystemProxyOn() == enabled {
 		if enabled {
 			if err := utils.SetSystemProxy(true); err != nil {
 				return err
@@ -31,8 +31,10 @@ func setSystemProxyEnabledLocked(enabled bool) error {
 	if err := utils.SetSystemProxy(enabled); err != nil {
 		return err
 	}
-	common.IsSystemProxyOn = enabled
-	stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
+	common.SetSystemProxyOn(enabled)
+	proxyOn, tunOn, _ := common.GetNetworkState()
+	stats.SyncTrafficSession(proxyOn, tunOn)
+	_ = SaveLastNetworkMode(proxyOn, tunOn)
 	updateSystemProxyMenu()
 	if common.RefreshTrayIcon != nil {
 		common.RefreshTrayIcon()
@@ -43,7 +45,7 @@ func setSystemProxyEnabledLocked(enabled bool) error {
 func ToggleSystemProxy() error {
 	var err error
 	RunNetworkTransition(func() {
-		err = setSystemProxyEnabledLocked(!common.IsSystemProxyOn)
+		err = setSystemProxyEnabledLocked(!common.GetSystemProxyOn())
 	})
 	return err
 }
@@ -51,9 +53,9 @@ func ToggleSystemProxy() error {
 func SetProxyModeGlobal(global bool) {
 	RunNetworkTransition(func() {
 		if global {
-			common.ProxyMode = "Global"
+			common.SetProxyMode("Global")
 		} else {
-			common.ProxyMode = "Rule"
+			common.SetProxyMode("Rule")
 		}
 		updateProxyModeMenu()
 	})
@@ -61,7 +63,7 @@ func SetProxyModeGlobal(global bool) {
 
 func ToggleProxyMode() {
 	RunNetworkTransition(func() {
-		common.ProxyMode = nextProxyMode(common.ProxyMode)
+		common.SetProxyMode(nextProxyMode(common.GetProxyMode()))
 		updateProxyModeMenu()
 	})
 }
@@ -70,7 +72,7 @@ func ApplyRoutingRulesChanged() error {
 	var err error
 	RunNetworkTransition(func() {
 		ClearNodeClientsCache()
-		if common.IsSystemProxyOn {
+		if common.GetSystemProxyOn() {
 			err = utils.SetSystemProxy(true)
 		}
 	})
@@ -88,7 +90,7 @@ func updateSystemProxyMenu() {
 	if common.MToggleProxy == nil {
 		return
 	}
-	if common.IsSystemProxyOn {
+	if common.GetSystemProxyOn() {
 		common.MToggleProxy.SetTitle("🟢 系统代理: [已开启]")
 	} else {
 		common.MToggleProxy.SetTitle("⚪ 系统代理: [已关闭]")
@@ -99,7 +101,7 @@ func updateProxyModeMenu() {
 	if common.MToggleMode == nil {
 		return
 	}
-	if common.ProxyMode == "Global" {
+	if common.GetProxyMode() == "Global" {
 		common.MToggleMode.SetTitle("🌐 路由模式: [全局代理]")
 	} else {
 		common.MToggleMode.SetTitle("🔄 路由模式: [规则分流]")

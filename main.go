@@ -58,28 +58,15 @@ func onReady() {
 	common.MCurrentNode.Disable()
 	systray.AddSeparator()
 
-	mImportLink := systray.AddMenuItem("📋 导入节点/订阅", "从剪贴板自动解析并添加节点")
-	common.MSupplierMenu = systray.AddMenuItem("🗂 订阅供应商", "切换当前订阅供应商")
-	common.MNodeMenu = systray.AddMenuItem("🧭 选择节点", "切换当前代理节点")
-	common.MTestAll = systray.AddMenuItem("⚡ 极速测速所有节点 (TCP)", "测试当前节点列表延迟")
-	systray.AddSeparator()
-
 	webui.EnsureStartupState()
-	sub.RefreshSupplierMenu()
-	sub.RefreshNodeMenu(nil)
 
-	if len(common.AllNodes) == 0 {
+	if len(common.GetAllNodes()) == 0 {
 		fmt.Println("⚠️ 启动时未找到有效的配置文件，节点列表将为空。请通过面板导入节点或订阅。")
 	}
 
 	routing.LoadUserRules()
 	proxy.LoadDNSConfig()
 
-	common.MToggleProxy = systray.AddMenuItem("⚪ 系统代理: [已关闭]", "点击切换系统浏览器代理")
-	common.MToggleMode = systray.AddMenuItem("🔄 路由模式: [规则分流]", "点击切换全局/分流")
-	systray.AddSeparator()
-	common.MToggleTun = systray.AddMenuItem("🔌 隧道连接: [已关闭]", "通过 TUN 隧道接管所有流量")
-	systray.AddSeparator()
 	mRestart := systray.AddMenuItem("🔁 重启 wing", "重启 wing 后端与桌面控制面板")
 	mAbout := systray.AddMenuItem("ℹ️ 关于", "查看项目信息与技术栈")
 	common.MQuit = systray.AddMenuItem("❌ 安全退出", "退出程序")
@@ -99,30 +86,8 @@ func onReady() {
 	utils.SafeGo("tray menu loop", func() {
 		for {
 			select {
-			case <-mImportLink.ClickedCh:
-				sub.ImportNodeFromClipboard()
-			case <-common.MToggleProxy.ClickedCh:
-				if err := proxy.ToggleSystemProxy(); err != nil {
-					utils.ShowWindowsMsgBox("系统代理", "切换系统代理失败: "+err.Error())
-				}
-			case <-common.MToggleMode.ClickedCh:
-				proxy.ToggleProxyMode()
-			case <-common.MToggleTun.ClickedCh:
-				if msg := proxy.ToggleTunMode(); msg != "" {
-					utils.ShowWindowsMsgBox("隧道连接", msg)
-				}
-				stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
-				refreshTrayIcon()
 			case <-mRestart.ClickedCh:
-				if err := utils.RestartApp(); err != nil {
-					utils.ShowWindowsMsgBox("重启 wing", "重启失败: "+err.Error())
-					continue
-				}
-				isQuitting.Store(true)
-				utils.SafeGo("tray restart exit", func() {
-					time.Sleep(500 * time.Millisecond)
-					systray.Quit()
-				})
+				restartFromTray(mRestart)
 			case <-mAbout.ClickedCh:
 				aboutMsg := "wing v" + common.AppVersion + " - 桌面代理客户端\n\n" +
 					"wing 是基于 Flutter + Go 的代理客户端，集成 sing-box、Mieru Client 与本地 Web 控制面板，支持节点订阅、测速、规则分流、自动选点、隧道连接、DNS 分流与 WebRTC 防泄漏。\n\n" +
@@ -141,10 +106,50 @@ func onReady() {
 					"Created with ❤️ by Ethan-Wanng"
 				utils.ShowWindowsMsgBox("关于 wing", aboutMsg)
 			case <-common.MQuit.ClickedCh:
-				isQuitting.Store(true)
-				systray.Quit()
+				quitFromTray()
 			}
 		}
+	})
+}
+
+func restartFromTray(menuItem *systray.MenuItem) {
+	if !isQuitting.CompareAndSwap(false, true) {
+		return
+	}
+	menuItem.SetTitle("⏳ 正在重启 wing...")
+	menuItem.Disable()
+	if common.MQuit != nil {
+		common.MQuit.Disable()
+	}
+
+	utils.SafeGo("tray restart", func() {
+		if err := utils.RestartApp(); err != nil {
+			isQuitting.Store(false)
+			menuItem.SetTitle("🔁 重启 wing")
+			menuItem.Enable()
+			if common.MQuit != nil {
+				common.MQuit.Enable()
+			}
+			utils.ShowWindowsMsgBox("重启 wing", "重启失败: "+err.Error())
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
+		systray.Quit()
+	})
+}
+
+func quitFromTray() {
+	if !isQuitting.CompareAndSwap(false, true) {
+		return
+	}
+	if common.MQuit != nil {
+		common.MQuit.SetTitle("⏳ 正在退出 wing...")
+		common.MQuit.Disable()
+	}
+
+	utils.SafeGo("tray quit", func() {
+		time.Sleep(100 * time.Millisecond)
+		systray.Quit()
 	})
 }
 
@@ -159,11 +164,11 @@ func onExit() {
 		utils.SetSystemDNS(false, "")
 		common.IsSystemDNSHijacked = false
 	}
-	if common.IsTunModeOn {
+	if common.GetTunModeOn() {
 		proxy.StopTun()
-		common.IsTunModeOn = false
+		common.SetTunModeOn(false)
 	}
-	common.IsSystemProxyOn = false
+	common.SetSystemProxyOn(false)
 	stats.SyncTrafficSession(false, false)
 	_ = storage.Close()
 	QuitFlutterApp()
@@ -207,12 +212,13 @@ func refreshTrayIcon() {
 }
 
 func currentTrayIconBytes() []byte {
+	proxyOn, tunOn, _ := common.GetNetworkState()
 	switch {
-	case common.IsSystemProxyOn && common.IsTunModeOn:
+	case proxyOn && tunOn:
 		return iconProxyTunBytes
-	case common.IsSystemProxyOn:
+	case proxyOn:
 		return iconProxyBytes
-	case common.IsTunModeOn:
+	case tunOn:
 		return iconTunBytes
 	case isEffectiveLightTheme():
 		return iconDirectLightBytes

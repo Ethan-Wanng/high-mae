@@ -15,7 +15,7 @@ type GenericClient interface {
 	CreateProxy(ctx context.Context, destination metadata.Socksaddr) (net.Conn, error)
 }
 
-const AppVersion = "1.0.5"
+const AppVersion = "1.0.5.2"
 
 var LocalHttpPort = "10808"
 
@@ -24,6 +24,7 @@ const TunHttpPort = "10811"
 const TunIP = "10.0.0.2"
 
 var (
+	StateMu               sync.RWMutex
 	IsSystemProxyOn       = false
 	ProxyMode             = "Rule"
 	IsTunModeOn           = false
@@ -63,8 +64,175 @@ var (
 	SupplierMenuCancel context.CancelFunc  // 用于取消旧供应商的监听协程
 )
 
+type RuntimeState struct {
+	SystemProxyOn  bool
+	TunModeOn      bool
+	ProxyMode      string
+	ActiveNode     protocol.Node
+	ActiveNodeName string
+	GlobalNodeIP   string
+}
+
 func GetActiveClient() GenericClient {
 	ClientMu.RLock()
 	defer ClientMu.RUnlock()
 	return ActiveClient
+}
+
+func SetActiveClient(node protocol.Node, resolvedIP string, client GenericClient) GenericClient {
+	ClientMu.Lock()
+	defer ClientMu.Unlock()
+	oldClient := ActiveClient
+	GlobalNodeServer = node.Server
+	GlobalNodeIP = resolvedIP
+	ActiveNode = node
+	ActiveNodeName = node.Name
+	ActiveClient = client
+	return oldClient
+}
+
+func GetActiveNodeSnapshot() (protocol.Node, string, string) {
+	ClientMu.RLock()
+	defer ClientMu.RUnlock()
+	return ActiveNode, ActiveNodeName, GlobalNodeIP
+}
+
+func ActiveNodeSnapshot() (protocol.Node, string) {
+	ClientMu.RLock()
+	defer ClientMu.RUnlock()
+	return ActiveNode, ActiveNodeName
+}
+
+func SetActiveNode(node protocol.Node) {
+	ClientMu.Lock()
+	ActiveNode = node
+	ActiveNodeName = node.Name
+	GlobalNodeServer = node.Server
+	ClientMu.Unlock()
+}
+
+func ClearActiveNode() {
+	ClientMu.Lock()
+	ActiveNode = protocol.Node{}
+	ActiveNodeName = ""
+	ClientMu.Unlock()
+}
+
+func SetAllNodes(nodes []protocol.Node) {
+	StateMu.Lock()
+	AllNodes = cloneNodes(nodes)
+	StateMu.Unlock()
+}
+
+func AppendAllNodes(nodes []protocol.Node) []protocol.Node {
+	StateMu.Lock()
+	AllNodes = append(AllNodes, nodes...)
+	snapshot := cloneNodes(AllNodes)
+	StateMu.Unlock()
+	return snapshot
+}
+
+func ClearAllNodes() {
+	StateMu.Lock()
+	AllNodes = nil
+	StateMu.Unlock()
+}
+
+func GetAllNodes() []protocol.Node {
+	StateMu.RLock()
+	defer StateMu.RUnlock()
+	return cloneNodes(AllNodes)
+}
+
+func GetAllNode(index int) (protocol.Node, bool) {
+	StateMu.RLock()
+	defer StateMu.RUnlock()
+	if index < 0 || index >= len(AllNodes) {
+		return protocol.Node{}, false
+	}
+	return AllNodes[index], true
+}
+
+func UpdateAllNode(index int, update func(*protocol.Node)) ([]protocol.Node, bool) {
+	StateMu.Lock()
+	defer StateMu.Unlock()
+	if index < 0 || index >= len(AllNodes) {
+		return nil, false
+	}
+	update(&AllNodes[index])
+	return cloneNodes(AllNodes), true
+}
+
+func cloneNodes(nodes []protocol.Node) []protocol.Node {
+	if len(nodes) == 0 {
+		return nil
+	}
+	out := make([]protocol.Node, len(nodes))
+	copy(out, nodes)
+	return out
+}
+
+func SetSystemProxyOn(enabled bool) {
+	StateMu.Lock()
+	IsSystemProxyOn = enabled
+	StateMu.Unlock()
+}
+
+func GetSystemProxyOn() bool {
+	StateMu.RLock()
+	defer StateMu.RUnlock()
+	return IsSystemProxyOn
+}
+
+func SetTunModeOn(enabled bool) {
+	StateMu.Lock()
+	IsTunModeOn = enabled
+	StateMu.Unlock()
+}
+
+func GetTunModeOn() bool {
+	StateMu.RLock()
+	defer StateMu.RUnlock()
+	return IsTunModeOn
+}
+
+func SetProxyMode(mode string) {
+	StateMu.Lock()
+	ProxyMode = mode
+	StateMu.Unlock()
+}
+
+func GetProxyMode() string {
+	StateMu.RLock()
+	defer StateMu.RUnlock()
+	return ProxyMode
+}
+
+func GetNetworkState() (bool, bool, string) {
+	StateMu.RLock()
+	defer StateMu.RUnlock()
+	return IsSystemProxyOn, IsTunModeOn, ProxyMode
+}
+
+func SnapshotRuntimeState() RuntimeState {
+	StateMu.RLock()
+	systemProxyOn := IsSystemProxyOn
+	tunModeOn := IsTunModeOn
+	proxyMode := ProxyMode
+	StateMu.RUnlock()
+
+	ClientMu.RLock()
+	activeNode := ActiveNode
+	activeNodeName := ActiveNodeName
+	globalNodeIP := GlobalNodeIP
+	ClientMu.RUnlock()
+
+	return RuntimeState{
+		SystemProxyOn:  systemProxyOn,
+		TunModeOn:      tunModeOn,
+		ProxyMode:      proxyMode,
+		ActiveNode:     activeNode,
+		ActiveNodeName: activeNodeName,
+		GlobalNodeIP:   globalNodeIP,
+	}
 }

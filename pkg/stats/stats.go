@@ -101,7 +101,7 @@ func GetConnLogs() []*ConnectionLog {
 	n := len(connLogs)
 	res := make([]*ConnectionLog, n)
 	for i, l := range connLogs {
-		res[n-1-i] = l
+		res[n-1-i] = cloneConnectionLog(l)
 	}
 	return res
 }
@@ -117,7 +117,7 @@ func GetRecentConnLogs(limit int) []*ConnectionLog {
 	}
 	res := make([]*ConnectionLog, limit)
 	for i := 0; i < limit; i++ {
-		res[i] = connLogs[n-1-i]
+		res[i] = cloneConnectionLog(connLogs[n-1-i])
 	}
 	return res
 }
@@ -133,7 +133,7 @@ func GetHistory(start, end time.Time) HistoryResponse {
 		// In range if its StartTime is before end, and (EndTime is zero or after start)
 		inRange := l.StartTime.Before(end) && (l.EndTime.IsZero() || l.EndTime.After(start))
 		if inRange {
-			filteredLogs = append(filteredLogs, l)
+			filteredLogs = append(filteredLogs, cloneConnectionLog(l))
 
 			nodeName := l.Node
 			if nodeName == "" {
@@ -171,3 +171,10 @@ func GetHistory(start, end time.Time) HistoryResponse {
 	}
 }
 
+func cloneConnectionLog(log *ConnectionLog) *ConnectionLog {
+	if log == nil {
+		return nil
+	}
+	clone := *log
+	return &clone
+}

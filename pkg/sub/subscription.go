@@ -282,15 +282,16 @@ func ImportNodeFromClipboard() {
 	// 3. 将新节点追加到当前节点列表中（如果是导入的话，其实更应该覆盖该供应商的节点）
 	// 为简单起见，这里覆盖当前所有节点（或者只保存当前新节点）
 	oldNodes, _ := protocol.ParseNodes(targetFile)
-	common.AllNodes = newNodes
+	common.SetAllNodes(newNodes)
+	currentNodes := common.GetAllNodes()
 
 	// 4. 持久化到 YAML
-	err = SaveNodesToYAML(targetFile, common.AllNodes)
+	err = SaveNodesToYAML(targetFile, currentNodes)
 	if err != nil {
 		utils.ShowWindowsMsgBox("保存失败", "写入 .yml 文件失败: "+err.Error())
 		return
 	}
-	NotifySubscriptionNodesUpdated(targetFile, oldNodes, common.AllNodes)
+	NotifySubscriptionNodesUpdated(targetFile, oldNodes, currentNodes)
 
 	// 更新当前使用的配置文件
 	SetActiveConfigFile(targetFile)
@@ -299,7 +300,7 @@ func ImportNodeFromClipboard() {
 	if err == nil {
 		refreshedNodes, err := protocol.ParseNodesData(data)
 		if err == nil {
-			common.AllNodes = refreshedNodes
+			common.SetAllNodes(refreshedNodes)
 		}
 	}
 
@@ -324,10 +325,7 @@ func SetActiveConfigFile(fileName string) {
 }
 
 func trayNodeMatchesActive(node protocol.Node) bool {
-	common.ClientMu.RLock()
-	activeName := common.ActiveNodeName
-	activeNode := common.ActiveNode
-	common.ClientMu.RUnlock()
+	activeNode, activeName := common.ActiveNodeSnapshot()
 	if strings.TrimSpace(activeName) == "" || node.Name != activeName {
 		return false
 	}
@@ -365,14 +363,15 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 		return
 	}
 
-	if len(common.AllNodes) == 0 {
+	nodes := common.GetAllNodes()
+	if len(nodes) == 0 {
 		item := common.MNodeMenu.AddSubMenuItem("暂无可选节点", "")
 		item.Disable()
 		common.NodeMenuItems = append(common.NodeMenuItems, item)
 		return
 	}
 
-	for _, node := range common.AllNodes {
+	for _, node := range nodes {
 		itemLabel := fmt.Sprintf("[%s] %s", strings.ToUpper(node.Type), node.Name)
 		item := common.MNodeMenu.AddSubMenuItem(itemLabel, "")
 		common.NodeMenuItems = append(common.NodeMenuItems, item)
@@ -415,7 +414,11 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 					// 🚀 核心优化：改用极低内存消耗的 proxy.FastTCPPing，并将并发放宽到 50
 					sem := make(chan struct{}, 50)
 					var wg sync.WaitGroup
-					for i, n := range common.AllNodes {
+					nodesToTest := common.GetAllNodes()
+					for i, n := range nodesToTest {
+						if i >= len(nodeParents) {
+							break
+						}
 						wg.Add(1)
 						nd := n
 						parent := nodeParents[i]
@@ -452,15 +455,16 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 
 	// 自动切换到导入的第一个新节点
 	if len(newNodes) > 0 {
-		firstNewIndex := len(common.AllNodes) - len(newNodes)
+		firstNewIndex := len(nodes) - len(newNodes)
 		if firstNewIndex >= 0 && firstNewIndex < len(nodeParents) {
-			if err := proxy.SwitchNode(common.AllNodes[firstNewIndex]); err == nil {
+			targetNode := nodes[firstNewIndex]
+			if err := proxy.SwitchNode(targetNode); err == nil {
 				for _, mi := range nodeParents {
 					mi.Uncheck()
 				}
 				nodeParents[firstNewIndex].Check()
 			} else {
-				utils.ShowWindowsMsgBox("切换节点失败", fmt.Sprintf("节点 %s 初始化失败:\n%v", common.AllNodes[firstNewIndex].Name, err))
+				utils.ShowWindowsMsgBox("切换节点失败", fmt.Sprintf("节点 %s 初始化失败:\n%v", targetNode.Name, err))
 			}
 		}
 	}
@@ -516,7 +520,7 @@ func RefreshSupplierMenu() {
 					nodes, err := protocol.ParseNodes(s.FileName)
 					if err == nil && len(nodes) > 0 {
 						SetActiveConfigFile(s.FileName)
-						common.AllNodes = nodes
+						common.SetAllNodes(nodes)
 
 						for _, mi := range common.SupplierMenuItems {
 							mi.Uncheck()
@@ -524,9 +528,9 @@ func RefreshSupplierMenu() {
 						parent.Check()
 
 						RefreshNodeMenu(nil)
-						if len(common.AllNodes) > 0 {
-							if err := proxy.SwitchNode(common.AllNodes[0]); err != nil {
-								utils.ShowWindowsMsgBox("切换失败", fmt.Sprintf("供应商已切换，但节点 %s 初始化失败:\n%v", common.AllNodes[0].Name, err))
+						if len(nodes) > 0 {
+							if err := proxy.SwitchNode(nodes[0]); err != nil {
+								utils.ShowWindowsMsgBox("切换失败", fmt.Sprintf("供应商已切换，但节点 %s 初始化失败:\n%v", nodes[0].Name, err))
 							} else {
 								RefreshNodeMenu(nil)
 							}
@@ -544,7 +548,7 @@ func RefreshSupplierMenu() {
 							NotifySubscriptionNodesUpdated(s.FileName, oldNodes, nodes)
 							_ = MarkSubscriptionUpdated(s.URL, traffic)
 							if CurrentConfigFile == s.FileName {
-								common.AllNodes = nodes
+								common.SetAllNodes(nodes)
 								RefreshNodeMenu(nil) // just refresh, no auto-switch
 							}
 							parent.SetTitle(s.Name)
@@ -562,7 +566,7 @@ func RefreshSupplierMenu() {
 					parent.Hide()
 					if CurrentConfigFile == s.FileName {
 						// 如果删除的是当前正在使用的，则清空当前状态
-						common.AllNodes = nil
+						common.ClearAllNodes()
 						SetActiveConfigFile("")
 						if common.MCurrentNode != nil {
 							common.MCurrentNode.SetTitle("📍 当前节点: [未选择]")
@@ -961,7 +965,7 @@ func UpdateAllSubscriptions() {
 				totalUpdated += len(nodes)
 			}
 			if CurrentConfigFile == info.FileName {
-				common.AllNodes = nodes
+				common.SetAllNodes(nodes)
 				RefreshNodeMenu(nodes)
 			}
 		} else {
@@ -1018,7 +1022,7 @@ func updateSubscriptionsSilently(onlyDue bool) {
 			_ = MarkSubscriptionUpdated(info.URL, traffic)
 			NotifySubscriptionNodesUpdated(info.FileName, oldNodes, nodes)
 			if CurrentConfigFile == info.FileName {
-				common.AllNodes = nodes
+				common.SetAllNodes(nodes)
 				RefreshNodeMenu(nodes)
 			}
 		}

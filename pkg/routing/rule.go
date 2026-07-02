@@ -451,7 +451,7 @@ func normalizeRuleType(ruleType string) string {
 
 // return value: "proxy", "direct", "reject", or specific node/group name
 func EvaluateRouting(hostPort string) string {
-	if common.ProxyMode == "Global" {
+	if common.GetProxyMode() == "Global" {
 		return "proxy"
 	}
 	groups := GetRuleGroups()

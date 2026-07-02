@@ -206,10 +206,24 @@ func (m *MieruSocks5Adapter) CreateProxy(ctx context.Context, destination metada
 		conn net.Conn
 		err  error
 	}
-	ch := make(chan result, 1)
+	ch := make(chan result)
 	go func() {
 		conn, err := m.dial("tcp", destination.String())
-		ch <- result{conn: conn, err: err}
+		if conn != nil {
+			select {
+			case <-ctx.Done():
+				_ = conn.Close()
+				return
+			default:
+			}
+		}
+		select {
+		case ch <- result{conn: conn, err: err}:
+		case <-ctx.Done():
+			if conn != nil {
+				_ = conn.Close()
+			}
+		}
 	}()
 
 	select {

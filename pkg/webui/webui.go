@@ -2,6 +2,9 @@ package webui
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +49,7 @@ var (
 	tunPending        atomic.Bool
 	tunPendingState   atomic.Bool
 	nodeSwitching     atomic.Bool
+	aggregateGroupSeq atomic.Uint64
 	startupStateMu    sync.Mutex
 	startupStateDone  bool
 )
@@ -117,6 +121,7 @@ func buildWebUIMux() *http.ServeMux {
 	}
 
 	mux.HandleFunc("/", serveHTML)
+	mux.HandleFunc("/healthz", serveHealth)
 	mux.HandleFunc("/style.css", serveCSS)
 	mux.HandleFunc("/script.js", serveJS)
 	mux.HandleFunc("/logo-mark.png", serveLogoMark)
@@ -142,6 +147,7 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/site_test", siteTestHandler)
 	api("/api/auto_select_config", autoSelectConfigHandler)
 	api("/api/suppliers", getSuppliersHandler)
+	api("/api/supplier_url", supplierURLHandler)
 	api("/api/switch_supplier", switchSupplierHandler)
 	api("/api/update_supplier", updateSupplierHandler)
 	api("/api/delete_supplier", deleteSupplierHandler)
@@ -161,6 +167,7 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/set_supplier_update_interval", setSupplierUpdateIntervalHandler)
 	api("/api/aggregate_group_nodes", aggGroupNodesHandler)
 	api("/api/aggregate_group_add_nodes", aggGroupAddNodesHandler)
+	api("/api/aggregate_group_set_nodes", aggGroupSetNodesHandler)
 	api("/api/aggregate_group_remove_node", aggGroupRemoveNodeHandler)
 	api("/api/dns", dnsHandler)
 	api("/api/stats", getStatsHandler)
@@ -208,10 +215,21 @@ var (
 const (
 	apiRequestHeader      = "X-Wing-Request"
 	apiRequestHeaderValue = "webui"
+	apiRequestTokenHeader = "X-Wing-Token"
 	smallJSONBodyLimit    = 64 * 1024
 	defaultJSONBodyLimit  = 1 << 20
 	largeJSONBodyLimit    = 8 << 20
 )
+
+var apiRequestToken = generateAPIRequestToken()
+
+func generateAPIRequestToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic("generate WebUI API token: " + err.Error())
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
 
 func decodeLimitedJSON(w http.ResponseWriter, r *http.Request, dst any, limit int64) error {
 	if limit <= 0 {
@@ -241,7 +259,13 @@ func isTrustedLocalAPIRequest(r *http.Request) bool {
 	if referer := strings.TrimSpace(r.Header.Get("Referer")); referer != "" && !isTrustedWebUIOrigin(referer) {
 		return false
 	}
-	return r.Header.Get(apiRequestHeader) == apiRequestHeaderValue
+	return constantTimeHeaderEqual(r, apiRequestHeader, apiRequestHeaderValue) &&
+		constantTimeHeaderEqual(r, apiRequestTokenHeader, apiRequestToken)
+}
+
+func constantTimeHeaderEqual(r *http.Request, name, want string) bool {
+	got := r.Header.Get(name)
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 func isTrustedWebUIOrigin(raw string) bool {
@@ -295,8 +319,12 @@ func StartWebUI() {
 		return
 	}
 	uiServer = &http.Server{
-		Addr:    "127.0.0.1:10809",
-		Handler: mux,
+		Addr:              "127.0.0.1:10809",
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 	server := uiServer
 	uiServerMu.Unlock()
@@ -346,17 +374,18 @@ func loadStartupStateLocked() error {
 			continue
 		}
 		sub.SetActiveConfigFile(fileName)
-		common.AllNodes = nodes
+		common.SetAllNodes(nodes)
 		break
 	}
 
-	if len(common.AllNodes) == 0 {
+	allNodes := common.GetAllNodes()
+	if len(allNodes) == 0 {
 		return nil
 	}
 
-	targetNode := common.AllNodes[0]
+	targetNode := allNodes[0]
 	if lastNodeName != "" {
-		for _, node := range common.AllNodes {
+		for _, node := range allNodes {
 			if node.Name == lastNodeName {
 				targetNode = node
 				break
@@ -364,10 +393,8 @@ func loadStartupStateLocked() error {
 		}
 	}
 
-	common.ClientMu.RLock()
-	activeName := common.ActiveNodeName
-	activeClient := common.ActiveClient
-	common.ClientMu.RUnlock()
+	_, activeName := common.ActiveNodeSnapshot()
+	activeClient := common.GetActiveClient()
 	if activeClient == nil || activeName == "" {
 		if err := proxy.SwitchNode(targetNode); err != nil {
 			fmt.Printf("⚠️ 初始化上次节点失败: %v\n", err)
@@ -435,6 +462,7 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 
 	var newCache []GlobalNodeInfo
 	globalIdx := 0
+	_, activeName := common.ActiveNodeSnapshot()
 
 	// 1. Load subscriptions
 	subscriptions, _ := sub.ReadSubscriptions()
@@ -453,7 +481,7 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 					Type:       n.Type,
 					Latency:    latency,
 					Speed:      speed,
-					Active:     s.FileName == sub.CurrentConfigFile && n.Name == common.ActiveNodeName,
+					Active:     s.FileName == sub.CurrentConfigFile && n.Name == activeName,
 					Group:      s.Name,
 					FileName:   s.FileName,
 					SubIndex:   subIdx,
@@ -486,7 +514,7 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 					Type:       n.Type,
 					Latency:    latency,
 					Speed:      speed,
-					Active:     g.FileName == sub.CurrentConfigFile && n.Name == common.ActiveNodeName,
+					Active:     g.FileName == sub.CurrentConfigFile && n.Name == activeName,
 					Group:      g.Name,
 					FileName:   g.FileName,
 					SubIndex:   subIdx,
@@ -505,8 +533,22 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func resetNodeMetricCaches() {
-	latencyCache = sync.Map{}
-	speedCache = sync.Map{}
+	latencyCache.Range(func(key, _ any) bool {
+		latencyCache.Delete(key)
+		return true
+	})
+	speedCache.Range(func(key, _ any) bool {
+		speedCache.Delete(key)
+		return true
+	})
+}
+
+func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method == method {
+		return true
+	}
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	return false
 }
 
 func rulesHandler(w http.ResponseWriter, r *http.Request) {
@@ -793,14 +835,20 @@ func setNodeGroupHandler(w http.ResponseWriter, r *http.Request) {
 	idxStr := r.URL.Query().Get("idx")
 	group := r.URL.Query().Get("group")
 	idx, err := strconv.Atoi(idxStr)
-	if err != nil || idx < 0 || idx >= len(common.AllNodes) {
+	if err != nil {
 		http.Error(w, "Invalid index", http.StatusBadRequest)
 		return
 	}
 
-	common.AllNodes[idx].Group = group
+	nodes, ok := common.UpdateAllNode(idx, func(node *protocol.Node) {
+		node.Group = group
+	})
+	if !ok {
+		http.Error(w, "Invalid index", http.StatusBadRequest)
+		return
+	}
 	if sub.CurrentConfigFile != "" {
-		sub.SaveNodesToYAML(sub.CurrentConfigFile, common.AllNodes)
+		sub.SaveNodesToYAML(sub.CurrentConfigFile, nodes)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -845,15 +893,41 @@ func createAggregatedGroupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileName := "group_" + strconv.FormatInt(time.Now().Unix(), 10) + ".yml"
-	sub.SaveNodesToYAML(fileName, normalizeAggregateSources(req.Nodes))
-
-	groups, _ := ReadAggregateGroups()
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		http.Error(w, "Group name required", http.StatusBadRequest)
+		return
+	}
+	nodes := normalizeAggregateSources(req.Nodes)
+	if len(nodes) == 0 {
+		http.Error(w, "At least one node is required", http.StatusBadRequest)
+		return
+	}
+	groups, err := ReadAggregateGroups()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "读取聚合组失败: " + err.Error()})
+		return
+	}
+	fileName := newAggregateGroupFileName(groups)
+	if err := sub.SaveNodesToYAML(fileName, nodes); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "保存聚合组节点失败: " + err.Error()})
+		return
+	}
 	groups = append(groups, AggregateGroup{Name: req.Name, FileName: fileName})
-	SaveAggregateGroups(groups)
+	if err := SaveAggregateGroups(groups); err != nil {
+		_ = storage.Delete(fileName)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "保存聚合组失败: " + err.Error()})
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "fileName": fileName})
 }
 
 func ReadAggregateGroups() ([]AggregateGroup, error) {
@@ -883,6 +957,20 @@ func SaveAggregateGroups(groups []AggregateGroup) error {
 		return err
 	}
 	return secure.SecureWriteFile(AggregateGroupsFile, data)
+}
+
+func newAggregateGroupFileName(groups []AggregateGroup) string {
+	used := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		used[group.FileName] = struct{}{}
+	}
+	for i := 0; i < 1000; i++ {
+		fileName := fmt.Sprintf("group_%d_%d.yml", time.Now().UnixNano(), aggregateGroupSeq.Add(1))
+		if _, exists := used[fileName]; !exists {
+			return fileName
+		}
+	}
+	return fmt.Sprintf("group_%d_%d.yml", time.Now().UnixNano(), aggregateGroupSeq.Add(1))
 }
 
 func aggregateGroupByFile(fileName string) (AggregateGroup, bool) {
@@ -1072,7 +1160,7 @@ func syncAggregateGroupsForSubscriptionUpdate(sourceFile string, oldNodes []prot
 		if changed {
 			_ = sub.SaveNodesToYAML(group.FileName, next)
 			if sub.CurrentConfigFile == group.FileName {
-				common.AllNodes = next
+				common.SetAllNodes(next)
 				resetNodeMetricCaches()
 				sub.RefreshNodeMenu(nil)
 			}
@@ -1103,7 +1191,7 @@ func removeSubscriptionNodesFromAggregateGroups(sourceFile string, oldNodes []pr
 		if changed {
 			_ = sub.SaveNodesToYAML(group.FileName, next)
 			if sub.CurrentConfigFile == group.FileName {
-				common.AllNodes = next
+				common.SetAllNodes(next)
 				resetNodeMetricCaches()
 				sub.RefreshNodeMenu(nil)
 			}
@@ -1128,6 +1216,10 @@ func aggregateGroupsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func switchAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	fileName := r.URL.Query().Get("file")
 	group, ok := aggregateGroupByFile(fileName)
 	if !ok {
@@ -1136,23 +1228,31 @@ func switchAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fileName = group.FileName
 	nodes, err := protocol.ParseNodes(fileName)
-	if err == nil && len(nodes) > 0 {
-		sub.SetActiveConfigFile(fileName)
-		common.AllNodes = nodes
-		resetNodeMetricCaches()
-		sub.RefreshNodeMenu(nil)
-		if len(common.AllNodes) > 0 {
-			if err := proxy.SwitchNode(common.AllNodes[0]); err != nil {
-				json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "聚合组已切换，但节点初始化失败: " + err.Error()})
-				return
-			}
-			sub.RefreshNodeMenu(nil)
-		}
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "读取聚合组节点失败: " + err.Error()})
+		return
 	}
-	w.WriteHeader(http.StatusOK)
+	if len(nodes) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "聚合组没有可用节点"})
+		return
+	}
+	if err := proxy.SwitchNode(nodes[0]); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "聚合组节点初始化失败: " + err.Error()})
+		return
+	}
+	sub.SetActiveConfigFile(fileName)
+	common.SetAllNodes(nodes)
+	resetNodeMetricCaches()
+	sub.RefreshNodeMenu(nil)
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
 func deleteAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	fileName := r.URL.Query().Get("file")
 	groups, _ := ReadAggregateGroups()
 	var next []AggregateGroup
@@ -1174,7 +1274,7 @@ func deleteAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	SaveAggregateGroups(next)
 	if sub.CurrentConfigFile == fileName {
-		common.AllNodes = nil
+		common.ClearAllNodes()
 		sub.SetActiveConfigFile("")
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
@@ -1213,14 +1313,13 @@ func switchNodeHandler(w http.ResponseWriter, r *http.Request) {
 			nodes, err := protocol.ParseNodes(node.FileName)
 			if err == nil {
 				sub.SetActiveConfigFile(node.FileName)
-				common.AllNodes = nodes
+				common.SetAllNodes(nodes)
 				sub.RefreshNodeMenu(nil)
 			}
 		}
 
-		// Double check to make sure index is valid in common.AllNodes
-		if node.SubIndex >= 0 && node.SubIndex < len(common.AllNodes) {
-			targetNode := common.AllNodes[node.SubIndex]
+		// Double check to make sure the sub-index is valid in the current node snapshot.
+		if targetNode, ok := common.GetAllNode(node.SubIndex); ok {
 			if err := proxy.SwitchNode(targetNode); err != nil {
 				fmt.Printf("节点切换失败: %v\n", err)
 				return
@@ -1238,13 +1337,7 @@ func directNodeHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	common.ClientMu.Lock()
-	common.ActiveClient = nil
-	common.ActiveNode = protocol.Node{}
-	common.ActiveNodeName = ""
-	common.GlobalNodeServer = ""
-	common.GlobalNodeIP = ""
-	common.ClientMu.Unlock()
+	common.SetActiveClient(protocol.Node{}, "", nil)
 	if common.MCurrentNode != nil {
 		common.MCurrentNode.SetTitle("当前节点: 直连")
 	}
@@ -1321,10 +1414,11 @@ func deleteNodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if sub.CurrentConfigFile == nodeInfo.FileName {
-		common.AllNodes = nodes
+		common.SetAllNodes(nodes)
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
-		if targetNode.Name == common.ActiveNodeName {
+		_, activeName := common.ActiveNodeSnapshot()
+		if targetNode.Name == activeName {
 			if len(nodes) > 0 {
 				if err := proxy.SwitchNode(nodes[0]); err != nil {
 					json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "节点已删除，但备用节点初始化失败: " + err.Error()})
@@ -1332,7 +1426,7 @@ func deleteNodeHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				sub.RefreshNodeMenu(nil)
 			} else {
-				common.ActiveNodeName = ""
+				common.ClearActiveNode()
 				if common.MCurrentNode != nil {
 					common.MCurrentNode.SetTitle("📍 当前节点: [未选择]")
 				}
@@ -1486,15 +1580,12 @@ func speedtestHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func isCurrentActiveNode(node protocol.Node) bool {
-	common.ClientMu.RLock()
-	defer common.ClientMu.RUnlock()
-	return common.ActiveClient != nil && common.ActiveNodeName != "" && common.ActiveNodeName == node.Name
+	_, activeName := common.ActiveNodeSnapshot()
+	return common.GetActiveClient() != nil && activeName != "" && activeName == node.Name
 }
 
 func activeProxyHTTPClient() (*http.Client, error) {
-	common.ClientMu.RLock()
-	client := common.ActiveClient
-	common.ClientMu.RUnlock()
+	client := common.GetActiveClient()
 	if client == nil {
 		return nil, errors.New("当前没有正在工作的节点连接")
 	}
@@ -1513,9 +1604,7 @@ func activeProxyHTTPClient() (*http.Client, error) {
 }
 
 func testActiveProxyLatency(timeout time.Duration) (int64, error) {
-	common.ClientMu.RLock()
-	client := common.ActiveClient
-	common.ClientMu.RUnlock()
+	client := common.GetActiveClient()
 	if client == nil {
 		return -1, errors.New("当前没有正在工作的节点连接")
 	}
@@ -1615,8 +1704,8 @@ func addNodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 检查该节点是否已经存在？（按需，这里直接追加）
-	common.AllNodes = append(common.AllNodes, newNodes...)
-	err = sub.SaveNodesToYAML(targetFile, common.AllNodes)
+	allNodes := common.AppendAllNodes(newNodes)
+	err = sub.SaveNodesToYAML(targetFile, allNodes)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "保存节点数据失败"})
@@ -1631,6 +1720,9 @@ func addNodeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func testAllHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	globalNodesMu.Lock()
 	nodesToTest := make([]GlobalNodeInfo, len(globalNodesCache))
 	copy(nodesToTest, globalNodesCache)
@@ -1652,7 +1744,10 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 
 	for _, gNode := range nodesToTest {
 		wg.Add(1)
-		go func(gGlobalIdx int, fileName string, subIdx int) {
+		gGlobalIdx := gNode.Index
+		fileName := gNode.FileName
+		subIdx := gNode.SubIndex
+		utils.SafeGo("webui test all node", func() {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -1665,7 +1760,7 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				latencyCache.Store(gGlobalIdx, lat)
 			}
-		}(gNode.Index, gNode.FileName, gNode.SubIndex)
+		})
 	}
 	wg.Wait()
 	w.WriteHeader(http.StatusOK)
@@ -1674,25 +1769,24 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 func getStatusHandler(w http.ResponseWriter, r *http.Request) {
 	EnsureStartupState()
 
-	proxyState := common.IsSystemProxyOn
+	runtimeState := common.SnapshotRuntimeState()
+	proxyState := runtimeState.SystemProxyOn
 	proxyIsPending := proxyPending.Load()
 	if proxyIsPending {
 		proxyState = proxyPendingState.Load()
 	}
-	tunState := common.IsTunModeOn
+	tunState := runtimeState.TunModeOn
 	tunIsPending := tunPending.Load()
 	if tunIsPending {
 		tunState = tunPendingState.Load()
 	}
-	common.ClientMu.RLock()
-	activeNode := common.ActiveNode
-	activeNodeName := common.ActiveNodeName
-	common.ClientMu.RUnlock()
+	activeNode := runtimeState.ActiveNode
+	activeNodeName := runtimeState.ActiveNodeName
 	speedIn, speedOut := stats.GetCurrentSpeeds()
 	status := map[string]interface{}{
 		"proxy":              proxyState,
 		"proxyPending":       proxyIsPending,
-		"mode":               common.ProxyMode,
+		"mode":               runtimeState.ProxyMode,
 		"tun":                tunState,
 		"tunnel":             tunState,
 		"tunPending":         tunIsPending,
@@ -1713,9 +1807,10 @@ func getStatusHandler(w http.ResponseWriter, r *http.Request) {
 func freeTrafficHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method == http.MethodGet {
+		_, activeName := common.ActiveNodeSnapshot()
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"ok":      true,
-			"traffic": freeflow.Snapshot(freeflow.IsNodeName(common.ActiveNodeName)),
+			"traffic": freeflow.Snapshot(freeflow.IsNodeName(activeName)),
 		})
 		return
 	}
@@ -1739,7 +1834,7 @@ func freeTrafficHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "免费流量节点初始化失败: " + err.Error(), "traffic": state})
 		return
 	}
-	if !common.IsSystemProxyOn {
+	if !common.GetSystemProxyOn() {
 		if err := proxy.SetSystemProxyEnabled(true); err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "免费流量已切换，但开启系统代理失败: " + err.Error()})
 			return
@@ -1870,10 +1965,7 @@ func siteTestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	common.ClientMu.RLock()
-	activeNode := common.ActiveNode
-	activeName := common.ActiveNodeName
-	common.ClientMu.RUnlock()
+	activeNode, activeName := common.ActiveNodeSnapshot()
 	if strings.TrimSpace(activeName) == "" || strings.TrimSpace(activeNode.Type) == "" {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "请先选择一个节点"})
 		return
@@ -2221,7 +2313,8 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch actionType {
 	case "proxy":
-		target := requestedBool(r, !common.IsSystemProxyOn)
+		proxyOn := common.GetSystemProxyOn()
+		target := requestedBool(r, !proxyOn)
 		if proxyPending.Load() {
 			if proxyPendingState.Load() == target {
 				json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "proxy": target})
@@ -2230,8 +2323,8 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "系统代理正在切换中，请稍候。"})
 			return
 		}
-		if common.IsSystemProxyOn == target {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "proxy": common.IsSystemProxyOn})
+		if proxyOn == target {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "proxy": proxyOn})
 			return
 		}
 		if !proxyPending.CompareAndSwap(false, true) {
@@ -2248,12 +2341,14 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "proxy": target})
 		return
 	case "mode":
-		targetGlobal := requestedBool(r, common.ProxyMode != "Global")
+		_, _, proxyMode := common.GetNetworkState()
+		targetGlobal := requestedBool(r, proxyMode != "Global")
 		proxy.SetProxyModeGlobal(targetGlobal)
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "mode": common.ProxyMode})
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "mode": common.GetProxyMode()})
 		return
 	case "tun", "tunnel":
-		tunTarget := requestedBool(r, !common.IsTunModeOn)
+		proxyOn, tunOn, _ := common.GetNetworkState()
+		tunTarget := requestedBool(r, !tunOn)
 		if tunPending.Load() {
 			if tunPendingState.Load() == tunTarget {
 				json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "tun": tunTarget})
@@ -2262,8 +2357,8 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "TUN 正在切换中，请稍候。"})
 			return
 		}
-		if common.IsTunModeOn == tunTarget {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "tun": common.IsTunModeOn})
+		if tunOn == tunTarget {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "tun": tunOn})
 			return
 		}
 		if tunTarget && !utils.IsAdmin() {
@@ -2272,7 +2367,7 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 					json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "requiresAdmin": true, "msg": "自动请求管理员权限失败: " + err.Error()})
 					return
 				}
-				proxy.SetShutdownNetworkModeOverride(common.IsSystemProxyOn, true)
+				proxy.SetShutdownNetworkModeOverride(proxyOn, true)
 				scheduleExitAfterAdminRestart("auto admin restart")
 				json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "restarting": true, "msg": "正在请求管理员权限并重启 wing..."})
 				return
@@ -2290,10 +2385,11 @@ func actionHandler(w http.ResponseWriter, r *http.Request) {
 			defer tunPending.Store(false)
 			msg := proxy.SetTunMode(tunTarget)
 			if msg != "" {
-				// 失败时不需要额外处理，proxy.SetTunMode 内部不会修改 common.IsTunModeOn
+				// 失败时不需要额外处理，proxy.SetTunMode 内部不会修改 TUN 状态。
 				return
 			}
-			stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
+			proxyOn, tunOn, _ := common.GetNetworkState()
+			stats.SyncTrafficSession(proxyOn, tunOn)
 		})
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "tun": tunTarget})
 		return
@@ -2392,7 +2488,7 @@ func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
 		list = append(list, SupplierInfo{
 			Name:                  l.Name,
 			FileName:              l.FileName,
-			URL:                   l.URL,
+			URL:                   redactSubscriptionURL(l.URL),
 			Active:                l.FileName == sub.CurrentConfigFile,
 			Traffic:               l.Traffic,
 			UpdateIntervalMinutes: l.UpdateIntervalMinutes,
@@ -2403,7 +2499,36 @@ func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(list)
 }
 
+func redactSubscriptionURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "<redacted>"
+	}
+	return parsed.Scheme + "://" + parsed.Host + "/<redacted>"
+}
+
+func supplierURLHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	fileName := r.URL.Query().Get("file")
+	supplier, ok := subscriptionByFile(fileName)
+	if !ok {
+		http.Error(w, "Supplier not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": supplier.URL})
+}
+
 func switchSupplierHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	fileName := r.URL.Query().Get("file")
 	supplier, ok := subscriptionByFile(fileName)
 	if !ok {
@@ -2413,11 +2538,11 @@ func switchSupplierHandler(w http.ResponseWriter, r *http.Request) {
 	nodes, err := protocol.ParseNodes(supplier.FileName)
 	if err == nil && len(nodes) > 0 {
 		sub.SetActiveConfigFile(supplier.FileName)
-		common.AllNodes = nodes
+		common.SetAllNodes(nodes)
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
-		if len(common.AllNodes) > 0 {
-			if err := proxy.SwitchNode(common.AllNodes[0]); err != nil {
+		if len(nodes) > 0 {
+			if err := proxy.SwitchNode(nodes[0]); err != nil {
 				json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "供应商已切换，但节点初始化失败: " + err.Error()})
 				return
 			}
@@ -2428,6 +2553,9 @@ func switchSupplierHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func updateSupplierHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	fileName := r.URL.Query().Get("file")
 	target, ok := subscriptionByFile(fileName)
 	if !ok {
@@ -2452,7 +2580,7 @@ func updateSupplierHandler(w http.ResponseWriter, r *http.Request) {
 	sub.NotifySubscriptionNodesUpdated(target.FileName, oldNodes, nodes)
 
 	if sub.CurrentConfigFile == target.FileName {
-		common.AllNodes = nodes
+		common.SetAllNodes(nodes)
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 		runtime.GC()
@@ -2486,6 +2614,9 @@ func setSupplierUpdateIntervalHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func deleteSupplierHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	fileName := r.URL.Query().Get("file")
 	target, ok := subscriptionByFile(fileName)
 	if !ok {
@@ -2495,7 +2626,7 @@ func deleteSupplierHandler(w http.ResponseWriter, r *http.Request) {
 	sub.DeleteSubscription(target.URL)
 
 	if sub.CurrentConfigFile == fileName {
-		common.AllNodes = nil
+		common.ClearAllNodes()
 		sub.SetActiveConfigFile("")
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
@@ -2555,17 +2686,18 @@ func importSubscriptionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oldNodes, _ := protocol.ParseNodes(targetFile)
-	common.AllNodes = newNodes
-	if err := sub.SaveNodesToYAML(targetFile, common.AllNodes); err != nil {
+	common.SetAllNodes(newNodes)
+	currentNodes := common.GetAllNodes()
+	if err := sub.SaveNodesToYAML(targetFile, currentNodes); err != nil {
 		respond(false, "写入 .yml 文件失败: "+err.Error())
 		return
 	}
-	sub.NotifySubscriptionNodesUpdated(targetFile, oldNodes, common.AllNodes)
+	sub.NotifySubscriptionNodesUpdated(targetFile, oldNodes, currentNodes)
 
 	sub.SetActiveConfigFile(targetFile)
 	refreshedNodes, err := protocol.ParseNodes(targetFile)
 	if err == nil {
-		common.AllNodes = refreshedNodes
+		common.SetAllNodes(refreshedNodes)
 	}
 
 	resetNodeMetricCaches()
@@ -2616,25 +2748,78 @@ func aggGroupAddNodesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fileName := group.FileName
 	existing, _ := protocol.ParseNodes(fileName)
-	existing = append(existing, normalizeAggregateSources(req.Nodes)...)
+	existingKeys := buildAggregateKeySet(existing)
+	added := 0
+	for _, node := range normalizeAggregateSources(req.Nodes) {
+		nodeKeys := buildAggregateKeySet([]protocol.Node{node})
+		duplicate := false
+		for key := range nodeKeys {
+			if _, ok := existingKeys[key]; ok {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		existing = append(existing, node)
+		added++
+		for key := range nodeKeys {
+			existingKeys[key] = struct{}{}
+		}
+	}
 	if err := sub.SaveNodesToYAML(fileName, existing); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
 		return
 	}
 	if sub.CurrentConfigFile == fileName {
-		common.AllNodes = existing
+		common.SetAllNodes(existing)
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "count": len(existing)})
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "count": len(existing), "added": added})
+}
+
+func aggGroupSetNodesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		File  string          `json:"file"`
+		Nodes []protocol.Node `json:"nodes"`
+	}
+	if err := decodeLimitedJSON(w, r, &req, largeJSONBodyLimit); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+	group, ok := aggregateGroupByFile(req.File)
+	if !ok {
+		http.Error(w, "Group not found", http.StatusNotFound)
+		return
+	}
+	fileName := group.FileName
+	nodes := normalizeAggregateSources(req.Nodes)
+	if err := sub.SaveNodesToYAML(fileName, nodes); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
+		return
+	}
+	if sub.CurrentConfigFile == fileName {
+		common.SetAllNodes(nodes)
+		resetNodeMetricCaches()
+		sub.RefreshNodeMenu(nil)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "count": len(nodes)})
 }
 
 func dnsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(proxy.GlobalDNSConfig)
+		json.NewEncoder(w).Encode(proxy.GetDNSConfig())
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -2643,7 +2828,7 @@ func dnsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
-		proxy.GlobalDNSConfig = config
+		proxy.SetDNSConfig(config)
 		if err := proxy.SaveDNSConfig(); err != nil {
 			http.Error(w, "Save failed", http.StatusInternalServerError)
 			return
@@ -2685,7 +2870,7 @@ func aggGroupRemoveNodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sub.CurrentConfigFile == fileName {
-		common.AllNodes = nodes
+		common.SetAllNodes(nodes)
 		resetNodeMetricCaches()
 		sub.RefreshNodeMenu(nil)
 	}
@@ -2723,11 +2908,17 @@ func getStatsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func clearLogsHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	stats.ClearConnLogs()
 	w.WriteHeader(http.StatusOK)
 }
 
 func privacyToggleHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	common.PrivacyMode = !common.PrivacyMode
 	if common.PrivacyMode {
 		stats.ClearConnLogs()

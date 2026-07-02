@@ -3,6 +3,7 @@ package freeflow
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -17,9 +18,10 @@ const (
 	weeklyLimit   = int64(1024 * 1024 * 1024)
 	saveStep      = int64(1024 * 1024)
 	weekDuration  = 7 * 24 * time.Hour
+	nodeLinkEnv   = "WING_FREE_FLOW_NODE_LINK"
 )
 
-const builtinNodeLink = "vless://02b016d1-91e5-4b2a-8de1-93813a923a48@129.153.90.9:443?flow=xtls-rprx-vision&fp=ios&pbk=qkP2pqQ3NHNBkyzqsC2W9wChp3OfeXdVjOhUv8vQW0o&security=reality&sid=aac4df9d05a5ba8f&sni=iosapps.itunes.apple.com&type=tcp#free"
+var packagedNodeLink string
 
 type State struct {
 	PeriodStart int64 `json:"periodStart"`
@@ -39,7 +41,11 @@ var (
 )
 
 func Node() (protocol.Node, error) {
-	nodes, err := protocol.ParseSubscriptionRaw([]byte(builtinNodeLink))
+	link := configuredNodeLink()
+	if link == "" {
+		return protocol.Node{}, fmt.Errorf("免费流量节点未配置")
+	}
+	nodes, err := protocol.ParseSubscriptionRaw([]byte(link))
 	if err != nil {
 		return protocol.Node{}, err
 	}
@@ -51,6 +57,13 @@ func Node() (protocol.Node, error) {
 	node.SourceKey = nodeSourceKey
 	node.SourceName = NodeName
 	return node, nil
+}
+
+func configuredNodeLink() string {
+	if link := strings.TrimSpace(os.Getenv(nodeLinkEnv)); link != "" {
+		return link
+	}
+	return strings.TrimSpace(packagedNodeLink)
 }
 
 func IsNodeName(name string) bool {

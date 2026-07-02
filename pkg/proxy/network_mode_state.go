@@ -129,7 +129,8 @@ func SaveShutdownNetworkMode() error {
 	if override != nil {
 		return SaveLastNetworkMode(override.Proxy, override.Tun)
 	}
-	return SaveLastNetworkMode(common.IsSystemProxyOn, common.IsTunModeOn)
+	proxyOn, tunOn, _ := common.GetNetworkState()
+	return SaveLastNetworkMode(proxyOn, tunOn)
 }
 
 func RestoreLastNetworkMode() (NetworkModeRestoreResult, error) {
@@ -151,11 +152,12 @@ func RestoreLastNetworkMode() (NetworkModeRestoreResult, error) {
 		if err := utils.SetSystemProxy(false); err != nil {
 			return result, err
 		}
-		common.IsSystemProxyOn = false
+		common.SetSystemProxyOn(false)
 	}
 	if msg := SetTunMode(applied.Tun); msg != "" {
 		return result, fmt.Errorf("%s", msg)
 	}
-	stats.SyncTrafficSession(common.IsSystemProxyOn, common.IsTunModeOn)
+	proxyOn, tunOn, _ := common.GetNetworkState()
+	stats.SyncTrafficSession(proxyOn, tunOn)
 	return result, nil
 }

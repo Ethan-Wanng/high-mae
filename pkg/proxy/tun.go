@@ -52,7 +52,7 @@ func ToggleTunMode() string {
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
-	return setTunModeLocked(!common.IsTunModeOn)
+	return setTunModeLocked(!common.GetTunModeOn())
 }
 
 func SetTunMode(enabled bool) string {
@@ -66,15 +66,17 @@ func SetTunMode(enabled bool) string {
 }
 
 func setTunModeLocked(enabled bool) string {
-	if common.IsTunModeOn == enabled {
+	if common.GetTunModeOn() == enabled {
 		return ""
 	}
 
 	if !enabled {
 		stopTunWatchdogLocked()
 		stopTunLocked()
-		common.IsTunModeOn = false
+		common.SetTunModeOn(false)
 		common.RealLocalIPBeforeTun = "" // 清除缓存，下次开启时重新获取
+		proxyOn, tunOn, _ := common.GetNetworkState()
+		_ = SaveLastNetworkMode(proxyOn, tunOn)
 		if common.MToggleTun != nil {
 			common.MToggleTun.SetTitle("🔌 隧道连接: [已关闭]")
 		}
@@ -89,12 +91,14 @@ func setTunModeLocked(enabled bool) string {
 		return "使用虚拟网卡(TUN)需要管理员权限！请以管理员身份运行。"
 	}
 
-	nodeIP := common.GlobalNodeIP
+	_, _, nodeIP := common.GetActiveNodeSnapshot()
 	if err := startTunLocked(nodeIP); err != nil {
 		return fmt.Sprintf("启动 TUN 失败: %v", err)
 	}
 
-	common.IsTunModeOn = true
+	common.SetTunModeOn(true)
+	proxyOn, tunOn, _ := common.GetNetworkState()
+	_ = SaveLastNetworkMode(proxyOn, tunOn)
 	startTunWatchdogLocked()
 	if common.MToggleTun != nil {
 		common.MToggleTun.SetTitle("🟢 隧道连接: [已开启]")
@@ -111,14 +115,16 @@ func RestartTun(nodeServer, nodeIP string) error {
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
-	if !common.IsTunModeOn {
+	if !common.GetTunModeOn() {
 		return nil
 	}
 
 	stopTunWatchdogLocked()
 	stopTunLocked()
 	if err := startTunLocked(nodeIP); err != nil {
-		common.IsTunModeOn = false
+		common.SetTunModeOn(false)
+		proxyOn, tunOn, _ := common.GetNetworkState()
+		_ = SaveLastNetworkMode(proxyOn, tunOn)
 		if common.MToggleTun != nil {
 			common.MToggleTun.SetTitle("🔌 隧道连接: [已关闭]")
 		}
@@ -136,7 +142,7 @@ func StopTun() {
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
-	if common.IsTunModeOn {
+	if common.GetTunModeOn() {
 		stopTunWatchdogLocked()
 		stopTunLocked()
 	}
@@ -175,7 +181,7 @@ func prepareNodeBypassRouteForSwitch(nodeIP string) func() {
 
 	tunMu.Lock()
 	defer tunMu.Unlock()
-	if !common.IsTunModeOn || tunGateway == "" || nodeIP == tunRoutedNodeIP {
+	if !common.GetTunModeOn() || tunGateway == "" || nodeIP == tunRoutedNodeIP {
 		return func() {}
 	}
 
@@ -448,11 +454,10 @@ func stopTunWatchdogLocked() {
 }
 
 func reconcileTunRoute() {
-	common.ClientMu.RLock()
-	tunOn := common.IsTunModeOn
-	activeNode := common.ActiveNode
-	currentNodeIP := common.GlobalNodeIP
-	common.ClientMu.RUnlock()
+	state := common.SnapshotRuntimeState()
+	tunOn := state.TunModeOn
+	activeNode := state.ActiveNode
+	currentNodeIP := state.GlobalNodeIP
 	if !tunOn || activeNode.Server == "" {
 		return
 	}
@@ -469,7 +474,7 @@ func reconcileTunRoute() {
 
 	tunMu.Lock()
 	defer tunMu.Unlock()
-	if !common.IsTunModeOn {
+	if !common.GetTunModeOn() {
 		return
 	}
 	if gateway == "" {

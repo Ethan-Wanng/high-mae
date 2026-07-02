@@ -13,16 +13,16 @@ import (
 )
 
 func TestToggleTunModeState(t *testing.T) {
-	common.IsTunModeOn = false
+	common.SetTunModeOn(false)
 
 	// Verify that state changes are instant and do not lock or throw errors
-	common.IsTunModeOn = true
-	if !common.IsTunModeOn {
+	common.SetTunModeOn(true)
+	if !common.GetTunModeOn() {
 		t.Errorf("Expected IsTunModeOn to be true")
 	}
 
-	common.IsTunModeOn = false
-	if common.IsTunModeOn {
+	common.SetTunModeOn(false)
+	if common.GetTunModeOn() {
 		t.Errorf("Expected IsTunModeOn to be false")
 	}
 }

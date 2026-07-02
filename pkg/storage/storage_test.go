@@ -36,3 +36,21 @@ func TestInitCreatesDatabaseParentDirectory(t *testing.T) {
 		t.Fatalf("expected database file to exist: %v", err)
 	}
 }
+
+func TestReadOrMigrateFileRejectsUnsafeFileKeyFallback(t *testing.T) {
+	_ = Close()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, DBFile)
+	secretPath := filepath.Join(dir, "secret.txt")
+	if err := os.WriteFile(secretPath, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WING_DB_PATH", dbPath)
+	t.Cleanup(func() {
+		_ = Close()
+	})
+
+	if _, err := ReadOrMigrateFile(secretPath); !os.IsNotExist(err) {
+		t.Fatalf("ReadOrMigrateFile() error = %v, want os.ErrNotExist", err)
+	}
+}

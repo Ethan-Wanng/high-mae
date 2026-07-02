@@ -94,8 +94,8 @@ func ExportNodeLink(node Node) (string, error) {
 		u.User = url.User(node.Password)
 		q := u.Query()
 		setQuery(q, "sni", sni)
-		if !node.SkipCertVerify {
-			q.Set("skip_cert_verify", "false")
+		if node.SkipCertVerify {
+			q.Set("skip_cert_verify", "true")
 		}
 		u.RawQuery = q.Encode()
 		return u.String(), nil

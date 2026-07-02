@@ -3,6 +3,7 @@ package webui
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,7 @@ func TestLocalAPIHandlerBlocksCrossSiteRequests(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:10809/api/action", nil)
 	req.Header.Set(apiRequestHeader, apiRequestHeaderValue)
+	req.Header.Set(apiRequestTokenHeader, apiRequestToken)
 	req.Header.Set("Origin", "https://evil.example")
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	rr := httptest.NewRecorder()
@@ -40,7 +42,7 @@ func TestLocalAPIHandlerRequiresWebUIHeader(t *testing.T) {
 	}
 }
 
-func TestLocalAPIHandlerAllowsTrustedWebUIRequests(t *testing.T) {
+func TestLocalAPIHandlerRequiresWebUIToken(t *testing.T) {
 	handler := localAPIHandler(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -52,8 +54,44 @@ func TestLocalAPIHandlerAllowsTrustedWebUIRequests(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected missing API token to be blocked, got %d", rr.Code)
+	}
+}
+
+func TestHealthEndpointDoesNotRequireAPIToken(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:10809/healthz", nil)
+	rr := httptest.NewRecorder()
+
+	serveHealth(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected health endpoint without API token to return 204, got %d", rr.Code)
+	}
+}
+
+func TestLocalAPIHandlerAllowsTrustedWebUIRequests(t *testing.T) {
+	handler := localAPIHandler(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:10809/api/action", nil)
+	req.Header.Set(apiRequestHeader, apiRequestHeaderValue)
+	req.Header.Set(apiRequestTokenHeader, apiRequestToken)
+	req.Header.Set("Origin", "http://127.0.0.1:10809")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("expected trusted request through, got %d", rr.Code)
+	}
+}
+
+func TestRenderIndexHTMLInjectsAPIToken(t *testing.T) {
+	page := renderIndexHTML()
+	if !strings.Contains(page, `name="wing-api-token"`) || !strings.Contains(page, apiRequestToken) {
+		t.Fatal("expected rendered WebUI HTML to include API token meta tag")
 	}
 }
 

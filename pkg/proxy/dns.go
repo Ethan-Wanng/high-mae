@@ -52,15 +52,20 @@ type ipDomainEntry struct {
 
 var (
 	GlobalDNSConfig DNSConfig
+	dnsConfigMu     sync.RWMutex
 	dnsCache        = make(map[string]dnsCacheEntry)
 	dnsCacheMu      sync.RWMutex
 	IPToDomainMap   sync.Map
+	ipDomainMapSize atomic.Int64
 )
 
 const (
-	DNSConfigFile   = "dns_config.json"
-	maxDnsCacheSize = 10000 // DNS 缓存最大条目数，防止无限增长
-	maxDNSTTL       = 3600
+	DNSConfigFile         = "dns_config.json"
+	maxDnsCacheSize       = 10000
+	dnsCacheTrimTarget    = maxDnsCacheSize * 9 / 10
+	maxIPDomainMapSize    = 20000
+	ipDomainMapTrimTarget = maxIPDomainMapSize * 9 / 10
+	maxDNSTTL             = 3600
 )
 
 func dnsEntryExpiry(ttl uint32, now time.Time) time.Time {
@@ -73,16 +78,77 @@ func dnsEntryExpiry(ttl uint32, now time.Time) time.Time {
 	return now.Add(time.Duration(ttl) * time.Second)
 }
 
+func pruneDNSCacheLocked(now time.Time) {
+	for k, entry := range dnsCache {
+		if now.After(entry.expiresAt) {
+			delete(dnsCache, k)
+		}
+	}
+	if len(dnsCache) < maxDnsCacheSize {
+		return
+	}
+	remove := len(dnsCache) - dnsCacheTrimTarget
+	for k := range dnsCache {
+		delete(dnsCache, k)
+		remove--
+		if remove <= 0 {
+			break
+		}
+	}
+}
+
+func storeIPDomainMapping(ip string, entry ipDomainEntry) {
+	if _, loaded := IPToDomainMap.LoadOrStore(ip, entry); loaded {
+		IPToDomainMap.Store(ip, entry)
+	} else {
+		ipDomainMapSize.Add(1)
+	}
+	if ipDomainMapSize.Load() >= maxIPDomainMapSize {
+		pruneIPDomainMap(time.Now())
+	}
+}
+
+func deleteIPDomainMapping(key any) {
+	if _, loaded := IPToDomainMap.LoadAndDelete(key); loaded {
+		ipDomainMapSize.Add(-1)
+	}
+}
+
+func pruneIPDomainMap(now time.Time) {
+	IPToDomainMap.Range(func(key, value any) bool {
+		entry, ok := value.(ipDomainEntry)
+		if !ok || now.After(entry.expiresAt) {
+			deleteIPDomainMapping(key)
+		}
+		return true
+	})
+	if ipDomainMapSize.Load() < maxIPDomainMapSize {
+		return
+	}
+	remove := ipDomainMapSize.Load() - ipDomainMapTrimTarget
+	IPToDomainMap.Range(func(key, _ any) bool {
+		deleteIPDomainMapping(key)
+		remove--
+		return remove > 0
+	})
+}
+
 func LoadDNSConfig() {
 	data, err := secure.SecureReadFile(DNSConfigFile)
 	if err == nil {
-		if err := json.Unmarshal(data, &GlobalDNSConfig); err == nil {
+		var config DNSConfig
+		if err := json.Unmarshal(data, &config); err == nil {
+			SetDNSConfig(config)
 			return
 		}
 	}
 
-	// Default configuration
-	GlobalDNSConfig = DNSConfig{
+	SetDNSConfig(defaultDNSConfig())
+	SaveDNSConfig()
+}
+
+func defaultDNSConfig() DNSConfig {
+	return DNSConfig{
 		AutoOverwrite: false,
 		Servers: []DNSServer{
 			{ID: "google", Name: "Google DNS", Address: "8.8.8.8:53", Type: "udp"},
@@ -101,11 +167,29 @@ func LoadDNSConfig() {
 		},
 		Default: "google",
 	}
-	SaveDNSConfig()
+}
+
+func cloneDNSConfig(config DNSConfig) DNSConfig {
+	config.Servers = append([]DNSServer(nil), config.Servers...)
+	config.Rules = append([]DNSRule(nil), config.Rules...)
+	return config
+}
+
+func GetDNSConfig() DNSConfig {
+	dnsConfigMu.RLock()
+	defer dnsConfigMu.RUnlock()
+	return cloneDNSConfig(GlobalDNSConfig)
+}
+
+func SetDNSConfig(config DNSConfig) {
+	dnsConfigMu.Lock()
+	defer dnsConfigMu.Unlock()
+	GlobalDNSConfig = cloneDNSConfig(config)
 }
 
 func SaveDNSConfig() error {
-	data, err := json.MarshalIndent(GlobalDNSConfig, "", "  ")
+	config := GetDNSConfig()
+	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -113,17 +197,27 @@ func SaveDNSConfig() error {
 }
 
 func GetDNSServerByID(id string) *DNSServer {
-	for i := range GlobalDNSConfig.Servers {
-		if GlobalDNSConfig.Servers[i].ID == id {
-			return &GlobalDNSConfig.Servers[i]
+	config := GetDNSConfig()
+	return dnsServerByID(config, id)
+}
+
+func dnsServerByID(config DNSConfig, id string) *DNSServer {
+	for i := range config.Servers {
+		if config.Servers[i].ID == id {
+			server := config.Servers[i]
+			return &server
 		}
 	}
 	return nil
 }
 
 func MatchDNSRule(domain string) string {
+	return matchDNSRule(GetDNSConfig(), domain)
+}
+
+func matchDNSRule(config DNSConfig, domain string) string {
 	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
-	for _, rule := range GlobalDNSConfig.Rules {
+	for _, rule := range config.Rules {
 		value := strings.ToLower(strings.TrimSpace(rule.Value))
 		if value == "" {
 			continue
@@ -141,7 +235,7 @@ func MatchDNSRule(domain string) string {
 			return rule.ServerID
 		}
 	}
-	return GlobalDNSConfig.Default
+	return config.Default
 }
 
 func StartLocalDNS() {
@@ -153,8 +247,9 @@ func StartLocalDNS() {
 	}
 	defer conn.Close()
 
-	if GlobalDNSConfig.AutoOverwrite {
-		if common.IsTunModeOn {
+	config := GetDNSConfig()
+	if config.AutoOverwrite {
+		if common.GetTunModeOn() {
 			log.Println("TUN 模式已开启，跳过 DNS 自动覆写到 127.0.0.2")
 		} else {
 			utils.SetSystemDNS(true, "127.0.0.2")
@@ -170,19 +265,9 @@ func StartLocalDNS() {
 		for range ticker.C {
 			now := time.Now()
 			dnsCacheMu.Lock()
-			for k, entry := range dnsCache {
-				if now.After(entry.expiresAt) {
-					delete(dnsCache, k)
-				}
-			}
+			pruneDNSCacheLocked(now)
 			dnsCacheMu.Unlock()
-			IPToDomainMap.Range(func(key, value any) bool {
-				entry, ok := value.(ipDomainEntry)
-				if !ok || now.After(entry.expiresAt) {
-					IPToDomainMap.Delete(key)
-				}
-				return true
-			})
+			pruneIPDomainMap(now)
 		}
 	})
 
@@ -195,7 +280,9 @@ func StartLocalDNS() {
 		reqData := make([]byte, n)
 		copy(reqData, buf[:n])
 
-		go handleDNSRequest(conn, clientAddr, reqData)
+		utils.SafeGo("dns request", func() {
+			handleDNSRequest(conn, clientAddr, reqData)
+		})
 	}
 }
 
@@ -230,13 +317,15 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 	}
 
 	domain := question.Name
-	serverID := MatchDNSRule(domain)
-	server := GetDNSServerByID(serverID)
+	config := GetDNSConfig()
+	serverID := matchDNSRule(config, domain)
+	server := dnsServerByID(config, serverID)
 	if server == nil {
-		server = GetDNSServerByID(GlobalDNSConfig.Default)
+		server = dnsServerByID(config, config.Default)
 	}
-	if server == nil && len(GlobalDNSConfig.Servers) > 0 {
-		server = &GlobalDNSConfig.Servers[0]
+	if server == nil && len(config.Servers) > 0 {
+		first := config.Servers[0]
+		server = &first
 	}
 
 	if server == nil {
@@ -249,10 +338,7 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 		dnsAddr += ":53"
 	}
 
-	common.ClientMu.RLock()
-	client := common.ActiveClient
-	common.ClientMu.RUnlock()
-
+	client := common.GetActiveClient()
 	if client == nil {
 		return
 	}
@@ -272,8 +358,12 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 	defer stream.Close()
 
 	length := uint16(len(reqData))
-	stream.Write([]byte{byte(length >> 8), byte(length)})
-	stream.Write(reqData)
+	if _, err := stream.Write([]byte{byte(length >> 8), byte(length)}); err != nil {
+		return
+	}
+	if _, err := stream.Write(reqData); err != nil {
+		return
+	}
 
 	respLenBuf := make([]byte, 2)
 	if _, err := io.ReadFull(stream, respLenBuf); err != nil {
@@ -297,17 +387,14 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 				first = false
 			}
 			if a, ok := ans.(*dns.A); ok {
-				IPToDomainMap.Store(a.A.String(), ipDomainEntry{domain: domain, expiresAt: dnsEntryExpiry(ans.Header().Ttl, now)})
+				storeIPDomainMapping(a.A.String(), ipDomainEntry{domain: domain, expiresAt: dnsEntryExpiry(ans.Header().Ttl, now)})
 			} else if aaaa, ok := ans.(*dns.AAAA); ok {
-				IPToDomainMap.Store(aaaa.AAAA.String(), ipDomainEntry{domain: domain, expiresAt: dnsEntryExpiry(ans.Header().Ttl, now)})
+				storeIPDomainMapping(aaaa.AAAA.String(), ipDomainEntry{domain: domain, expiresAt: dnsEntryExpiry(ans.Header().Ttl, now)})
 			}
 		}
 
 		dnsCacheMu.Lock()
-		// 防止缓存无限增长：超过上限时清空（配合 TTL 淘汰策略即可）
-		if len(dnsCache) >= maxDnsCacheSize {
-			dnsCache = make(map[string]dnsCacheEntry)
-		}
+		pruneDNSCacheLocked(now)
 		dnsCache[cacheKey] = dnsCacheEntry{
 			msg:       respMsg,
 			expiresAt: dnsEntryExpiry(minTTL, now),
@@ -315,5 +402,5 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 		dnsCacheMu.Unlock()
 	}
 
-	conn.WriteToUDP(respData, clientAddr)
+	_, _ = conn.WriteToUDP(respData, clientAddr)
 }

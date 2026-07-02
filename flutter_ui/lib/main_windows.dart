@@ -284,14 +284,13 @@ class _WingWebViewState extends State<WingWebView> {
   Future<bool> _probeBackend() async {
     final client = HttpClient()..connectionTimeout = _backendWatchTimeout;
     try {
-      final statusUri = Uri.parse(widget.initialUrl).resolve('/api/status');
+      final statusUri = Uri.parse(widget.initialUrl).resolve('/healthz');
       final request = await client
           .getUrl(statusUri)
           .timeout(_backendWatchTimeout);
-      request.headers.set('X-Wing-Request', 'webui');
       final response = await request.close().timeout(_backendWatchTimeout);
       await response.drain<void>();
-      return response.statusCode == HttpStatus.ok;
+      return response.statusCode == HttpStatus.noContent;
     } catch (_) {
       return false;
     } finally {

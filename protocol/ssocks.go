@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -38,22 +39,22 @@ func ParseSSocks(link string) (Node, error) {
 	if colon < 0 {
 		return Node{}, fmt.Errorf("invalid ssocks auth")
 	}
-	hp := strings.Split(hostPort, ":")
-	if len(hp) != 2 {
+	host, portText, err := net.SplitHostPort(hostPort)
+	if err != nil {
 		return Node{}, fmt.Errorf("invalid ssocks hostport")
 	}
-	port, _ := strconv.Atoi(hp[1])
+	port, _ := strconv.Atoi(portText)
 
 	return Node{
 		Type:     "socks5", // mapping ssocks to socks5 type
 		Name:     name,
-		Server:   hp[0],
+		Server:   host,
 		Port:     port,
 		Username: auth[:colon],
 		Password: auth[colon+1:],
 		Method:   method,
 		TLS:      true,
 		Tls:      true,
-		SNI:      hp[0],
+		SNI:      host,
 	}, nil
 }
