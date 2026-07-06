@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${WING_VERSION:-1.0.5.2}"
+VERSION="${WING_VERSION:-1.0.6}"
 ARCH="${WING_ARCH:-$(uname -m)}"
 case "$ARCH" in
   x86_64|amd64) DIST_ARCH="x64" ;;
@@ -11,9 +11,6 @@ case "$ARCH" in
 esac
 TAGS="with_quic,with_utls,with_gvisor,with_naive_outbound,with_purego"
 LDFLAGS="-s -w"
-if [[ -n "${WING_FREE_FLOW_NODE_LINK:-}" ]]; then
-  LDFLAGS="$LDFLAGS -X wing/pkg/freeflow.packagedNodeLink=${WING_FREE_FLOW_NODE_LINK}"
-fi
 DIST="$ROOT/dist"
 WORK="$DIST/linux-package"
 PAYLOAD="$WORK/payload"

@@ -7,9 +7,6 @@ $ErrorActionPreference = "Stop"
 $tags = "with_quic,with_utls,with_gvisor,with_naive_outbound,with_purego"
 # 链接器参数: -s -w 去除调试信息, -H windowsgui 隐藏控制台窗口
 $ldflags = "-s -w -H windowsgui"
-if (-not [string]::IsNullOrWhiteSpace($env:WING_FREE_FLOW_NODE_LINK)) {
-    $ldflags += " -X wing/pkg/freeflow.packagedNodeLink=$($env:WING_FREE_FLOW_NODE_LINK)"
-}
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $goCache = Join-Path $repoRoot ".gocache"
 $legacyGoModCache = Join-Path $repoRoot "gomodcache2"
@@ -291,7 +288,7 @@ switch ($args[0]) {
     default {
         Write-Host "用法: .\mk.ps1 [build|package|installer|portable|backend|test|run|ui|inno]"
         Write-Host "  build  - 构建 Flutter 控制面板与 Go 后端"
-        Write-Host "  package - 构建并生成 dist\wing-1.0.5.2-windows-x64-setup.exe 标准安装包"
+        Write-Host "  package - 构建并生成 dist\wing-1.0.6-windows-x64-setup.exe 标准安装包"
         Write-Host "  installer - 同 package，生成标准 Windows 安装包"
         Write-Host "  portable - 生成旧版自解压单文件安装包，可能更容易被安全软件误报"
         Write-Host "  backend - 仅构建 Go 后端"

@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"wing/pkg/common"
-	"wing/pkg/freeflow"
 	"wing/pkg/proxy"
 	"wing/pkg/routing"
 	"wing/pkg/secure"
@@ -61,6 +60,9 @@ type AggregateGroup struct {
 }
 
 const AggregateGroupsFile = "aggregate_groups.json"
+const CustomNodesFile = "custom_nodes.yml"
+const CustomNodesName = "自定义节点"
+const retiredFreeTrafficFile = "free_traffic.yml"
 const SiteTestTargetsFile = "site_test_targets.json"
 const AutoSelectConfigFile = "auto_select_config.json"
 const siteTestTimeout = 25 * time.Second
@@ -151,6 +153,7 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/switch_supplier", switchSupplierHandler)
 	api("/api/update_supplier", updateSupplierHandler)
 	api("/api/delete_supplier", deleteSupplierHandler)
+	api("/api/edit_supplier", editSupplierHandler)
 	api("/api/rules", rulesHandler)
 	api("/api/rules/apply", applyRulesHandler)
 	api("/api/rules/reset_default", resetRulesHandler)
@@ -163,7 +166,6 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/switch_aggregate_group", switchAggregateGroupHandler)
 	api("/api/delete_aggregate_group", deleteAggregateGroupHandler)
 	api("/api/import_subscription", importSubscriptionHandler)
-	api("/api/free_traffic", freeTrafficHandler)
 	api("/api/set_supplier_update_interval", setSupplierUpdateIntervalHandler)
 	api("/api/aggregate_group_nodes", aggGroupNodesHandler)
 	api("/api/aggregate_group_add_nodes", aggGroupAddNodesHandler)
@@ -422,6 +424,9 @@ func startupConfigCandidates(lastConfigFile string, links []sub.SubInfo) []strin
 		if fileName == "" {
 			return
 		}
+		if isRetiredFreeTrafficFile(fileName) {
+			return
+		}
 		if _, ok := seen[fileName]; ok {
 			return
 		}
@@ -429,6 +434,8 @@ func startupConfigCandidates(lastConfigFile string, links []sub.SubInfo) []strin
 		candidates = append(candidates, fileName)
 	}
 	add(lastConfigFile)
+	add(CustomNodesFile)
+	add("config.yml")
 	for _, link := range links {
 		add(link.FileName)
 	}
@@ -457,9 +464,6 @@ var (
 func getNodes(w http.ResponseWriter, r *http.Request) {
 	EnsureStartupState()
 
-	globalNodesMu.Lock()
-	defer globalNodesMu.Unlock()
-
 	var newCache []GlobalNodeInfo
 	globalIdx := 0
 	_, activeName := common.ActiveNodeSnapshot()
@@ -467,6 +471,9 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 	// 1. Load subscriptions
 	subscriptions, _ := sub.ReadSubscriptions()
 	for _, s := range subscriptions {
+		if isRetiredFreeTrafficFile(s.FileName) {
+			continue
+		}
 		nodes, err := protocol.ParseNodes(s.FileName)
 		if err == nil {
 			for subIdx, n := range nodes {
@@ -493,7 +500,32 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Load aggregate groups
+	// 2. Load custom nodes
+	if nodes, err := protocol.ParseNodes(CustomNodesFile); err == nil {
+		for subIdx, n := range nodes {
+			lat, _ := latencyCache.Load(globalIdx)
+			latency, _ := lat.(int64)
+			spd, _ := speedCache.Load(globalIdx)
+			speed, _ := spd.(int64)
+
+			newCache = append(newCache, GlobalNodeInfo{
+				Index:      globalIdx,
+				Name:       n.Name,
+				Type:       n.Type,
+				Latency:    latency,
+				Speed:      speed,
+				Active:     sub.CurrentConfigFile == CustomNodesFile && n.Name == activeName,
+				Group:      CustomNodesName,
+				FileName:   CustomNodesFile,
+				SubIndex:   subIdx,
+				SourceFile: CustomNodesFile,
+				SourceName: n.Name,
+			})
+			globalIdx++
+		}
+	}
+
+	// 3. Load aggregate groups
 	aggregateGroups, _ := ReadAggregateGroups()
 	for _, g := range aggregateGroups {
 		nodes, err := protocol.ParseNodes(g.FileName)
@@ -526,10 +558,12 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	globalNodesMu.Lock()
 	globalNodesCache = newCache
+	globalNodesMu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(globalNodesCache)
+	json.NewEncoder(w).Encode(newCache)
 }
 
 func resetNodeMetricCaches() {
@@ -875,6 +909,13 @@ func getAllNodesAllSubsHandler(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	if nodes, err := protocol.ParseNodes(CustomNodesFile); err == nil && len(nodes) > 0 {
+		res = append(res, SubGroup{
+			FileName: CustomNodesFile,
+			SubName:  CustomNodesName,
+			Nodes:    withAggregateSource(CustomNodesFile, nodes),
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
 }
@@ -992,7 +1033,7 @@ func aggregateGroupByFile(fileName string) (AggregateGroup, bool) {
 
 func subscriptionByFile(fileName string) (sub.SubInfo, bool) {
 	fileName = strings.TrimSpace(fileName)
-	if fileName == "" {
+	if fileName == "" || isRetiredFreeTrafficFile(fileName) {
 		return sub.SubInfo{}, false
 	}
 	links, err := sub.ReadSubscriptions()
@@ -1005,6 +1046,10 @@ func subscriptionByFile(fileName string) (sub.SubInfo, bool) {
 		}
 	}
 	return sub.SubInfo{}, false
+}
+
+func isRetiredFreeTrafficFile(fileName string) bool {
+	return strings.EqualFold(strings.TrimSpace(fileName), retiredFreeTrafficFile)
 }
 
 func isManagedAggregateGroupFileName(fileName string) bool {
@@ -1698,13 +1743,9 @@ func addNodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetFile := sub.CurrentConfigFile
-	if targetFile == "" {
-		targetFile = "config.yml"
-	}
-
-	// 检查该节点是否已经存在？（按需，这里直接追加）
-	allNodes := common.AppendAllNodes(newNodes)
+	targetFile := CustomNodesFile
+	existingNodes, _ := protocol.ParseNodes(targetFile)
+	allNodes := append(existingNodes, newNodes...)
 	err = sub.SaveNodesToYAML(targetFile, allNodes)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -1712,6 +1753,7 @@ func addNodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	common.SetAllNodes(allNodes)
 	sub.SetActiveConfigFile(targetFile)
 	sub.RefreshNodeMenu(newNodes)
 
@@ -1798,58 +1840,9 @@ func getStatusHandler(w http.ResponseWriter, r *http.Request) {
 		"activeNodeGroup":    activeNode.Group,
 		"activeNodeFileName": sub.CurrentConfigFile,
 		"activeNodeSource":   activeNode.SourceFile,
-		"freeTraffic":        freeflow.Snapshot(freeflow.IsNodeName(activeNodeName)),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
-}
-
-func freeTrafficHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method == http.MethodGet {
-		_, activeName := common.ActiveNodeSnapshot()
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"ok":      true,
-			"traffic": freeflow.Snapshot(freeflow.IsNodeName(activeName)),
-		})
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	state := freeflow.Snapshot(false)
-	if state.Remaining <= 0 {
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "本周免费流量已用完，下周自动恢复。", "traffic": state})
-		return
-	}
-
-	node, err := freeflow.Node()
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "免费流量暂时不可用。"})
-		return
-	}
-	if err := proxy.SwitchNode(node); err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "免费流量节点初始化失败: " + err.Error(), "traffic": state})
-		return
-	}
-	if !common.GetSystemProxyOn() {
-		if err := proxy.SetSystemProxyEnabled(true); err != nil {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "免费流量已切换，但开启系统代理失败: " + err.Error()})
-			return
-		}
-	}
-	if common.MCurrentNode != nil {
-		common.MCurrentNode.SetTitle("📍 当前节点: [免费流量]")
-	}
-	sub.RefreshNodeMenu(nil)
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ok":      true,
-		"msg":     "免费流量已启用。",
-		"traffic": freeflow.Snapshot(true),
-	})
 }
 
 func autoSelectConfigHandler(w http.ResponseWriter, r *http.Request) {
@@ -2482,9 +2475,13 @@ func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
 		Traffic               *sub.SubscriptionTraffic `json:"traffic,omitempty"`
 		UpdateIntervalMinutes int64                    `json:"updateIntervalMinutes"`
 		LastUpdatedAt         int64                    `json:"lastUpdatedAt,omitempty"`
+		Available             bool                     `json:"available"`
 	}
 	var list []SupplierInfo
 	for _, l := range links {
+		if isRetiredFreeTrafficFile(l.FileName) {
+			continue
+		}
 		list = append(list, SupplierInfo{
 			Name:                  l.Name,
 			FileName:              l.FileName,
@@ -2493,6 +2490,7 @@ func getSuppliersHandler(w http.ResponseWriter, r *http.Request) {
 			Traffic:               l.Traffic,
 			UpdateIntervalMinutes: l.UpdateIntervalMinutes,
 			LastUpdatedAt:         l.LastUpdatedAt,
+			Available:             true,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -2611,6 +2609,39 @@ func setSupplierUpdateIntervalHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "自动更新间隔已保存"})
+}
+
+func editSupplierHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	fileName := r.URL.Query().Get("file")
+	var req struct {
+		URL                    string `json:"url"`
+		UpdateIntervalMinutes  int64  `json:"updateIntervalMinutes"`
+		UpdateIntervalMinutes2 int64  `json:"update_interval_minutes"`
+	}
+	if err := decodeLimitedJSON(w, r, &req, defaultJSONBodyLimit); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	minutes := req.UpdateIntervalMinutes
+	if minutes <= 0 {
+		minutes = req.UpdateIntervalMinutes2
+	}
+	if minutes <= 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "请输入有效的分钟数"})
+		return
+	}
+	if err := sub.UpdateSubscriptionSettings(fileName, req.URL, minutes); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": err.Error()})
+		return
+	}
+	sub.RefreshSupplierMenu()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "订阅组已保存"})
 }
 
 func deleteSupplierHandler(w http.ResponseWriter, r *http.Request) {

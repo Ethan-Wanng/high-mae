@@ -82,3 +82,38 @@ func TestAppendSubscriptionEncryptsStoredSubscriptionURL(t *testing.T) {
 		t.Fatalf("unexpected subscriptions: %+v", links)
 	}
 }
+
+func TestAppendSubscriptionUsesUniqueFileNamesAfterDeletion(t *testing.T) {
+	useTempDB(t)
+
+	firstFile, _, err := AppendSubscriptionWithTraffic("https://one.example/sub", nil)
+	if err != nil {
+		t.Fatalf("append first subscription: %v", err)
+	}
+	secondFile, _, err := AppendSubscriptionWithTraffic("https://two.example/sub", nil)
+	if err != nil {
+		t.Fatalf("append second subscription: %v", err)
+	}
+
+	DeleteSubscription("https://one.example/sub")
+
+	thirdFile, _, err := AppendSubscriptionWithTraffic("https://three.example/sub", nil)
+	if err != nil {
+		t.Fatalf("append third subscription: %v", err)
+	}
+	if thirdFile == firstFile || thirdFile == secondFile {
+		t.Fatalf("new subscription reused file name %q after deletion; existing were %q and %q", thirdFile, firstFile, secondFile)
+	}
+
+	links, err := ReadSubscriptions()
+	if err != nil {
+		t.Fatalf("ReadSubscriptions() error = %v", err)
+	}
+	seen := map[string]bool{}
+	for _, link := range links {
+		if seen[link.FileName] {
+			t.Fatalf("duplicate subscription file name %q in %+v", link.FileName, links)
+		}
+		seen[link.FileName] = true
+	}
+}

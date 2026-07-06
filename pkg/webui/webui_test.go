@@ -395,10 +395,14 @@ func TestGetSuppliersHandlerRedactsSubscriptionURL(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &suppliers); err != nil {
 		t.Fatalf("response JSON error: %v", err)
 	}
-	if len(suppliers) != 1 {
-		t.Fatalf("supplier count = %d, want 1", len(suppliers))
+	var got string
+	for _, supplier := range suppliers {
+		got = supplier.URL
+		break
 	}
-	got := suppliers[0].URL
+	if got == "" {
+		t.Fatalf("regular supplier not found in %+v", suppliers)
+	}
 	for _, leaked := range []string{"user", "pass", "token-secret", "abc123", "hidden"} {
 		if strings.Contains(got, leaked) {
 			t.Fatalf("redacted supplier URL %q leaked %q", got, leaked)
@@ -436,6 +440,112 @@ func TestSupplierURLHandlerReturnsOriginalURLOnPost(t *testing.T) {
 	}
 	if !resp.OK || resp.URL != secretURL {
 		t.Fatalf("supplier URL response = %+v, want original URL", resp)
+	}
+}
+
+func TestEditSupplierRejectsDuplicateURL(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	firstURL := "https://one.example/sub"
+	secondURL := "https://two.example/sub"
+	firstFile, _, err := sub.AppendSubscriptionWithTraffic(firstURL, nil)
+	if err != nil {
+		t.Fatalf("append first subscription: %v", err)
+	}
+	if _, _, err := sub.AppendSubscriptionWithTraffic(secondURL, nil); err != nil {
+		t.Fatalf("append second subscription: %v", err)
+	}
+
+	payload := `{"url":"` + secondURL + `","updateIntervalMinutes":60}`
+	req := httptest.NewRequest(http.MethodPost, "/api/edit_supplier?file="+url.QueryEscape(firstFile), strings.NewReader(payload))
+	rr := httptest.NewRecorder()
+	editSupplierHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	var resp struct {
+		OK  bool   `json:"ok"`
+		Msg string `json:"msg"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response JSON error: %v", err)
+	}
+	if resp.OK {
+		t.Fatalf("duplicate URL edit succeeded: %+v", resp)
+	}
+
+	links, err := sub.ReadSubscriptions()
+	if err != nil {
+		t.Fatalf("ReadSubscriptions() error = %v", err)
+	}
+	for _, link := range links {
+		if link.FileName == firstFile && link.URL != firstURL {
+			t.Fatalf("first subscription URL changed to %q after rejected edit", link.URL)
+		}
+	}
+}
+
+func TestAddNodeStoresInCustomNodesGroup(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	oldCurrentConfig := sub.CurrentConfigFile
+	oldAllNodes := common.GetAllNodes()
+	oldStartupDone := startupStateDone
+	defer func() {
+		sub.CurrentConfigFile = oldCurrentConfig
+		common.SetAllNodes(oldAllNodes)
+		startupStateMu.Lock()
+		startupStateDone = oldStartupDone
+		startupStateMu.Unlock()
+		globalNodesMu.Lock()
+		globalNodesCache = nil
+		globalNodesMu.Unlock()
+	}()
+	startupStateMu.Lock()
+	startupStateDone = true
+	startupStateMu.Unlock()
+	sub.SetActiveConfigFile("some_subscription.yml")
+	common.SetAllNodes([]protocol.Node{{Type: "ss", Name: "existing-sub-node", Server: "old.example", Port: 443}})
+
+	payload := `{"input":"vless://11111111-1111-1111-1111-111111111111@example.com:443?type=tcp&security=tls&sni=example.com#custom-node"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/add_node", strings.NewReader(payload))
+	rr := httptest.NewRecorder()
+	addNodeHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("addNodeHandler status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	nodes, err := protocol.ParseNodes(CustomNodesFile)
+	if err != nil {
+		t.Fatalf("ParseNodes(%q) error = %v", CustomNodesFile, err)
+	}
+	if len(nodes) != 1 || nodes[0].Name != "custom-node" {
+		t.Fatalf("custom nodes = %+v, want added node only", nodes)
+	}
+	if sub.CurrentConfigFile != CustomNodesFile {
+		t.Fatalf("CurrentConfigFile = %q, want %q", sub.CurrentConfigFile, CustomNodesFile)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/nodes", nil)
+	getRR := httptest.NewRecorder()
+	getNodes(getRR, getReq)
+	var listed []GlobalNodeInfo
+	if err := json.Unmarshal(getRR.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("nodes response JSON error: %v", err)
+	}
+	found := false
+	for _, node := range listed {
+		if node.FileName == CustomNodesFile && node.Group == CustomNodesName && node.Name == "custom-node" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("custom node not listed in /api/nodes: %+v", listed)
 	}
 }
 

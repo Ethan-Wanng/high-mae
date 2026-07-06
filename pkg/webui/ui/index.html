@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>wing 控制面板</title>
-    <link rel="stylesheet" href="style.css?v=20260702-manage-nodes">
+    <link rel="stylesheet" href="style.css?v=20260706-node-manager-106">
 </head>
 
 <body class="tabs-collapsed">
@@ -143,8 +143,13 @@
                     <div class="node-source-tabs">
                         <button class="node-source-tab active" data-mode="subscription" onclick="setNodeGroupMode('subscription')">订阅组</button>
                         <button class="node-source-tab" data-mode="aggregate" onclick="setNodeGroupMode('aggregate')">聚合组</button>
+                        <button class="node-source-tab" data-mode="custom" onclick="setNodeGroupMode('custom')">自定义节点</button>
                         <button class="node-source-tab" data-mode="auto" onclick="setNodeGroupMode('auto')">自动选择</button>
                         <button class="node-source-tab auto-nodes-tab" data-mode="auto_nodes" id="autoNodesTab" onclick="setNodeGroupMode('auto_nodes')" hidden>⚡ 自动节点</button>
+                    </div>
+
+                    <div class="node-manager-options">
+                        <button class="node-manager-option-toggle" id="ignoreTimeoutNodesToggle" type="button" aria-pressed="false" onclick="toggleIgnoreTimeoutNodes()">忽略超时节点</button>
                     </div>
 
                     <div class="auto-select-node-pane" id="autoSelectNodePane" style="display:none;">
@@ -159,7 +164,7 @@
 
                             <div class="auto-select-config-body" id="autoSelectConfigBody" hidden>
                                 <div class="auto-select-config-tabs" role="tablist" aria-label="自动选择配置">
-                                    <button type="button" class="auto-select-config-tab active" data-auto-config-tab="runtime" data-auto-select-action="config-tab">定时和运行</button>
+                                    <button type="button" class="auto-select-config-tab active" data-auto-config-tab="runtime" data-auto-select-action="config-tab">运行策略</button>
                                     <button type="button" class="auto-select-config-tab" data-auto-config-tab="scope" data-auto-select-action="config-tab">节点选择组</button>
                                     <button type="button" class="auto-select-config-tab" data-auto-config-tab="sites" data-auto-select-action="config-tab">网站可用选择</button>
                                     <button type="button" class="auto-select-config-tab" data-auto-config-tab="rules" data-auto-select-action="config-tab">规则筛选</button>
@@ -168,16 +173,8 @@
                                 <div class="auto-select-config-panel active" data-auto-config-panel="runtime">
                                     <div class="auto-select-settings-list">
                                         <div class="auto-select-inline-row">
-                                            <span class="auto-select-inline-label">切换间隔</span>
-                                            <input type="number" id="autoSelectIntervalMinutes" min="1" max="1440" step="1" onchange="setAutoSelectInterval(this.value)">
-                                            <span class="unit-label">分钟</span>
-                                        </div>
-                                        <div class="auto-select-inline-row toggle-row">
-                                            <span class="auto-select-inline-label">忽略超时节点</span>
-                                            <label class="toggle">
-                                                <input type="checkbox" id="autoSelectIgnoreTimeout" onchange="setAutoSelectIgnoreTimeout(this.checked)">
-                                                <span class="slider"></span>
-                                            </label>
+                                            <span class="auto-select-inline-label">触发方式</span>
+                                            <span class="auto-select-inline-value">规则和节点变化时自动选择</span>
                                         </div>
                                     </div>
                                 </div>
@@ -415,7 +412,6 @@
             <div class="settings-subtabs" role="tablist" aria-label="设置分类">
                 <button class="settings-subtab active" data-settings-tab="run" onclick="showSettingsSubtab('run')">运行</button>
                 <button class="settings-subtab" data-settings-tab="prefs" onclick="showSettingsSubtab('prefs')">偏好</button>
-                <button class="settings-subtab" data-settings-tab="entry" onclick="showSettingsSubtab('entry')">入口</button>
                 <button class="settings-subtab" data-settings-tab="manage" onclick="showSettingsSubtab('manage')">管理</button>
             </div>
             <div class="settings-layout">
@@ -510,23 +506,6 @@
                         </div>
                     </div>
 
-                    <div class="settings-panel settings-centered-panel" data-settings-section="entry">
-                        <div class="settings-action-grid">
-                            <button class="system-action-card import" id="btnImport" onclick="importSubscription()">
-                                <span>导入订阅</span>
-                                <small>粘贴订阅链接或节点链接</small>
-                            </button>
-                            <button class="system-action-card add" onclick="openAddModal()">
-                                <span>添加节点</span>
-                                <small>手动添加单节点</small>
-                            </button>
-                            <button class="system-action-card free" id="btnFreeTraffic" onclick="useFreeTraffic()">
-                                <span>免费流量</span>
-                                <small>临时试用可用出口</small>
-                            </button>
-                        </div>
-                    </div>
-
                     <div class="settings-panel settings-centered-panel" data-settings-section="manage">
                         <div class="settings-management-list">
                             <button class="settings-management-button primary" onclick="openRuleModal()">
@@ -580,6 +559,26 @@
             <div class="action-bar">
                 <button class="btn-ghost" onclick="closeShareModal()">关闭</button>
                 <button class="btn-primary" onclick="copyShareModalText()">复制链接</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="supplierEditModal">
+        <div class="modal supplier-edit-modal management-modal" role="dialog" aria-modal="true" aria-labelledby="supplierEditTitle">
+            <h2 id="supplierEditTitle">编辑订阅组</h2>
+            <div class="supplier-edit-form">
+                <label>
+                    <span>订阅链接</span>
+                    <textarea id="supplierEditURL" placeholder="https://example.com/subscription"></textarea>
+                </label>
+                <label>
+                    <span>自动更新时间</span>
+                    <input type="number" id="supplierEditInterval" min="15" step="15" placeholder="360">
+                </label>
+            </div>
+            <div class="action-bar">
+                <button class="btn-ghost" onclick="closeSupplierEditModal()">取消</button>
+                <button class="btn-success" id="btnSupplierEditSubmit" onclick="submitSupplierEdit()">保存</button>
             </div>
         </div>
     </div>
@@ -789,7 +788,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260702-manage-nodes"></script>
+    <script src="script.js?v=20260706-node-manager-106"></script>
 </body>
 
 </html>

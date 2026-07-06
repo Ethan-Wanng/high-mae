@@ -25,6 +25,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 )
 
 type SubInfo struct {
@@ -44,6 +45,7 @@ var (
 	OnSubscriptionNodesUpdated func(fileName string, oldNodes []protocol.Node, newNodes []protocol.Node)
 	OnSubscriptionDeleted      func(fileName string, oldNodes []protocol.Node)
 	autoUpdateOnce             sync.Once
+	subscriptionFileSeq        atomic.Uint64
 )
 
 type SubscriptionTraffic struct {
@@ -103,16 +105,8 @@ func AppendSubscriptionWithTraffic(newLink string, traffic *SubscriptionTraffic)
 		}
 	}
 
-	// 简单的域名提取作为供应商名
-	name := "未知供应商"
-	fileName := fmt.Sprintf("sub_%d.yml", len(links)+1)
-	if strings.Contains(newLink, "://") {
-		parts := strings.SplitN(newLink, "://", 2)
-		if len(parts) == 2 {
-			domainParts := strings.SplitN(parts[1], "/", 2)
-			name = domainParts[0]
-		}
-	}
+	name := subscriptionNameFromURL(newLink)
+	fileName := newSubscriptionFileName(links)
 
 	links = append(links, SubInfo{
 		Name:                  name,
@@ -124,6 +118,40 @@ func AppendSubscriptionWithTraffic(newLink string, traffic *SubscriptionTraffic)
 	})
 
 	return fileName, false, saveSubscriptions(links)
+}
+
+func subscriptionNameFromURL(raw string) string {
+	name := "未知供应商"
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err == nil && parsed.Host != "" {
+		return parsed.Host
+	}
+	if strings.Contains(raw, "://") {
+		parts := strings.SplitN(raw, "://", 2)
+		if len(parts) == 2 {
+			domainParts := strings.SplitN(parts[1], "/", 2)
+			if strings.TrimSpace(domainParts[0]) != "" {
+				name = strings.TrimSpace(domainParts[0])
+			}
+		}
+	}
+	return name
+}
+
+func newSubscriptionFileName(links []SubInfo) string {
+	used := make(map[string]struct{}, len(links))
+	for _, link := range links {
+		if strings.TrimSpace(link.FileName) != "" {
+			used[link.FileName] = struct{}{}
+		}
+	}
+	for i := 0; i < 1000; i++ {
+		fileName := fmt.Sprintf("sub_%d_%d.yml", time.Now().UnixNano(), subscriptionFileSeq.Add(1))
+		if _, exists := used[fileName]; !exists {
+			return fileName
+		}
+	}
+	return fmt.Sprintf("sub_%d_%d.yml", time.Now().UnixNano(), subscriptionFileSeq.Add(1))
 }
 
 func normalizeSubscriptions(links []SubInfo) {
@@ -200,6 +228,46 @@ func SetSubscriptionUpdateInterval(fileName string, minutes int64) error {
 	}
 	if !changed {
 		return fmt.Errorf("订阅不存在")
+	}
+	return saveSubscriptions(links)
+}
+
+func UpdateSubscriptionSettings(fileName string, newURL string, minutes int64) error {
+	fileName = strings.TrimSpace(fileName)
+	newURL = strings.TrimSpace(newURL)
+	if fileName == "" {
+		return fmt.Errorf("订阅不存在")
+	}
+	if newURL == "" {
+		return fmt.Errorf("订阅链接不能为空")
+	}
+	if minutes < minUpdateIntervalMinutes {
+		minutes = minUpdateIntervalMinutes
+	}
+	links, err := ReadSubscriptions()
+	if err != nil {
+		return err
+	}
+	targetIndex := -1
+	for i := range links {
+		if links[i].FileName == fileName {
+			targetIndex = i
+			continue
+		}
+		if links[i].URL == newURL {
+			return fmt.Errorf("该订阅链接已存在于其他订阅组")
+		}
+	}
+	if targetIndex < 0 {
+		return fmt.Errorf("订阅不存在")
+	}
+	oldURL := links[targetIndex].URL
+	links[targetIndex].URL = newURL
+	links[targetIndex].UpdateIntervalMinutes = minutes
+	if oldURL != newURL {
+		links[targetIndex].Name = subscriptionNameFromURL(newURL)
+		links[targetIndex].Traffic = nil
+		links[targetIndex].LastUpdatedAt = 0
 	}
 	return saveSubscriptions(links)
 }

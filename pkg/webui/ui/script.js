@@ -2,6 +2,8 @@ let pollTimer = null;
 let allNodesList = [];
 let suppliersCache = [];
 let aggregateGroupsCache = [];
+const CUSTOM_NODES_FILE = 'custom_nodes.yml';
+const CUSTOM_NODES_NAME = '自定义节点';
 let currentGroupFilter = "";
 let ruleGroups = [];
 let cmdRules = [];
@@ -14,7 +16,6 @@ let selectedNodeGroupFile = "";
 let nodeGroupManualCollapsed = false;
 let switchingNodeIndex = null;
 let pendingActions = new Set();
-let freeTrafficState = null;
 let siteTargetsCache = [];
 let siteResultsCache = [];
 let testingSiteIds = new Set();
@@ -31,6 +32,8 @@ let autoSelectAbortController = null;
 let autoSelectRunSeq = 0;
 let autoSelectRuleChangeRestartTimer = null;
 let autoSelectResumeAfterModeSwitch = false;
+let autoSelectLastCandidateSignature = "";
+let autoSelectLastTriggerAt = 0;
 let nodeGroupAnimationSeq = 0;
 let autoSelectEditingRuleId = "";
 let autoSelectLastDrawnRuleId = "";
@@ -50,6 +53,7 @@ let currentAutoSelectRuleTab = 'add';
 applyThemeMode(localStorage.getItem('wing_theme_mode') || 'system');
 let shareQRCodeURL = "";
 
+const ignoreTimeoutNodesStorageKey = 'wing_ignore_timeout_nodes';
 const statusPollIntervalMs = 5000;
 const dashboardPollIntervalMs = 10000;
 const proxyPresetNames = new Set(['direct', 'proxy', 'tun', 'proxy_tun']);
@@ -57,6 +61,7 @@ const modeSwitchGraceMs = 18000;
 const modeSwitchSettleMs = 14000;
 const autoSelectModeRetryMs = 3000;
 const apiRequestToken = document.querySelector('meta[name="wing-api-token"]')?.getAttribute('content') || '';
+let ignoreTimeoutNodes = localStorage.getItem(ignoreTimeoutNodesStorageKey) === '1';
 
 const nativeFetch = window.fetch.bind(window);
 window.fetch = (input, init = {}) => {
@@ -576,10 +581,12 @@ async function loadStatus() {
         if (homeSpeedInEl) homeSpeedInEl.textContent = st.speedIn || '0 B/s';
         const activeNodeChanged = reconcileActiveNodeFromStatus(st || {});
         updateConnectionState(viewStatus);
-        renderFreeTrafficState(st.freeTraffic);
         updateConnectionNodeSummary();
         if (activeNodeChanged && activeTab === 'nodes') {
             renderNodes();
+        }
+        if (autoSelectConfig?.enabled) {
+            scheduleAutoSelectRuleCheck(activeNodeChanged ? 'active-node-changed' : 'status', activeNodeChanged ? 600 : 1200);
         }
     } catch(e) {}
 }
@@ -788,17 +795,17 @@ function updateConnectionNodeSummary() {
     const islandNameEl = document.getElementById('islandNodeName');
     const islandLabelEl = document.getElementById('islandNodeLabel');
     if (nodeDisplayEl) {
-        nodeDisplayEl.textContent = activeNode ? activeNode.name : (freeTrafficState?.active ? '免费流量' : '未选择节点');
+        nodeDisplayEl.textContent = activeNode ? activeNode.name : '未选择节点';
     }
     if (islandNameEl) {
-        islandNameEl.textContent = activeNode ? activeNode.name : (freeTrafficState?.active ? '免费流量' : '未选择节点');
+        islandNameEl.textContent = activeNode ? activeNode.name : '未选择节点';
     }
     const protocolEl = document.getElementById('selectedNodeProtocolDisplay');
     if (protocolEl) {
-        protocolEl.textContent = activeNode ? `协议 ${displayProtocolName(activeNode)}` : (freeTrafficState?.active ? '协议 FREE' : '协议 --');
+        protocolEl.textContent = activeNode ? `协议 ${displayProtocolName(activeNode)}` : '协议 --';
     }
     if (islandLabelEl) {
-        const protocol = activeNode ? displayProtocolName(activeNode) : (freeTrafficState?.active ? 'FREE' : '--');
+        const protocol = activeNode ? displayProtocolName(activeNode) : '--';
         islandLabelEl.textContent = `${currentNodeGroupLabel(activeNode)} · ${protocol}`;
     }
     renderSelectedNodeGroup(activeNode);
@@ -905,7 +912,7 @@ function toggleIslandNodeModes(event) {
 }
 
 function showSettingsSubtab(tab = 'run') {
-    currentSettingsSubtab = ['run', 'prefs', 'entry', 'manage'].includes(tab) ? tab : 'run';
+    currentSettingsSubtab = ['run', 'prefs', 'manage'].includes(tab) ? tab : 'run';
     document.querySelectorAll('.settings-subtab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.settingsTab === currentSettingsSubtab);
     });
@@ -944,6 +951,30 @@ function syncNodeSourceTabActiveState() {
     document.body?.classList.toggle('node-auto-mode-active', nodeGroupMode === "auto" || nodeGroupMode === "auto_nodes");
 }
 
+function syncIgnoreTimeoutNodesToggle() {
+    const button = document.getElementById('ignoreTimeoutNodesToggle');
+    if (!button) return;
+    button.classList.toggle('active', ignoreTimeoutNodes);
+    button.setAttribute('aria-pressed', ignoreTimeoutNodes ? 'true' : 'false');
+    button.title = ignoreTimeoutNodes ? '已隐藏延迟 Timeout 的节点' : '显示包含 Timeout 在内的全部节点';
+}
+
+function toggleIgnoreTimeoutNodes() {
+    ignoreTimeoutNodes = !ignoreTimeoutNodes;
+    localStorage.setItem(ignoreTimeoutNodesStorageKey, ignoreTimeoutNodes ? '1' : '0');
+    syncIgnoreTimeoutNodesToggle();
+    if (nodeGroupMode === 'auto_nodes') renderAutoNodes();
+    else renderNodes();
+}
+
+function isTimeoutNode(node) {
+    return Number(node?.latency) === -1;
+}
+
+function nodePassesGlobalTimeoutFilter(node) {
+    return !ignoreTimeoutNodes || !isTimeoutNode(node);
+}
+
 function syncAutoNodesTabVisibility() {
     const autoNodesTab = document.getElementById('autoNodesTab');
     const enabled = isAutoSelectEnabled();
@@ -955,7 +986,7 @@ function syncAutoNodesTabVisibility() {
 }
 
 function setNodeGroupMode(mode) {
-    const normalizedMode = ["subscription", "aggregate", "auto", "auto_nodes"].includes(mode) ? mode : "subscription";
+    const normalizedMode = ["subscription", "aggregate", "custom", "auto", "auto_nodes"].includes(mode) ? mode : "subscription";
     nodeGroupMode = normalizedMode === "auto_nodes" && !isAutoSelectEnabled() ? "subscription" : normalizedMode;
     syncAutoNodesTabVisibility();
     if (nodeGroupMode !== "auto") selectedNodeGroupFile = "";
@@ -1002,6 +1033,7 @@ function renderNodes(options = {}) {
     const searchFocus = captureNodeSearchFocus();
     parkNodeInlineToolbar();
     syncAutoNodesTabVisibility();
+    syncIgnoreTimeoutNodesToggle();
     if (nodeGroupMode === "auto" || nodeGroupMode === "auto_nodes") {
         grid.style.display = "none";
         if (autoPane) {
@@ -1026,7 +1058,15 @@ function renderNodes(options = {}) {
             count: g.count || 0,
             type: "aggregate"
         }))
-        : suppliersCache.map(s => ({
+        : nodeGroupMode === "custom"
+            ? [{
+                fileName: CUSTOM_NODES_FILE,
+                name: CUSTOM_NODES_NAME,
+                active: lastConnectionStatus?.activeNodeFileName === CUSTOM_NODES_FILE,
+                count: 0,
+                type: "custom"
+            }]
+            : suppliersCache.map(s => ({
             fileName: s.fileName,
             name: s.name,
             active: !!s.active,
@@ -1034,10 +1074,14 @@ function renderNodes(options = {}) {
             traffic: s.traffic,
             updateIntervalMinutes: s.updateIntervalMinutes,
             lastUpdatedAt: s.lastUpdatedAt,
+            available: s.available !== false,
             type: "subscription"
         }));
 
     const activeGroup = groups.find(g => g.active);
+    if (nodeGroupMode === "custom" && !selectedNodeGroupFile) {
+        selectedNodeGroupFile = CUSTOM_NODES_FILE;
+    }
     if (!selectedNodeGroupFile && activeGroup && !nodeGroupManualCollapsed) {
         selectedNodeGroupFile = activeGroup.fileName;
     }
@@ -1045,7 +1089,9 @@ function renderNodes(options = {}) {
 
     const keyword = document.getElementById('nodeSearch')?.value.trim().toLowerCase() || "";
     groups.forEach(g => {
-        g.count = allNodesList.filter(n => n.fileName === g.fileName).length;
+        g.count = allNodesList
+            .filter(n => n.fileName === g.fileName)
+            .filter(nodePassesGlobalTimeoutFilter).length;
     });
     const selectedNodes = selectedGroup ? filterNodeRows(allNodesList.filter(n => n.fileName === selectedGroup.fileName), keyword) : [];
     const groupList = groups;
@@ -1070,6 +1116,8 @@ function renderNodes(options = {}) {
             </div>
             ` : nodeGroupMode === "aggregate" ? `
             <div class="empty-state">暂无选中的聚合组。点击上方“新建聚合组”，或选择已有聚合组后管理节点。</div>
+            ` : nodeGroupMode === "custom" ? `
+            <div class="empty-state">暂无选中的自定义节点组。点击上方“添加节点”开始。</div>
             ` : ''}
         </section>
     `;
@@ -1087,6 +1135,30 @@ function renderNodes(options = {}) {
             <span class="node-group-meta"><span>从订阅节点中挑选</span></span>
         `;
         list.appendChild(createCard);
+    } else if (nodeGroupMode === "custom") {
+        const addCard = document.createElement('button');
+        addCard.className = 'source-push-card source-create-card';
+        addCard.type = 'button';
+        addCard.onclick = () => openAddModal();
+        addCard.innerHTML = `
+            <span class="source-card-shine"></span>
+            <span class="source-create-icon">+</span>
+            <span class="node-group-name"><span class="node-group-name-text">添加节点</span></span>
+            <span class="node-group-meta"><span>粘贴单节点链接</span></span>
+        `;
+        list.appendChild(addCard);
+    } else {
+        const importCard = document.createElement('button');
+        importCard.className = 'source-push-card source-create-card';
+        importCard.type = 'button';
+        importCard.onclick = () => importSubscription(importCard);
+        importCard.innerHTML = `
+            <span class="source-card-shine"></span>
+            <span class="source-create-icon">+</span>
+            <span class="node-group-name"><span class="node-group-name-text">导入订阅</span></span>
+            <span class="node-group-meta"><span>粘贴订阅或节点链接</span></span>
+        `;
+        list.appendChild(importCard);
     }
     groupList.forEach(group => {
         const item = document.createElement('button');
@@ -1096,10 +1168,11 @@ function renderNodes(options = {}) {
         item.dataset.fileName = group.fileName;
         item.onclick = () => selectNodeGroup(group.fileName);
         const traffic = '';
+        const statusMeta = showActive ? '<span class="node-group-current-badge">当前</span>' : '';
         item.innerHTML = `
             <span class="source-card-shine"></span>
             <span class="node-group-name"><span class="node-group-name-text">${escapeHTML(group.name)}</span>${traffic}</span>
-            <span class="node-group-meta">${showActive ? '<span class="node-group-current-badge">当前</span>' : ''}<span>${group.count || 0} 节点</span></span>
+            <span class="node-group-meta">${statusMeta}<span>${group.count || 0} 节点</span></span>
         `;
         list.appendChild(item);
     });
@@ -1114,7 +1187,9 @@ function renderNodes(options = {}) {
     mountNodeInlineToolbar(grid.querySelector('.node-inline-toolbar-slot'));
     const body = grid.querySelector('.node-detail-body');
     if (!selectedNodes.length) {
-        body.innerHTML = '<div class="empty-state">没有匹配的节点。</div>';
+        body.innerHTML = nodeGroupMode === "custom" && !keyword
+            ? '<div class="empty-state">还没有自定义节点，点击左侧 <strong>添加节点</strong> 导入单节点。</div>'
+            : '<div class="empty-state">没有匹配的节点。</div>';
         return;
     }
     body.appendChild(renderNodeTable(selectedNodes, { animateDeal: !!options.animateDeck }));
@@ -1125,6 +1200,7 @@ function renderAutoNodes() {
     if (!grid) return;
     const searchFocus = captureNodeSearchFocus();
     parkNodeInlineToolbar();
+    syncIgnoreTimeoutNodesToggle();
     grid.innerHTML = '';
     
     let candidates = autoSelectCandidates().filter(nodePassesAutoSelectRules);
@@ -1168,8 +1244,9 @@ function filterNodes() {
 }
 
 function filterNodeRows(nodes, keyword) {
-    if (!keyword) return nodes || [];
-    return (nodes || []).filter(n =>
+    const visibleNodes = (nodes || []).filter(nodePassesGlobalTimeoutFilter);
+    if (!keyword) return visibleNodes;
+    return visibleNodes.filter(n =>
         (n.name || "").toLowerCase().includes(keyword) ||
         (n.type || "").toLowerCase().includes(keyword) ||
         (n.group || "").toLowerCase().includes(keyword)
@@ -1185,13 +1262,15 @@ function renderSelectedGroupActions(group) {
             <button class="btn-mini btn-mini-danger" title="删除聚合组" onclick="deleteAggregateGroupFile('${file}', event)">删除</button>
         `;
     }
+    if (group.type === "custom") {
+        return `<button class="btn-mini" type="button" title="添加自定义节点" onclick="openAddModal()">添加节点</button>`;
+    }
     if (group.type !== "subscription") return "";
     const file = encodeURIComponent(group.fileName);
-    const interval = Number(group.updateIntervalMinutes || 360);
     return `
+        <button class="btn-mini" title="编辑订阅组" onclick="openSupplierEditModal('${file}', event)">编辑</button>
         <button class="btn-mini" title="分享订阅" onclick="shareSupplierFile('${file}', event)">分享</button>
         <button class="btn-mini" title="刷新订阅" onclick="updateSupplierFile('${file}', this, event)">刷新</button>
-        <button class="btn-mini" title="自动更新间隔：${interval} 分钟" onclick="setSupplierInterval('${file}', ${interval}, event)">间隔 ${formatInterval(interval)}</button>
         <button class="btn-mini btn-mini-danger" title="删除订阅" onclick="deleteSupplierFile('${file}', event)">删除</button>
     `;
 }
@@ -1391,13 +1470,38 @@ async function loadAggregateGroups() {
 
 async function switchSupplier(fileName) {
     if (!fileName) return;
-    await fetch('/api/switch_supplier?file=' + encodeURIComponent(fileName), { method: 'POST' });
+    let data = {};
+    try {
+        const res = await fetch('/api/switch_supplier?file=' + encodeURIComponent(fileName), { method: 'POST' });
+        try { data = await res.json(); } catch(e) { data = {}; }
+        if (!res.ok || data.ok === false) {
+            showToast(data.msg || '切换订阅组失败', 'error');
+            await loadSuppliers();
+            return;
+        }
+    } catch(e) {
+        showToast('切换订阅组失败', 'error');
+        await loadSuppliers();
+        return;
+    }
     suppliersCache.forEach(s => s.active = s.fileName === fileName);
     aggregateGroupsCache.forEach(g => g.active = false);
     document.getElementById('supplierSelect').value = fileName;
     document.getElementById('aggregateSelect').value = '';
     renderSupplierTraffic(fileName);
     await loadNodes();
+}
+
+async function activateSupplierGroup(encodedFile, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    const fileName = decodeURIComponent(encodedFile);
+    await switchSupplier(fileName);
+    selectedNodeGroupFile = fileName;
+    nodeGroupManualCollapsed = false;
+    renderNodes();
 }
 
 async function switchAggregateGroup(fileName) {
@@ -1452,66 +1556,12 @@ function renderSupplierTraffic(fileName) {
     `;
 }
 
-function renderFreeTrafficState(state) {
-    const btn = document.getElementById('btnFreeTraffic');
-    if (!state) return;
-    freeTrafficState = state;
-    if (!btn) return;
-    const remaining = formatBytes(state.remaining || 0);
-    btn.textContent = state.active ? `免费流量 ${remaining}` : '获取免费流量';
-    btn.disabled = !!state.exceeded;
-    btn.title = state.exceeded ? '本周免费流量已用完，下周自动恢复' : `本周剩余 ${remaining}`;
-
-    const activeNodeEl = document.getElementById('selectedNodeDisplay');
-    if (activeNodeEl && state.active) {
-        activeNodeEl.textContent = '免费流量';
-    }
-    const groupEl = document.getElementById('selectedNodeGroupDisplay');
-    if (groupEl && state.active) {
-        groupEl.textContent = '来源组: 免费流量';
-    }
-    const protocolEl = document.getElementById('selectedNodeProtocolDisplay');
-    if (protocolEl && state.active) {
-        protocolEl.textContent = '协议 FREE';
-    }
-    if (state.active) {
-        document.getElementById('islandNodeLabel')?.replaceChildren(document.createTextNode('免费流量 · FREE'));
-        document.getElementById('islandNodeName')?.replaceChildren(document.createTextNode('免费流量'));
-    }
-}
-
 function supplierTrafficInline(supplier, options = {}) {
     if (!supplier?.traffic || !supplier.traffic.total) return '';
     const t = supplier.traffic;
     const remaining = options.compact ? formatBytesCompact(t.remaining || 0) : formatBytes(t.remaining || 0);
     const total = options.compact ? formatBytesCompact(t.total || 0) : formatBytes(t.total || 0);
     return `<span class="source-traffic-inline">${remaining} / ${total}</span>`;
-}
-
-async function useFreeTraffic() {
-    const btn = document.getElementById('btnFreeTraffic');
-    if (!btn) return;
-    const oldText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = '启用中';
-    try {
-        const res = await fetch('/api/free_traffic', { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-            showToast(data.msg || '免费流量已启用', 'success');
-            renderFreeTrafficState(data.traffic);
-            loadStatus();
-            loadNodes();
-        } else {
-            showToast(data.msg || '免费流量暂时不可用', 'error');
-            renderFreeTrafficState(data.traffic);
-        }
-    } catch(e) {
-        showToast('启用免费流量失败', 'error');
-    }
-    if (btn.textContent === '启用中') btn.textContent = oldText;
-    btn.disabled = false;
-    loadStatus();
 }
 
 function showToast(msg, type = 'info', duration = 4000) {
@@ -1585,25 +1635,30 @@ async function openAppUpdate() {
     }
 }
 
-async function importSubscription() {
-    const btn = document.getElementById('btnImport');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spin">↻</span> 导入中...';
+async function importSubscription(button = null) {
+    const btn = button || document.getElementById('btnImport');
+    const oldHTML = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spin">↻</span> 导入中...';
+    }
     try {
         const res = await fetch('/api/import_subscription', { method: 'POST' });
         const data = await res.json();
         if (data.ok) {
             showToast(data.msg, 'success', 5000);
-            loadSuppliers();
-            loadNodes();
+            await loadSuppliers();
+            await loadNodes();
         } else {
             showToast(data.msg || '导入失败', 'error', 5000);
         }
     } catch(e) {
         showToast('导入请求失败，请检查服务是否正常运行。', 'error');
     }
-    btn.disabled = false;
-    btn.innerHTML = '导入订阅';
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = oldHTML || '导入订阅';
+    }
 }
 
 async function doAction(type, desiredState = null, options = {}) {
@@ -1930,6 +1985,9 @@ async function loadNodes() {
         reconcileActiveNodeFromStatus(lastConnectionStatus || {});
         updateConnectionNodeSummary();
         renderNodes();
+        if (autoSelectConfig?.enabled) {
+            scheduleAutoSelectRuleCheck('nodes', 800);
+        }
     } catch(e) {}
 }
 
@@ -1944,21 +2002,20 @@ function renderSelectedNodeGroup(activeNode) {
         groupEl.textContent = sourceName
             ? `${groupType} / ${activeNode.group || '--'} · 原订阅 ${sourceName}`
             : `${groupType} / ${activeNode.group || '--'}`;
-    } else if (freeTrafficState?.active) {
-        groupEl.textContent = '免费流量';
     } else {
         groupEl.textContent = '未选择来源组';
     }
 }
 
 function currentNodeGroupType(activeNode) {
-    if (!activeNode) return freeTrafficState?.active ? '免费流量' : '订阅组';
+    if (!activeNode) return '订阅组';
+    if (activeNode.fileName === CUSTOM_NODES_FILE) return '自定义节点';
     const aggregateGroups = Array.isArray(aggregateGroupsCache) ? aggregateGroupsCache : [];
     return aggregateGroups.some(g => g.fileName === activeNode.fileName) ? '聚合组' : '订阅组';
 }
 
 function currentNodeGroupLabel(activeNode) {
-    if (!activeNode) return freeTrafficState?.active ? '免费流量' : '未选择来源组';
+    if (!activeNode) return '未选择来源组';
     const sourceName = activeNode.sourceFile && activeNode.sourceFile !== activeNode.fileName
         ? supplierNameByFile(activeNode.sourceFile)
         : '';
@@ -2374,13 +2431,12 @@ function defaultAutoSelectConfig() {
         scope: 'subscription',
         subscriptionFiles: [],
         aggregateFiles: [],
-        intervalMinutes: 5,
         siteCheck: {
             mode: 'none',
             ids: [],
             defaultSelectionApplied: false
         },
-        ignoreTimeout: false,
+        ignoreTimeout: true,
         excludedNodeKeys: [],
         discardedRules: [],
         rules: [
@@ -2409,7 +2465,11 @@ async function loadAutoSelectConfig() {
             autoSelectConfig = defaultAutoSelectConfig();
         }
     }
-    shouldCleanupAutoSelectConfig = !!autoSelectConfig && Object.prototype.hasOwnProperty.call(autoSelectConfig, 'startupMode');
+    shouldCleanupAutoSelectConfig = !!autoSelectConfig && (
+        Object.prototype.hasOwnProperty.call(autoSelectConfig, 'startupMode') ||
+        Object.prototype.hasOwnProperty.call(autoSelectConfig, 'intervalMinutes') ||
+        autoSelectConfig.ignoreTimeout !== true
+    );
     normalizeAutoSelectConfig();
     localStorage.setItem('wing_auto_select_config', JSON.stringify(autoSelectConfig));
     if (!loadedFromServer || shouldCleanupAutoSelectConfig) persistAutoSelectConfigToServer();
@@ -2435,7 +2495,7 @@ function normalizeAutoSelectConfig() {
     }
     if (!Array.isArray(autoSelectConfig.aggregateFiles)) autoSelectConfig.aggregateFiles = [];
     autoSelectConfig.aggregateFiles = normalizedFileList(autoSelectConfig.aggregateFiles);
-    autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
+    delete autoSelectConfig.intervalMinutes;
     delete autoSelectConfig.startupMode;
     if (!autoSelectConfig.siteCheck || typeof autoSelectConfig.siteCheck !== 'object') {
         autoSelectConfig.siteCheck = { mode: 'none', ids: [], defaultSelectionApplied: false };
@@ -2443,7 +2503,7 @@ function normalizeAutoSelectConfig() {
     if (!Array.isArray(autoSelectConfig.siteCheck.ids)) autoSelectConfig.siteCheck.ids = [];
     autoSelectConfig.siteCheck.defaultSelectionApplied = !!autoSelectConfig.siteCheck.defaultSelectionApplied;
     if (!['none', 'any', 'all'].includes(autoSelectConfig.siteCheck.mode)) autoSelectConfig.siteCheck.mode = 'none';
-    autoSelectConfig.ignoreTimeout = !!autoSelectConfig.ignoreTimeout;
+    autoSelectConfig.ignoreTimeout = true;
     if (!Array.isArray(autoSelectConfig.excludedNodeKeys)) autoSelectConfig.excludedNodeKeys = [];
     autoSelectConfig.excludedNodeKeys = normalizedStringList(autoSelectConfig.excludedNodeKeys);
     if (!Array.isArray(autoSelectConfig.discardedRules)) autoSelectConfig.discardedRules = [];
@@ -2483,7 +2543,6 @@ function saveAutoSelectConfig(options = {}) {
     normalizeAutoSelectConfig();
     localStorage.setItem('wing_auto_select_config', JSON.stringify(autoSelectConfig));
     scheduleAutoSelectConfigSave();
-    if (options.timer !== false) scheduleAutoSelectTimer();
     if (options.render !== false) scheduleAutoSelectConfigRender();
     if (autoSelectConfig.enabled && options.restart === true) requestAutoSelectRestart({ silent: options.silent !== false });
     else if (autoSelectConfig.enabled && options.run === true) scheduleAutoSelectRun(700);
@@ -2605,9 +2664,10 @@ function bindAutoSelectConfigEvents() {
 
 function scheduleAutoSelectRun(delay = 700) {
     if (autoSelectRunTimer) clearTimeout(autoSelectRunTimer);
+    setAutoSelectNowButtonBusy(true);
     autoSelectRunTimer = setTimeout(() => {
         autoSelectRunTimer = null;
-        runAutoSelectCycle({ silent: true });
+        launchAutoSelectCycle({ silent: true });
     }, delay);
 }
 
@@ -2623,7 +2683,22 @@ function drainAutoSelectQueuedRun(delay = 0) {
     if (!autoSelectQueuedRun) return;
     const queued = autoSelectQueuedRun;
     autoSelectQueuedRun = null;
-    setTimeout(() => runAutoSelectCycle(queued), delay);
+    if (autoSelectRunTimer) clearTimeout(autoSelectRunTimer);
+    setAutoSelectNowButtonBusy(true);
+    autoSelectRunTimer = setTimeout(() => {
+        autoSelectRunTimer = null;
+        launchAutoSelectCycle(queued);
+    }, delay);
+}
+
+function launchAutoSelectCycle(options = {}) {
+    runAutoSelectCycle(options).catch(error => {
+        console.error('auto select failed', error);
+        if (!options.silent) showToast('自动选择执行失败，请稍后重试。', 'error');
+        autoSelectRunning = false;
+        autoSelectAbortController = null;
+        setAutoSelectNowButtonBusy(autoSelectHasPendingWork());
+    });
 }
 
 function requestAutoSelectRestart(options = {}) {
@@ -2655,14 +2730,18 @@ function scheduleAutoSelectRuleChangeRestart(delay = 620) {
 function setAutoSelectNowButtonBusy(isBusy) {
     const btn = document.getElementById('autoSelectRunNowButton');
     if (!btn) return;
-    if (!btn.dataset.idleText) btn.dataset.idleText = btn.textContent || '重新选择';
+    btn.dataset.idleText = '重新选择';
     btn.textContent = isBusy ? '选择中' : (btn.dataset.idleText || '重新选择');
     btn.disabled = !!isBusy || !autoSelectConfig?.enabled;
 }
 
+function autoSelectHasPendingWork() {
+    return autoSelectRunning || !!autoSelectRunTimer || !!autoSelectQueuedRun;
+}
+
 function stopAutoSelectSelection(options = {}) {
     if (!options.keepTimer && autoSelectTimer) {
-        clearInterval(autoSelectTimer);
+        clearTimeout(autoSelectTimer);
         autoSelectTimer = null;
     }
     if (autoSelectRunTimer) {
@@ -2679,7 +2758,7 @@ function stopAutoSelectSelection(options = {}) {
 }
 
 function hasAutoSelectWork() {
-    return autoSelectRunning || !!autoSelectAbortController || !!autoSelectRunTimer || !!autoSelectQueuedRun;
+    return autoSelectHasPendingWork() || !!autoSelectAbortController;
 }
 
 function pauseAutoSelectForModeSwitch(options = {}) {
@@ -2695,7 +2774,7 @@ function resumeAutoSelectAfterModeSwitch() {
     autoSelectResumeAfterModeSwitch = false;
     if (!autoSelectConfig?.enabled) return;
     scheduleAutoSelectTimer();
-    scheduleAutoSelectRun(3600);
+    scheduleAutoSelectRuleCheck('mode-resume', 1800);
 }
 
 function autoSelectStoppedError() {
@@ -2714,18 +2793,61 @@ function assertAutoSelectActive(runContext, options = {}) {
     }
 }
 
+function activeAutoSelectNode() {
+    return (allNodesList || []).find(n => n.active) || null;
+}
+
+function autoSelectCandidateSignature() {
+    const candidates = autoSelectCandidates()
+        .filter(nodePassesAutoSelectRules)
+        .map(node => `${autoSelectNodeKey(node)}:${node.latency ?? ''}`)
+        .sort();
+    return [
+        autoSelectConfig?.scope || '',
+        (autoSelectConfig?.subscriptionFiles || []).join(','),
+        (autoSelectConfig?.aggregateFiles || []).join(','),
+        JSON.stringify(autoSelectConfig?.rules || []),
+        JSON.stringify(autoSelectConfig?.siteCheck || {}),
+        candidates.join('|')
+    ].join('\n');
+}
+
+function activeNodeNeedsAutoSelect() {
+    if (!autoSelectConfig?.enabled) return false;
+    const active = activeAutoSelectNode();
+    if (!active) return true;
+    if (!nodePassesAutoSelectRules(active)) return true;
+    return active.latency === -1;
+}
+
+function scheduleAutoSelectRuleCheck(reason = 'state', delay = 900) {
+    if (!autoSelectConfig?.enabled || autoSelectRunning || switchingNodeIndex !== null || isModeSwitchBusy()) return;
+    if (autoSelectTimer) clearTimeout(autoSelectTimer);
+    autoSelectTimer = setTimeout(() => {
+        autoSelectTimer = null;
+        if (!autoSelectConfig?.enabled || autoSelectRunning || switchingNodeIndex !== null || isModeSwitchBusy()) return;
+        const signature = autoSelectCandidateSignature();
+        const changed = signature && signature !== autoSelectLastCandidateSignature;
+        const unhealthy = activeNodeNeedsAutoSelect();
+        const now = Date.now();
+        if (!changed && !unhealthy) return;
+        if (!changed && unhealthy && now - autoSelectLastTriggerAt < 30000) return;
+        autoSelectLastCandidateSignature = signature;
+        autoSelectLastTriggerAt = now;
+        requestAutoSelectRestart({ silent: true, force: true, reason });
+    }, delay);
+}
+
 function renderAutoSelectConfig() {
     bindAutoSelectConfigEvents();
     const enabledEl = document.getElementById('autoSelectEnabled');
     const scopeEl = document.getElementById('autoSelectScope');
     const subscriptionEl = document.getElementById('autoSelectSubscriptions');
     const aggregateEl = document.getElementById('autoSelectAggregates');
-    const intervalEl = document.getElementById('autoSelectIntervalMinutes');
     const siteModeEl = document.getElementById('autoSelectSiteMode');
     const siteListEl = document.getElementById('autoSelectSiteList');
     const listEl = document.getElementById('autoSelectRuleList');
     const discardEl = document.getElementById('autoSelectDiscardPile');
-    const ignoreTimeoutEl = document.getElementById('autoSelectIgnoreTimeout');
     if (!enabledEl || !scopeEl || !listEl || !autoSelectConfig) return;
     updateAutoSelectConfigExpandedState();
     updateAutoSelectConfigTabs();
@@ -2735,15 +2857,14 @@ function renderAutoSelectConfig() {
 
     enabledEl.checked = !!autoSelectConfig.enabled;
     scopeEl.value = autoSelectConfig.scope || 'subscription';
-    if (intervalEl) intervalEl.value = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes);
-    if (ignoreTimeoutEl) ignoreTimeoutEl.checked = !!autoSelectConfig.ignoreTimeout;
     if (subscriptionEl) {
         subscriptionEl.hidden = autoSelectConfig.scope !== 'subscription';
-        if (!suppliersCache.length) {
+        const selectableSuppliers = suppliersCache;
+        if (!selectableSuppliers.length) {
             subscriptionEl.innerHTML = '<div class="auto-select-empty">暂无订阅组</div>';
         } else {
             const selected = new Set(autoSelectConfig.subscriptionFiles || []);
-            subscriptionEl.innerHTML = suppliersCache.map((s, index) => renderAutoSelectSourceCard({
+            subscriptionEl.innerHTML = selectableSuppliers.map((s, index) => renderAutoSelectSourceCard({
                 kind: 'subscription',
                 value: s.fileName,
                 title: s.name || s.fileName,
@@ -2816,7 +2937,7 @@ function updateAutoSelectConfigExpandedState() {
         body.hidden = !enabled;
         body.classList.toggle('expanded', enabled);
     }
-    if (runButton) runButton.disabled = !enabled || autoSelectRunning;
+    if (runButton) setAutoSelectNowButtonBusy(autoSelectHasPendingWork());
 }
 
 function updateAutoSelectConfigTabs() {
@@ -2970,14 +3091,8 @@ function setAutoSelectEnabled(checked) {
     renderAutoSelectConfig();
     if (autoSelectConfig.enabled) {
         scheduleAutoSelectTimer();
-        runAutoSelectCycle({ silent: false, force: true });
+        launchAutoSelectCycle({ silent: false, force: true });
     }
-}
-
-function setAutoSelectIgnoreTimeout(checked) {
-    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
-    autoSelectConfig.ignoreTimeout = !!checked;
-    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
 }
 
 function setAutoSelectScope(scope) {
@@ -3005,19 +3120,6 @@ function toggleAutoSelectAggregate(encodedFileName, checked) {
     else set.delete(fileName);
     autoSelectConfig.aggregateFiles = Array.from(set);
     saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
-}
-
-function normalizeAutoSelectInterval(value) {
-    const minutes = Number.parseInt(value, 10);
-    if (!Number.isFinite(minutes) || minutes < 1) return 5;
-    return Math.min(minutes, 1440);
-}
-
-function setAutoSelectInterval(value) {
-    if (!autoSelectConfig) autoSelectConfig = defaultAutoSelectConfig();
-    autoSelectConfig.intervalMinutes = normalizeAutoSelectInterval(value);
-    saveAutoSelectConfig({ render: false, run: false, timer: false, restart: true });
-    scheduleAutoSelectTimer();
 }
 
 function setAutoSelectSiteMode(mode) {
@@ -3079,7 +3181,7 @@ function autoSelectRuleTypeOptions(selected) {
 function selectableAutoSelectValues(type) {
     const unique = new Map();
     if (type === 'include_node') {
-        (allNodesList || []).forEach(n => {
+        autoSelectEligibleNodes(allNodesList).forEach(n => {
             if (n.name) unique.set(n.name, n.name);
         });
     } else if (type === 'include_subscription') {
@@ -3087,7 +3189,7 @@ function selectableAutoSelectValues(type) {
     } else if (type === 'include_aggregate_group') {
         (aggregateGroupsCache || []).forEach(g => unique.set(g.name || g.fileName, g.name || g.fileName));
     } else if (type === 'include_protocol' || type === 'exclude_protocol') {
-        (allNodesList || []).forEach(n => {
+        autoSelectEligibleNodes(allNodesList).forEach(n => {
             if (n.type) unique.set(n.type.toLowerCase(), n.type);
         });
     }
@@ -3420,6 +3522,10 @@ function supplierNameByFile(fileName) {
     return suppliersCache.find(s => s.fileName === fileName)?.name || '';
 }
 
+function autoSelectEligibleNodes(nodes) {
+    return nodes || [];
+}
+
 function supplierNameForNode(node) {
     return supplierNameByFile(node.sourceFile || node.fileName);
 }
@@ -3429,10 +3535,12 @@ function aggregateNameByFile(fileName) {
 }
 
 function selectedSubscriptionFiles() {
-    if (autoSelectConfig?.subscriptionFiles?.length > 0) return autoSelectConfig.subscriptionFiles;
+    const configured = autoSelectConfig?.subscriptionFiles || [];
+    if (configured.length > 0) return configured;
     const active = suppliersCache.find(s => s.active);
     if (active) return [active.fileName];
-    return suppliersCache[0] ? [suppliersCache[0].fileName] : [];
+    const first = suppliersCache[0];
+    return first ? [first.fileName] : [];
 }
 
 function selectedAggregateFiles() {
@@ -3544,11 +3652,11 @@ function clearAutoSelectExcludedNodes() {
 
 function autoSelectCandidates(fileName = '') {
     const scope = autoSelectConfig?.scope || 'subscription';
-    if (scope === 'all') return allNodesList || [];
+    if (scope === 'all') return autoSelectEligibleNodes(allNodesList);
     if (scope === 'subscription') {
         const targets = fileName ? [fileName] : selectedSubscriptionFiles();
         if (!targets.length) return [];
-        return targets.flatMap(target => autoSelectSourceNodes('subscription', target));
+        return autoSelectEligibleNodes(targets.flatMap(target => autoSelectSourceNodes('subscription', target)));
     }
     if (scope === 'aggregate') {
         const targets = fileName ? [fileName] : selectedAggregateFiles();
@@ -3667,7 +3775,6 @@ async function runAutoSelectCycle(options = {}) {
     if (isModeSwitchBusy()) {
         if (!options.silent) showToast('模式正在切换中，自动选择稍后运行。', 'info', 1800);
         queueAutoSelectRun({ ...options, silent: true });
-        setAutoSelectNowButtonBusy(true);
         drainAutoSelectQueuedRun(autoSelectModeRetryMs);
         return;
     }
@@ -3730,14 +3837,19 @@ async function runAutoSelectCycle(options = {}) {
         if (autoSelectAbortController === controller) {
             autoSelectAbortController = null;
         }
-        const hasQueuedRun = !!autoSelectQueuedRun;
         autoSelectRunning = false;
         if (autoSelectConfig?.enabled || options.force) {
             drainAutoSelectQueuedRun();
         } else {
             autoSelectQueuedRun = null;
         }
-        setAutoSelectNowButtonBusy(hasQueuedRun);
+        if (autoSelectConfig?.enabled) {
+            try {
+                autoSelectLastCandidateSignature = autoSelectCandidateSignature();
+                autoSelectLastTriggerAt = Date.now();
+            } catch(e) {}
+        }
+        setAutoSelectNowButtonBusy(autoSelectHasPendingWork());
     }
 }
 
@@ -3751,14 +3863,10 @@ async function runAutoSelectNow() {
 
 function scheduleAutoSelectTimer() {
     if (autoSelectTimer) {
-        clearInterval(autoSelectTimer);
+        clearTimeout(autoSelectTimer);
         autoSelectTimer = null;
     }
-    if (!autoSelectConfig?.enabled) return;
-    const intervalMs = normalizeAutoSelectInterval(autoSelectConfig.intervalMinutes) * 60 * 1000;
-    autoSelectTimer = setInterval(() => {
-        runAutoSelectCycle({ silent: true });
-    }, intervalMs);
+    scheduleAutoSelectRuleCheck('startup', 1200);
 }
 
 let testingNodes = new Set();
@@ -3881,6 +3989,97 @@ function formatInterval(minutes) {
     if (minutes >= 1440 && minutes % 1440 === 0) return (minutes / 1440) + '天';
     if (minutes >= 60 && minutes % 60 === 0) return (minutes / 60) + '小时';
     return minutes + '分钟';
+}
+
+let supplierEditFile = '';
+
+async function openSupplierEditModal(encodedFile, event) {
+    if (event) event.stopPropagation();
+    const file = decodeURIComponent(encodedFile);
+    const supplier = suppliersCache.find(s => s.fileName === file);
+    if (!supplier) {
+        showToast('该订阅组不能编辑', 'warning');
+        return;
+    }
+    supplierEditFile = file;
+    const modal = document.getElementById('supplierEditModal');
+    const title = document.getElementById('supplierEditTitle');
+    const urlInput = document.getElementById('supplierEditURL');
+    const intervalInput = document.getElementById('supplierEditInterval');
+    if (title) title.textContent = '编辑订阅组：' + (supplier.name || file);
+    if (intervalInput) intervalInput.value = String(Number(supplier.updateIntervalMinutes || 360));
+    if (urlInput) {
+        urlInput.value = '正在读取订阅链接...';
+        urlInput.disabled = true;
+    }
+    if (modal) modal.style.display = 'flex';
+    try {
+        const url = await loadSupplierURL(file);
+        if (urlInput) {
+            urlInput.value = url;
+            urlInput.disabled = false;
+            setTimeout(() => urlInput.focus(), 0);
+        }
+    } catch(e) {
+        if (urlInput) {
+            urlInput.value = '';
+            urlInput.disabled = false;
+        }
+        showToast('读取订阅链接失败', 'error');
+    }
+}
+
+function closeSupplierEditModal() {
+    const modal = document.getElementById('supplierEditModal');
+    if (modal) modal.style.display = 'none';
+    supplierEditFile = '';
+}
+
+async function submitSupplierEdit() {
+    if (!supplierEditFile) return;
+    const urlInput = document.getElementById('supplierEditURL');
+    const intervalInput = document.getElementById('supplierEditInterval');
+    const btn = document.getElementById('btnSupplierEditSubmit');
+    const nextURL = (urlInput?.value || '').trim();
+    const minutes = Number(intervalInput?.value || 0);
+    if (!nextURL) {
+        showToast('请输入订阅链接', 'warning');
+        return;
+    }
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+        showToast('请输入有效的自动更新时间', 'warning');
+        return;
+    }
+    const oldText = btn?.textContent || '';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '保存中...';
+    }
+    try {
+        const res = await fetch('/api/edit_supplier?file=' + encodeURIComponent(supplierEditFile), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                url: nextURL,
+                updateIntervalMinutes: Math.round(minutes)
+            })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(data.msg || '订阅组已保存', 'success');
+            closeSupplierEditModal();
+            await loadSuppliers();
+            await loadNodes();
+        } else {
+            showToast(data.msg || '保存失败', 'error');
+        }
+    } catch(e) {
+        showToast('保存订阅组失败', 'error');
+    }
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = oldText || '保存';
+    }
 }
 
 async function setSupplierInterval(encodedFile, currentMinutes, event) {
@@ -4084,9 +4283,11 @@ function jumpFromHelp(target, value = '') {
             runSoon(() => showSettingsSubtab(value || 'run'));
             break;
         case 'add-node':
-            showTab('settings');
-            showSettingsSubtab('entry');
-            runSoon(openAddModal);
+            showTab('nodes');
+            runSoon(() => {
+                setNodeGroupMode('custom');
+                openAddModal();
+            });
             break;
         case 'rules':
             showTab('settings');
@@ -4118,7 +4319,7 @@ const helpTopics = {
         body: `
             <h3>先怎么理解这个系统</h3>
             <div class="help-mini-map">
-                <div><strong>节点入口</strong><span>订阅组、聚合组和自动选择都在“节点管理”。这里决定当前出口是谁。</span></div>
+                <div><strong>节点入口</strong><span>订阅组、聚合组、自定义节点和自动选择都在“节点管理”。这里决定当前出口是谁。</span></div>
                 <div><strong>运行模式</strong><span>设置里的代理服务、全局路由、TUN、WebRTC 决定流量怎么被接管。</span></div>
                 <div><strong>规则中心</strong><span>规则分流和 DNS 在“设置 / 管理”。聚合组直接在“节点管理 / 聚合组”里组合节点。</span></div>
                 <div><strong>验证工具</strong><span>极速测速看节点延迟，测试网站看目标服务是否真的可用。</span></div>
@@ -4126,18 +4327,17 @@ const helpTopics = {
             </div>
             <h3>页面职责</h3>
             <ul>
-                <li>节点管理：选择节点、切换订阅组/聚合组、设置自动选择、查看自动节点。</li>
+                <li>节点管理：导入订阅、编辑订阅链接与更新时间、切换订阅组/聚合组、添加自定义节点、设置自动选择、查看自动节点。</li>
                 <li>设置 / 运行：开关系统代理、全局路由、TUN 和 WebRTC 防泄露。</li>
                 <li>设置 / 偏好：端口、IPv6、启动项、管理员重启和主题等长期偏好。</li>
-                <li>设置 / 入口：导入订阅、手动添加节点、临时出口和免费流量入口。</li>
                 <li>设置 / 管理：规则分流和 DNS 规则。</li>
                 <li>测试网站：检查当前出口能否访问指定网站。</li>
                 <li>数据看板：查看流量和运行状态，辅助排查异常。</li>
             </ul>
             <h3>推荐操作顺序</h3>
             <ol>
-                <li>先进“入口”导入订阅或添加节点。</li>
-                <li>回到“节点管理”选择一个节点，或打开“自动选择”。</li>
+                <li>先到“节点管理 / 订阅组”导入订阅，或到“自定义节点”添加单节点。</li>
+                <li>回到“节点管理”选择一个节点，必要时打开“忽略超时节点”隐藏 Timeout 节点，或打开“自动选择”。</li>
                 <li>到“运行”开启代理服务，必要时开启 TUN。</li>
                 <li>用“测试网站”和“数据看板”确认访问、延迟和流量状态。</li>
                 <li>需要精细控制时，再进入“管理”配置规则和 DNS；聚合组在节点页完成。</li>
@@ -4146,7 +4346,7 @@ const helpTopics = {
                 { label: '节点管理', target: 'nodes', value: 'subscription', primary: true },
                 { label: '自动选择', target: 'nodes', value: 'auto' },
                 { label: '运行开关', target: 'settings', value: 'run' },
-                { label: '入口操作', target: 'settings', value: 'entry' },
+                { label: '自定义节点', target: 'nodes', value: 'custom' },
                 { label: '规则 / DNS', target: 'settings', value: 'manage' },
                 { label: '测试网站', target: 'sitecheck' },
                 { label: '数据看板', target: 'dashboard' }
@@ -4167,15 +4367,15 @@ const helpTopics = {
             </ul>
             <h3>核心能力</h3>
             <ul>
-                <li>支持导入订阅、手动添加节点、订阅组、聚合组、免费流量和自动选择。</li>
+                <li>支持导入订阅、编辑订阅链接与更新时间、手动添加自定义节点、订阅组、聚合组和自动选择。</li>
                 <li>支持系统代理、TUN 隧道、规则分流、命令行进程规则、DNS 分流、DNS 自动覆写和 WebRTC 防泄露。</li>
                 <li>支持延迟测速、带宽测速和常用网站可用性测试。</li>
             </ul>
             <h3>怎么读界面</h3>
             <ul>
                 <li>主导航是顶部灵动岛里的图标，日常最常用的是节点、测试网站、看板和设置。</li>
-                <li>节点页的子标签负责选择“节点来源”：订阅组、聚合组、自动选择、自动节点。</li>
-                <li>设置页的子标签负责配置“系统行为”：运行、偏好、入口、管理。</li>
+                <li>节点页的子标签负责选择“节点来源”：订阅组、聚合组、自定义节点、自动选择、自动节点；下方“忽略超时节点”按钮会作用于所有节点来源列表。</li>
+                <li>设置页的子标签负责配置“系统行为”：运行、偏好、管理。</li>
                 <li>如果你不知道下一步去哪，优先从“系统地图”和“快速开始”两个主题进入。</li>
             </ul>
             ${helpJumpButtons([
@@ -4204,13 +4404,15 @@ const helpTopics = {
         body: `
             <h3>推荐流程</h3>
             <ol>
-                <li>进入“设置 / 入口”，导入订阅，或打开“添加节点”粘贴单节点链接。</li>
+                <li>进入“节点管理 / 订阅组”导入订阅，或进入“自定义节点”粘贴单节点链接。</li>
                 <li>在“节点管理”中打开订阅组或聚合组，点击节点卡片或表格中的“选择”。</li>
+                <li>订阅链接变更时，在订阅组详情里点“编辑”，同时更新订阅地址和自动更新时间。</li>
+                <li>测速后如果 Timeout 节点太多，可打开节点来源标签下方的“忽略超时节点”。</li>
                 <li>普通浏览器和多数桌面软件可先开启“代理服务”；游戏、命令行、部分不认系统代理的软件建议开启 TUN。</li>
                 <li>先用“极速测速”确认延迟，再用“测试网站”确认目标服务能否访问。</li>
             </ol>
             ${helpJumpButtons([
-                { label: '入口操作', target: 'settings', value: 'entry', primary: true },
+                { label: '订阅组', target: 'nodes', value: 'subscription', primary: true },
                 { label: '添加节点', target: 'add-node' },
                 { label: '节点管理', target: 'nodes', value: 'subscription' },
                 { label: '运行开关', target: 'settings', value: 'run' },
@@ -4219,7 +4421,7 @@ const helpTopics = {
             <h3>注意</h3>
             <ul>
                 <li>系统代理只影响遵循系统代理的软件，TUN 才会接管更多流量。</li>
-                <li>如果订阅刚导入后列表为空，优先检查订阅地址能否正常访问。</li>
+                <li>如果订阅刚导入后列表为空，优先检查订阅地址能否正常访问；订阅地址变化后请用“编辑”更新原订阅组。</li>
             </ul>
             <div class="help-topic-links">
                 <a href="https://support.microsoft.com/windows/use-a-proxy-server-in-windows-03096c53-0554-4ffe-b6ab-8b1deee8dae1" target="_blank" rel="noopener">Windows 代理设置</a>
@@ -4252,7 +4454,7 @@ const helpTopics = {
             <h3>网站验证</h3>
             <ul>
                 <li>网站可用性验证会临时切换候选节点，确认目标网站能访问后再确定最终节点。</li>
-                <li>如果开启“忽略超时节点”，延迟为 Timeout 的节点不会进入候选排序。</li>
+                <li>自动选择默认不会把延迟为 Timeout 的节点作为最终候选；节点管理里的“忽略超时节点”按钮用于隐藏列表中的 Timeout 节点。</li>
             </ul>
         `
     },
@@ -4338,7 +4540,7 @@ const helpTopics = {
             </ul>
             ${helpJumpButtons([
                 { label: '偏好设置', target: 'settings', value: 'prefs', primary: true },
-                { label: '入口操作', target: 'settings', value: 'entry' },
+                { label: '订阅组', target: 'nodes', value: 'subscription' },
                 { label: '数据看板', target: 'dashboard' }
             ])}
             <h3>必要网络请求</h3>
@@ -4391,7 +4593,8 @@ const helpTopics = {
                 <li>订阅服务商能看到订阅拉取请求，订阅地址也可能包含你的身份标识。</li>
             </ul>
             ${helpJumpButtons([
-                { label: '入口操作', target: 'settings', value: 'entry', primary: true },
+                { label: '订阅组', target: 'nodes', value: 'subscription', primary: true },
+                { label: '自定义节点', target: 'nodes', value: 'custom' },
                 { label: '规则分流', target: 'rules' },
                 { label: 'DNS 管理', target: 'dns' },
                 { label: '偏好设置', target: 'settings', value: 'prefs' }
@@ -4566,15 +4769,19 @@ async function submitAddNode() {
         });
         const data = await res.json();
         if (data.ok) {
-            alert('添加成功！');
+            showToast(data.msg || '添加成功', 'success');
             closeAddModal();
-            loadNodes();
-            loadSuppliers();
+            nodeGroupMode = 'custom';
+            selectedNodeGroupFile = CUSTOM_NODES_FILE;
+            nodeGroupManualCollapsed = false;
+            syncNodeSourceTabActiveState();
+            await loadNodes();
+            await loadSuppliers();
         } else {
-            alert('添加失败: ' + data.msg);
+            showToast('添加失败: ' + (data.msg || '解析失败'), 'error');
         }
     } catch(e) {
-        alert('请求失败');
+        showToast('添加节点请求失败', 'error');
     }
 
     btn.disabled = false;

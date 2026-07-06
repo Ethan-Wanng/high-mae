@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"wing/pkg/common"
-	"wing/pkg/freeflow"
 	"wing/pkg/routing"
 	"wing/pkg/stats"
 	"wing/pkg/utils"
@@ -49,9 +48,6 @@ func (c *TrackingConn) Read(b []byte) (n int, err error) {
 		if totalIn-c.lastStatIn >= updateThreshold {
 			delta := totalIn - c.lastStatIn
 			stats.AddSessionTraffic(c.node, delta, 0)
-			if freeflow.IsNodeName(c.node) && freeflow.AddUsage(c.node, delta).Exceeded {
-				_ = c.Conn.Close()
-			}
 			c.lastStatIn = totalIn
 		}
 		// 限制 UpdateConnLog 调用频率，减少锁竞争
@@ -72,9 +68,6 @@ func (c *TrackingConn) Write(b []byte) (n int, err error) {
 		if totalOut-c.lastStatOut >= updateThreshold {
 			delta := totalOut - c.lastStatOut
 			stats.AddSessionTraffic(c.node, 0, delta)
-			if freeflow.IsNodeName(c.node) && freeflow.AddUsage(c.node, delta).Exceeded {
-				_ = c.Conn.Close()
-			}
 			c.lastStatOut = totalOut
 		}
 		if totalOut-c.lastLogOut >= updateThreshold {
@@ -161,10 +154,6 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if nodeUsed == "" {
 				nodeUsed = "Proxy"
 			}
-			if !freeflow.CanUse(nodeUsed) {
-				http.Error(w, "本周免费流量已用完，下周自动恢复。", http.StatusTooManyRequests)
-				return
-			}
 			targetClient = client
 		} else {
 			if node, found := GetNodeForRoute(routeAction); found {
@@ -214,9 +203,6 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		finalIn := in - tc.lastStatIn
 		finalOut := out - tc.lastStatOut
 		stats.AddSessionTraffic(tc.node, finalIn, finalOut)
-		if freeflow.IsNodeName(tc.node) {
-			freeflow.AddUsage(tc.node, finalIn+finalOut)
-		}
 		if !common.PrivacyMode {
 			stats.UpdateConnLog(logID, in, out, true)
 		}

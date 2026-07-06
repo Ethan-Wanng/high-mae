@@ -925,6 +925,35 @@ input:checked + .slider:before {
     word-break: break-all;
 }
 
+.supplier-edit-modal {
+    width: min(620px, 100%);
+}
+
+.supplier-edit-form {
+    display: grid;
+    gap: 14px;
+    margin: 14px 0 18px;
+}
+
+.supplier-edit-form label {
+    display: grid;
+    gap: 8px;
+    color: var(--text-sub);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.supplier-edit-form textarea {
+    min-height: 118px;
+    resize: vertical;
+}
+
+.supplier-edit-form input,
+.supplier-edit-form textarea {
+    width: 100%;
+    border-radius: 8px;
+}
+
 .empty-state {
     grid-column: 1 / -1;
     border: 1px dashed rgba(148, 163, 184, 0.22);
@@ -2632,6 +2661,38 @@ input:checked + .slider:before {
 .node-source-tab.auto-nodes-tab.active {
     background: rgba(183, 121, 31, 0.14);
     color: var(--accent-2);
+}
+
+.node-manager-options {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -4px 0 12px;
+}
+
+.node-manager-option-toggle {
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--text-sub);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 750;
+    min-height: 32px;
+    padding: 0 12px;
+    transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.node-manager-option-toggle:hover {
+    border-color: rgba(45, 212, 191, 0.32);
+    background: rgba(45, 212, 191, 0.07);
+    color: var(--text-main);
+}
+
+.node-manager-option-toggle.active {
+    border-color: rgba(45, 212, 191, 0.45);
+    background: rgba(45, 212, 191, 0.13);
+    color: var(--accent);
 }
 
 .auto-select-group-list {
@@ -9529,6 +9590,17 @@ body .auto-select-config-panel.active {
 body .auto-select-config-panel .auto-select-settings-list {
     max-width: 680px;
     margin: 0 auto;
+}
+
+body .auto-select-config-panel .auto-select-inline-row {
+    grid-template-columns: minmax(96px, 1fr) auto;
+}
+
+body .auto-select-config-panel .auto-select-inline-value {
+    justify-self: end;
+    color: var(--text-main);
+    font-size: 13px;
+    font-weight: 700;
 }
 
 body .auto-select-config-panel .auto-select-controls,
