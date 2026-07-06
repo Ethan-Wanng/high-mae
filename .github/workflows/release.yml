@@ -12,9 +12,9 @@ permissions:
   contents: write
 
 env:
-  WING_VERSION: "1.0.5"
+  WING_VERSION: "1.0.6"
   FLUTTER_VERSION: "3.29.2"
-  FLUTTER_BUILD_NUMBER: "1005"
+  FLUTTER_BUILD_NUMBER: "10060"
 
 jobs:
   windows:
