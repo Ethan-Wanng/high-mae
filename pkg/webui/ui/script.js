@@ -1298,24 +1298,50 @@ function renderNodeTable(nodes, options = {}) {
     });
 }
 
+function latencyDisplay(latency) {
+    const value = Number(latency) || 0;
+    if (value > 0 && value < 500) {
+        return { className: 'good', text: value + ' ms' };
+    }
+    if (value >= 500) {
+        return { className: 'bad', text: value + ' ms' };
+    }
+    if (value === -1) {
+        return { className: 'bad', text: 'Timeout' };
+    }
+    return { className: 'unknown', text: '-- ms' };
+}
+
+function setNodeLatencyTesting(idx) {
+    const latEl = document.getElementById('lat-' + idx);
+    if (!latEl) return false;
+    latEl.textContent = '检测中';
+    latEl.className = 'latency unknown';
+    return true;
+}
+
+function applyNodeLatencyResult(idx, latency) {
+    const normalized = Number(latency);
+    const value = Number.isFinite(normalized) ? normalized : -1;
+    const node = allNodesList.find(n => n.index === idx);
+    if (node) node.latency = value;
+
+    const latEl = document.getElementById('lat-' + idx);
+    if (latEl) {
+        const display = latencyDisplay(value);
+        latEl.textContent = display.text;
+        latEl.className = 'latency ' + display.className;
+    }
+    return value;
+}
+
 function renderAutoNodeList(nodes, options = {}) {
     const list = document.createElement('div');
     list.className = 'auto-node-list';
     if (options.animateDeal) list.classList.add('auto-node-list-dealing');
     const fragment = document.createDocumentFragment();
     nodes.forEach((n, index) => {
-        let latClass = 'unknown';
-        let latText = '-- ms';
-        if (n.latency > 0 && n.latency < 500) {
-            latClass = 'good';
-            latText = n.latency + ' ms';
-        } else if (n.latency >= 500) {
-            latClass = 'bad';
-            latText = n.latency + ' ms';
-        } else if (n.latency === -1) {
-            latClass = 'bad';
-            latText = 'Timeout';
-        }
+        const latency = latencyDisplay(n.latency);
 
         let speedClass = 'unknown';
         let speedText = '--';
@@ -1344,7 +1370,7 @@ function renderAutoNodeList(nodes, options = {}) {
             </div>
             <div class="auto-node-metrics">
                 <span class="node-type">${escapeHTML(n.type || '')}</span>
-                <span class="latency ${latClass}" id="lat-${n.index}">${latText}</span>
+                <span class="latency ${latency.className}" id="lat-${n.index}">${latency.text}</span>
                 <span class="latency ${speedClass}" id="speed-${n.index}">↓ ${speedText}</span>
             </div>
             <div class="auto-node-actions">
@@ -2073,13 +2099,19 @@ async function switchNode(idx, options = {}) {
 }
 
 async function testSingle(idx) {
-    const latEl = document.getElementById('lat-' + idx);
-    latEl.textContent = '检测中';
-    latEl.className = 'latency unknown';
+    if (!setNodeLatencyTesting(idx)) return;
     const node = allNodesList.find(n => n.index === idx);
     const current = node?.active ? '&current=1' : '';
-    await fetch('/api/test_single?idx=' + idx + current, { method: 'POST' });
-    loadNodes();
+    try {
+        const res = await fetch('/api/test_single?idx=' + idx + current, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || data.msg || 'latency test failed');
+        applyNodeLatencyResult(idx, data.latency);
+        loadNodes();
+    } catch(e) {
+        applyNodeLatencyResult(idx, -1);
+        showToast('延迟测试失败', 'error', 2200);
+    }
 }
 
 async function autoTestSelectedNodeGroup(fileName) {
@@ -2089,11 +2121,7 @@ async function autoTestSelectedNodeGroup(fileName) {
 
     groupLatencyTesting.add(fileName);
     groupNodes.forEach(n => {
-        const latEl = document.getElementById('lat-' + n.index);
-        if (latEl) {
-            latEl.textContent = '检测中';
-            latEl.className = 'latency unknown';
-        }
+        setNodeLatencyTesting(n.index);
     });
 
     const queue = [...groupNodes];
@@ -2102,8 +2130,12 @@ async function autoTestSelectedNodeGroup(fileName) {
         while (queue.length) {
             const node = queue.shift();
             try {
-                await fetch('/api/test_single?idx=' + node.index, { method: 'POST' });
-            } catch(e) {}
+                const res = await fetch('/api/test_single?idx=' + node.index, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                applyNodeLatencyResult(node.index, res.ok ? data.latency : -1);
+            } catch(e) {
+                applyNodeLatencyResult(node.index, -1);
+            }
         }
     }
 
@@ -3682,11 +3714,7 @@ async function testAutoSelectCandidateLatencies(candidates, runContext, options 
     const unique = Array.from(new Map(candidates.map(n => [n.index, n])).values());
     if (!unique.length) return;
     unique.forEach(n => {
-        const latEl = document.getElementById('lat-' + n.index);
-        if (latEl) {
-            latEl.textContent = '检测中';
-            latEl.className = 'latency unknown';
-        }
+        setNodeLatencyTesting(n.index);
     });
     const queue = [...unique];
     const workerCount = Math.min(8, queue.length);
@@ -3695,8 +3723,12 @@ async function testAutoSelectCandidateLatencies(candidates, runContext, options 
             assertAutoSelectActive(runContext, options);
             const node = queue.shift();
             try {
-                await fetch('/api/test_single?idx=' + node.index, { method: 'POST', signal: runContext.signal });
-            } catch(e) {}
+                const res = await fetch('/api/test_single?idx=' + node.index, { method: 'POST', signal: runContext.signal });
+                const data = await res.json().catch(() => ({}));
+                applyNodeLatencyResult(node.index, res.ok ? data.latency : -1);
+            } catch(e) {
+                applyNodeLatencyResult(node.index, -1);
+            }
         }
     }
     await Promise.all(Array.from({ length: workerCount }, worker));
@@ -5492,7 +5524,7 @@ function renderRules() {
                     <div class="rule-item-container" style="border-bottom:1px solid rgba(148,163,184,0.1);padding:10px 0;">
                         <div style="display:flex;justify-content:space-between;align-items:center;font-size:14px;padding:0 10px;">
                             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;">
-                                <span style="background:rgba(99,102,241,0.15);padding:2px 6px;border-radius:4px;font-size:11px;margin-right:6px;color:var(--accent);">${g.name}</span>
+                                <span style="background:rgba(99,102,241,0.15);padding:2px 6px;border-radius:4px;font-size:11px;margin-right:6px;color:var(--accent);">${escapeHTML(g.name)}</span>
                                 ${ruleEditControls(gIdx, rIdx, r, { search: true })}
                                 <span class="rule-action-badge" style="color:${actionColor};font-weight:bold;margin-left:8px;font-size:12px;cursor:pointer;border:1px solid ${actionColor}33;padding:2px 8px;border-radius:10px;background:${actionColor}11;display:inline-flex;align-items:center;gap:4px;user-select:none;transition:all 0.2s;" onclick="toggleSearchRuleActionSelector(${gIdx}, ${rIdx}, event)">
                                     ${actionName(effectiveAction)} ▾

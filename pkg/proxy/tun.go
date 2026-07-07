@@ -42,6 +42,8 @@ var (
 	tunGateway      string
 	tunRealLocalIP  string
 	tunRoutedNodeIP string
+
+	tunWatchdogStopTimeout = 3 * time.Second
 )
 
 // ToggleTunMode 切换 TUN 模式的开/关状态，返回需要展示给用户的消息（空串表示成功）
@@ -115,11 +117,24 @@ func RestartTun(nodeServer, nodeIP string) error {
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
+	return restartTunLocked(nodeIP, true)
+}
+
+func restartTunKeepingWatchdog(nodeIP string) error {
+	tunMu.Lock()
+	defer tunMu.Unlock()
+
+	return restartTunLocked(nodeIP, false)
+}
+
+func restartTunLocked(nodeIP string, resetWatchdog bool) error {
 	if !common.GetTunModeOn() {
 		return nil
 	}
 
-	stopTunWatchdogLocked()
+	if resetWatchdog {
+		stopTunWatchdogLocked()
+	}
 	stopTunLocked()
 	if err := startTunLocked(nodeIP); err != nil {
 		common.SetTunModeOn(false)
@@ -133,7 +148,9 @@ func RestartTun(nodeServer, nodeIP string) error {
 		}
 		return err
 	}
-	startTunWatchdogLocked()
+	if resetWatchdog {
+		startTunWatchdogLocked()
+	}
 	return nil
 }
 
@@ -449,7 +466,13 @@ func stopTunWatchdogLocked() {
 	tunWatchDone = nil
 	close(stopCh)
 	tunMu.Unlock()
-	<-doneCh
+	if doneCh != nil {
+		select {
+		case <-doneCh:
+		case <-time.After(tunWatchdogStopTimeout):
+			log.Println("等待 TUN watchdog 退出超时，继续关闭 TUN")
+		}
+	}
 	tunMu.Lock()
 }
 
@@ -464,28 +487,75 @@ func reconcileTunRoute() {
 
 	resolvedIP := ResolveNodeServer(activeNode)
 	if resolvedIP != "" && resolvedIP != currentNodeIP {
-		log.Printf("TUN 自愈：节点 %s 解析 IP 从 %s 变为 %s，重建代理客户端和路由", activeNode.Name, currentNodeIP, resolvedIP)
-		SwitchNode(activeNode)
+		if !tryRunNetworkTransition(func() {
+			latest := common.SnapshotRuntimeState()
+			if !latest.TunModeOn || latest.ActiveNode.Server == "" {
+				return
+			}
+			if latest.ActiveNodeName != state.ActiveNodeName || latest.ActiveNode.Server != state.ActiveNode.Server {
+				return
+			}
+			latestResolvedIP := ResolveNodeServer(latest.ActiveNode)
+			if latestResolvedIP == "" || latestResolvedIP == latest.GlobalNodeIP {
+				return
+			}
+			log.Printf("TUN 自愈：节点 %s 解析 IP 从 %s 变为 %s，重建代理客户端和路由", latest.ActiveNode.Name, latest.GlobalNodeIP, latestResolvedIP)
+			if err := switchNodeLockedWithoutTunRestart(latest.ActiveNode); err != nil {
+				log.Printf("TUN 自愈重建代理客户端失败: %v", err)
+				return
+			}
+			_, _, nodeIP := common.GetActiveNodeSnapshot()
+			if err := restartTunKeepingWatchdog(nodeIP); err != nil {
+				log.Printf("TUN 自愈重启失败: %v", err)
+			}
+		}) {
+			log.Println("TUN 自愈：网络切换正在进行，跳过本轮节点重建")
+		}
 		return
 	}
 
 	gateway := utils.GetDefaultGateway()
-	realLocalIP := utils.GetRealLocalIP()
-
-	tunMu.Lock()
-	defer tunMu.Unlock()
-	if !common.GetTunModeOn() {
-		return
-	}
 	if gateway == "" {
 		return
 	}
-	if gateway != tunGateway || (realLocalIP != "" && realLocalIP != tunRealLocalIP) {
-		log.Printf("TUN 自愈：网络环境变化，重建路由。gateway %s -> %s, localIP %s -> %s", tunGateway, gateway, tunRealLocalIP, realLocalIP)
-		stopTunLocked()
-		if err := startTunLocked(currentNodeIP); err != nil {
-			log.Printf("TUN 自愈重启失败: %v", err)
+	realLocalIP := utils.GetRealLocalIP()
+
+	tunMu.Lock()
+	routeNeedsRebuild := common.GetTunModeOn() && (gateway != tunGateway || (realLocalIP != "" && realLocalIP != tunRealLocalIP))
+	tunMu.Unlock()
+	if !routeNeedsRebuild {
+		return
+	}
+
+	if !tryRunNetworkTransition(func() {
+		latest := common.SnapshotRuntimeState()
+		if !latest.TunModeOn {
+			return
 		}
+
+		tunMu.Lock()
+		defer tunMu.Unlock()
+		if !common.GetTunModeOn() {
+			return
+		}
+		if gateway != tunGateway || (realLocalIP != "" && realLocalIP != tunRealLocalIP) {
+			log.Printf("TUN 自愈：网络环境变化，重建路由。gateway %s -> %s, localIP %s -> %s", tunGateway, gateway, tunRealLocalIP, realLocalIP)
+			stopTunLocked()
+			if err := startTunLocked(latest.GlobalNodeIP); err != nil {
+				log.Printf("TUN 自愈重启失败: %v", err)
+				common.SetTunModeOn(false)
+				proxyOn, tunOn, _ := common.GetNetworkState()
+				_ = SaveLastNetworkMode(proxyOn, tunOn)
+				if common.MToggleTun != nil {
+					common.MToggleTun.SetTitle("🔌 隧道连接: [已关闭]")
+				}
+				if common.RefreshTrayIcon != nil {
+					common.RefreshTrayIcon()
+				}
+			}
+		}
+	}) {
+		log.Println("TUN 自愈：网络切换正在进行，跳过本轮路由重建")
 	}
 }
 

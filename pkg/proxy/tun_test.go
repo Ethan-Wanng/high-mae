@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 	"wing/pkg/common"
@@ -186,4 +187,63 @@ func TestTunNodeRoutePrefixOnlyAcceptsIPv4(t *testing.T) {
 	if _, ok := tunNodeRoutePrefix("bad ip"); ok {
 		t.Fatalf("tunNodeRoutePrefix invalid ok = true, want false")
 	}
+}
+
+func TestTryRunNetworkTransitionSkipsWhenBusy(t *testing.T) {
+	networkTransitionMu.Lock()
+	var ran atomic.Bool
+	done := make(chan bool, 1)
+	go func() {
+		done <- tryRunNetworkTransition(func() {
+			ran.Store(true)
+		})
+	}()
+
+	select {
+	case ok := <-done:
+		networkTransitionMu.Unlock()
+		if ok {
+			t.Fatalf("tryRunNetworkTransition returned true while transition lock was held")
+		}
+		if ran.Load() {
+			t.Fatalf("tryRunNetworkTransition ran callback while transition lock was held")
+		}
+	case <-time.After(200 * time.Millisecond):
+		networkTransitionMu.Unlock()
+		t.Fatalf("tryRunNetworkTransition blocked while transition lock was held")
+	}
+}
+
+func TestStopTunWatchdogLockedTimesOutWhenDoneDoesNotClose(t *testing.T) {
+	tunMu.Lock()
+	if tunWatchStop != nil || tunWatchDone != nil {
+		tunMu.Unlock()
+		t.Fatalf("test requires no running TUN watchdog")
+	}
+	oldTimeout := tunWatchdogStopTimeout
+	stopCh := make(chan struct{})
+	tunWatchStop = stopCh
+	tunWatchDone = make(chan struct{})
+	tunWatchdogStopTimeout = 25 * time.Millisecond
+
+	started := time.Now()
+	stopTunWatchdogLocked()
+	elapsed := time.Since(started)
+	tunWatchdogStopTimeout = oldTimeout
+
+	if elapsed > time.Second {
+		tunMu.Unlock()
+		t.Fatalf("stopTunWatchdogLocked waited too long: %s", elapsed)
+	}
+	if tunWatchStop != nil || tunWatchDone != nil {
+		tunMu.Unlock()
+		t.Fatalf("stopTunWatchdogLocked did not clear watchdog channels")
+	}
+	select {
+	case <-stopCh:
+	default:
+		tunMu.Unlock()
+		t.Fatalf("stopTunWatchdogLocked did not close stop channel")
+	}
+	tunMu.Unlock()
 }

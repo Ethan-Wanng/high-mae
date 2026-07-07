@@ -3,6 +3,7 @@ package webui
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -92,6 +93,42 @@ func TestRenderIndexHTMLInjectsAPIToken(t *testing.T) {
 	page := renderIndexHTML()
 	if !strings.Contains(page, `name="wing-api-token"`) || !strings.Contains(page, apiRequestToken) {
 		t.Fatal("expected rendered WebUI HTML to include API token meta tag")
+	}
+}
+
+func TestRulesSearchEscapesRuleGroupName(t *testing.T) {
+	script, err := os.ReadFile("ui/script.js")
+	if err != nil {
+		t.Fatalf("read WebUI script: %v", err)
+	}
+	source := strings.ReplaceAll(string(script), "\r\n", "\n")
+	if strings.Contains(source, "${g.name}</span>") {
+		t.Fatal("rules search renders raw rule group names into innerHTML")
+	}
+	if !strings.Contains(source, "${escapeHTML(g.name)}</span>") {
+		t.Fatal("rules search should escape rule group names before writing innerHTML")
+	}
+}
+
+func TestSingleLatencyTestAppliesReturnedLatency(t *testing.T) {
+	script, err := os.ReadFile("ui/script.js")
+	if err != nil {
+		t.Fatalf("read WebUI script: %v", err)
+	}
+	source := strings.ReplaceAll(string(script), "\r\n", "\n")
+	if strings.Contains(source, "await fetch('/api/test_single?idx=' + idx + current, { method: 'POST' });\n\tloadNodes();") ||
+		strings.Contains(source, "await fetch('/api/test_single?idx=' + idx + current, { method: 'POST' });\n    loadNodes();") {
+		t.Fatal("single latency test should not ignore the API latency response")
+	}
+	for _, want := range []string{
+		"function applyNodeLatencyResult(idx, latency)",
+		"const data = await res.json().catch(() => ({}));",
+		"applyNodeLatencyResult(idx, data.latency);",
+		"applyNodeLatencyResult(idx, -1);",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("WebUI script missing %q", want)
+		}
 	}
 }
 

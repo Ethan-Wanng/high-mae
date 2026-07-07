@@ -52,10 +52,31 @@ func RunNetworkTransition(fn func()) {
 	fn()
 }
 
+func tryRunNetworkTransition(fn func()) bool {
+	if !networkTransitionMu.TryLock() {
+		return false
+	}
+	defer networkTransitionMu.Unlock()
+	fn()
+	return true
+}
+
 func SwitchNode(node protocol.Node) error {
 	networkTransitionMu.Lock()
 	defer networkTransitionMu.Unlock()
 
+	return switchNodeLocked(node)
+}
+
+func switchNodeLocked(node protocol.Node) error {
+	return switchNodeLockedWithTunRestart(node, true)
+}
+
+func switchNodeLockedWithoutTunRestart(node protocol.Node) error {
+	return switchNodeLockedWithTunRestart(node, false)
+}
+
+func switchNodeLockedWithTunRestart(node protocol.Node, restartTun bool) error {
 	newIP := ResolveNodeServer(node)
 	cleanupBypass := prepareNodeBypassRouteForSwitch(newIP)
 	newClient, err := CreateNodeClientWithResolvedIP(node, newIP)
@@ -92,7 +113,9 @@ func SwitchNode(node protocol.Node) error {
 		currentMieru = nil
 	}
 	_ = closeGenericClient("old active client", oldClient)
-	restartTunAfterNodeSwitch()
+	if restartTun {
+		restartTunAfterNodeSwitch()
+	}
 	return nil
 }
 
