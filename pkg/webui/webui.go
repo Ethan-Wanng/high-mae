@@ -321,7 +321,7 @@ func StartWebUI() {
 		return
 	}
 	uiServer = &http.Server{
-		Addr:              "127.0.0.1:10809",
+		Addr:              "0.0.0.0:10809",
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
