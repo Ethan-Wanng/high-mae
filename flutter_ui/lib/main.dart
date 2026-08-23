@@ -2,14 +2,41 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-const _androidDefaultWebUIURL = 'http://10.0.2.2:10809/';
+const _androidDefaultWebUIURL = 'http://127.0.0.1:10809/';
 const _iosDefaultWebUIURL = 'http://127.0.0.1:10809/';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isAndroid) {
+    await _startAndroidBackend();
+  }
   runApp(WingMobileApp(initialUrl: _defaultMobileWebUIURL()));
+}
+
+Future<void> _startAndroidBackend() async {
+  try {
+    final docDir = await getApplicationSupportDirectory();
+    final exeFile = File('${docDir.path}/wing-backend-android-arm64');
+    
+    // Extract if not exists or if we want to overwrite
+    final byteData = await rootBundle.load('assets/bin/wing-backend-android-arm64');
+    await exeFile.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
+    
+    // Make executable
+    await Process.run('chmod', ['+x', exeFile.path]);
+    
+    // Start backend in background
+    Process.start(exeFile.path, [], mode: ProcessStartMode.detached);
+    
+    // Wait a bit for backend to start server
+    await Future.delayed(const Duration(seconds: 1));
+  } catch (e) {
+    print('Failed to start Android backend: \$e');
+  }
 }
 
 String _defaultMobileWebUIURL() {
@@ -318,7 +345,7 @@ class _ConnectionStateView extends StatelessWidget {
               const SizedBox(height: 10),
               Text(
                 connecting
-                    ? 'Android 模拟器默认使用 10.0.2.2；真机需显式开放后端并填写局域网 IP。'
+                    ? '正在连接本地控制面板...'
                     : (error ?? '请确认 wing 后端已启动，且手机可以访问该地址。'),
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium?.copyWith(

@@ -18,6 +18,11 @@ fi
 
 mkdir -p "$DIST"
 
+pushd "$ROOT" >/dev/null
+echo "Compiling Android Go backend..."
+env CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o flutter_ui/assets/bin/wing-backend-android-arm64 ./mobile
+popd >/dev/null
+
 pushd "$ROOT/flutter_ui" >/dev/null
 flutter pub get
 flutter build apk --release --build-name "$FLUTTER_BUILD_NAME" --build-number "$BUILD_NUMBER"
