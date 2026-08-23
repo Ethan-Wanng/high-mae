@@ -20,22 +20,25 @@ void main() async {
 Future<void> _startAndroidBackend() async {
   try {
     final docDir = await getApplicationSupportDirectory();
-    final exeFile = File('${docDir.path}/wing-backend-android-arm64');
+    final exeFile = File('${docDir.parent.path}/lib/libwing_backend.so');
     
-    // Extract if not exists or if we want to overwrite
-    final byteData = await rootBundle.load('assets/bin/wing-backend-android-arm64');
-    await exeFile.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
+    if (!await exeFile.exists()) {
+      print('Backend executable not found at ${exeFile.path}');
+      return;
+    }
     
-    // Make executable
-    await Process.run('chmod', ['+x', exeFile.path]);
+    // Make sure db directory exists
+    await docDir.create(recursive: true);
     
-    // Start backend in background
-    Process.start(exeFile.path, [], mode: ProcessStartMode.detached);
+    // Start backend in background from the native library dir to bypass W^X
+    Process.start(exeFile.path, [], mode: ProcessStartMode.detached, environment: {
+      'WING_DB_PATH': '${docDir.path}/wing.db'
+    });
     
     // Wait a bit for backend to start server
     await Future.delayed(const Duration(seconds: 1));
   } catch (e) {
-    print('Failed to start Android backend: \$e');
+    print('Failed to start Android backend: $e');
   }
 }
 
