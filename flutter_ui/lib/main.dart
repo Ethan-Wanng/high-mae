@@ -8,13 +8,23 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 const _androidDefaultWebUIURL = 'http://127.0.0.1:10809/';
 const _iosDefaultWebUIURL = 'http://127.0.0.1:10809/';
+const _vpnChannel = MethodChannel('com.highmae.wing/vpn');
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isAndroid) {
     await _startAndroidBackend();
+    _startAndroidVpn();
   }
   runApp(WingMobileApp(initialUrl: _defaultMobileWebUIURL()));
+}
+
+Future<void> _startAndroidVpn() async {
+  try {
+    await _vpnChannel.invokeMethod('startVpn');
+  } catch (e) {
+    print('Failed to request Android VPN: \$e');
+  }
 }
 
 Future<void> _startAndroidBackend() async {

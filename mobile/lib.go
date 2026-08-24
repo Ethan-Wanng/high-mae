@@ -28,6 +28,7 @@ func main() {
 	go webui.StartWebUI()
 	go proxy.StartAnyTLSHttpServer()
 	go sub.StartAutoUpdateSubscriptions()
+	proxy.StartAndroidTunListener()
 	
 	proxy.RestoreLastNetworkMode()
 

@@ -24,11 +24,22 @@ echo "Compiling Android Go backend for multiple architectures (as .so to bypass 
 mkdir -p flutter_ui/android/app/src/main/jniLibs/arm64-v8a
 env CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o flutter_ui/android/app/src/main/jniLibs/arm64-v8a/libwing_backend.so ./mobile
 
-mkdir -p flutter_ui/android/app/src/main/jniLibs/x86_64
-env CGO_ENABLED=0 GOOS=android GOARCH=amd64 go build -o flutter_ui/android/app/src/main/jniLibs/x86_64/libwing_backend.so ./mobile
-
 mkdir -p flutter_ui/android/app/src/main/jniLibs/armeabi-v7a
 env CGO_ENABLED=0 GOOS=android GOARCH=arm GOARM=7 go build -o flutter_ui/android/app/src/main/jniLibs/armeabi-v7a/libwing_backend.so ./mobile
+
+NDK_DIR="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+if [ -z "$NDK_DIR" ] && [ -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}/ndk" ]; then
+  NDK_DIR="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/ndk" -maxdepth 1 -mindepth 1 2>/dev/null | sort -V | tail -n 1 || true)"
+fi
+
+if [ -n "$NDK_DIR" ] && [ -d "$NDK_DIR" ]; then
+  CLANG_X86="$(find "$NDK_DIR/toolchains/llvm/prebuilt" -name "x86_64-linux-android*-clang" 2>/dev/null | grep -v 'clang++' | head -n 1 || true)"
+  if [ -n "$CLANG_X86" ]; then
+    echo "Compiling Android Go backend for x86_64 using NDK clang: $CLANG_X86..."
+    mkdir -p flutter_ui/android/app/src/main/jniLibs/x86_64
+    env CGO_ENABLED=1 CC="$CLANG_X86" GOOS=android GOARCH=amd64 go build -o flutter_ui/android/app/src/main/jniLibs/x86_64/libwing_backend.so ./mobile
+  fi
+fi
 
 popd >/dev/null
 
