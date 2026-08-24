@@ -451,21 +451,24 @@ func normalizeRuleType(ruleType string) string {
 
 // return value: "proxy", "direct", "reject", or specific node/group name
 func EvaluateRouting(hostPort string) string {
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		host = hostPort
+	}
+	if host == "localhost" {
+		return "direct"
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() {
+			return "direct"
+		}
+	}
 	if common.GetProxyMode() == "Global" {
 		return "proxy"
 	}
 	groups := GetRuleGroups()
 	if len(groups) == 0 {
 		groups = normalizeRuleGroups(DefaultRuleGroups())
-	}
-	host, _, err := net.SplitHostPort(hostPort)
-	if err != nil {
-		host = hostPort
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() {
-			return "direct"
-		}
 	}
 	host = strings.ToLower(host)
 	if IsStunDomain(host) {
