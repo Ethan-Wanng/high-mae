@@ -19,9 +19,17 @@ fi
 mkdir -p "$DIST"
 
 pushd "$ROOT" >/dev/null
-echo "Compiling Android Go backend (as .so to bypass W^X)..."
+echo "Compiling Android Go backend for multiple architectures (as .so to bypass W^X)..."
+
 mkdir -p flutter_ui/android/app/src/main/jniLibs/arm64-v8a
 env CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o flutter_ui/android/app/src/main/jniLibs/arm64-v8a/libwing_backend.so ./mobile
+
+mkdir -p flutter_ui/android/app/src/main/jniLibs/x86_64
+env CGO_ENABLED=0 GOOS=android GOARCH=amd64 go build -o flutter_ui/android/app/src/main/jniLibs/x86_64/libwing_backend.so ./mobile
+
+mkdir -p flutter_ui/android/app/src/main/jniLibs/armeabi-v7a
+env CGO_ENABLED=0 GOOS=android GOARCH=arm GOARM=7 go build -o flutter_ui/android/app/src/main/jniLibs/armeabi-v7a/libwing_backend.so ./mobile
+
 popd >/dev/null
 
 pushd "$ROOT/flutter_ui" >/dev/null
