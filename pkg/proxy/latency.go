@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"wing/protocol"
@@ -40,18 +41,18 @@ func defaultDomainStrategy() string {
 }
 
 func ResolveDirectWithStrategy(host string, strategy string) string {
-	// 如果为空，直接跳过
-	if host == "" {
+	cleanHost := strings.Trim(strings.TrimSpace(host), "[]")
+	if cleanHost == "" {
 		return ""
 	}
 
 	// 1. 判断是否已经是合法的 IP 地址 (IPv4 / IPv6)
-	if ip := net.ParseIP(host); ip != nil {
-		return host
+	if ip := net.ParseIP(cleanHost); ip != nil {
+		return cleanHost
 	}
 
 	// 2. 发起系统 DNS 解析
-	ips, err := net.LookupHost(host)
+	ips, err := net.LookupHost(cleanHost)
 	isFakeIP := false
 	if len(ips) > 0 {
 		if ipObj := net.ParseIP(ips[0]); ipObj != nil {
@@ -374,9 +375,26 @@ func TestNodeLatency(node protocol.Node) (int64, error) {
 	return time.Since(start).Milliseconds(), nil
 }
 
+func parseFirstPort(portStr string) int {
+	portStr = strings.TrimSpace(portStr)
+	for _, sep := range []string{"-", ":", "/", ","} {
+		if idx := strings.Index(portStr, sep); idx != -1 {
+			portStr = portStr[:idx]
+			break
+		}
+	}
+	p, _ := strconv.Atoi(strings.TrimSpace(portStr))
+	return p
+}
+
 // FastTCPPing 提供极低内存、极快速度的 TCP 握手测速，专门用于"一键测速全部节点"
 // 它不会启动任何代理内核，因此内存消耗几乎为 0，并且可以轻松绕过 TUN 网卡防止死循环
 func FastTCPPing(node protocol.Node) (int64, error) {
+	// 如果 Hysteria2 / Hy2 开启了混淆，普通裸 QUIC 包一定会被服务端丢弃，直接走完整内核握手
+	if (node.Type == "hysteria2" || node.Type == "hy2") && (node.Obfs != "" || node.ObfsPassword != "") {
+		return TestNodeLatency(node)
+	}
+
 	newIP := ResolveNodeServer(node)
 	dialHost := node.Server
 	if newIP != "" {
@@ -385,9 +403,15 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 
 	port := node.Port
 	if port <= 0 {
-		if node.PortRange != "" || node.Ports != "" || node.MPort != "" {
-			return 0, fmt.Errorf("不支持端口段测速")
+		if node.PortRange != "" {
+			port = parseFirstPort(node.PortRange)
+		} else if node.Ports != "" {
+			port = parseFirstPort(node.Ports)
+		} else if node.MPort != "" {
+			port = parseFirstPort(node.MPort)
 		}
+	}
+	if port <= 0 {
 		port = 443 // 默认回退
 	}
 	addr := net.JoinHostPort(dialHost, fmt.Sprint(port))
@@ -395,7 +419,12 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 	// 获取真实的本地 IP，绕过 TUN
 	var localAddr net.Addr
 
-	isUDP := node.Type == "hysteria2" || node.Type == "hy2" || node.Type == "wireguard" || (node.Type == "naive" && node.QUIC)
+	isUDP := node.Type == "tuic" ||
+		node.Type == "hysteria2" ||
+		node.Type == "hy2" ||
+		(node.Type == "naive" && node.QUIC) ||
+		(node.Type == "mieru" && strings.EqualFold(node.Transport, "UDP"))
+
 	network := "tcp"
 	if isUDP {
 		network = "udp"
@@ -416,15 +445,19 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 	}
 
 	dialer := &net.Dialer{
-		Timeout:   5 * time.Second,
+		Timeout:   3 * time.Second,
 		LocalAddr: localAddr,
 	}
 
 	// 🚀 核心修复：UDP 的 Dial 是无连接的，永远"成功"且延迟为 0，根本测不出连通性！
-	// 对于 Hysteria2 等基于 QUIC 的 UDP 协议，必须发一个真实的 QUIC Initial 包，
-	// 等服务器回一个 Version Negotiation / Retry / Handshake 包，才能证明对端存活。
+	// 对于 Hysteria2 / TUIC 等基于 QUIC 的 UDP 协议，先发 QUIC Initial 包探测；
+	// 若探测无回包（例如服务器开启了防探测静默丢弃，或需要特定握手），则优雅回退调用 TestNodeLatency 进行完整协议栈真实测速。
 	if isUDP {
-		return fastQUICPing(dialer, network, addr)
+		lat, err := fastQUICPing(dialer, network, addr)
+		if err == nil {
+			return lat, nil
+		}
+		return TestNodeLatency(node)
 	}
 
 	start := time.Now()
@@ -482,13 +515,13 @@ func fastQUICPing(dialer *net.Dialer, network, addr string) (int64, error) {
 	start := time.Now()
 
 	// 写出探测包
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	if _, err := conn.Write(packet); err != nil {
 		return 0, fmt.Errorf("UDP 发送失败: %w", err)
 	}
 
 	// 等待服务器回复 Version Negotiation 包
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	buf := make([]byte, 1500)
 	_, err = conn.Read(buf)
 	if err != nil {

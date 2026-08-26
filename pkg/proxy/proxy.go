@@ -211,6 +211,18 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 			ZeroRTTHandshake:  node.ReduceRTT,
 			DialerOptions:     dialerOpts,
 		}
+		if opts.ServerPort == 0 {
+			portsStr := node.Ports
+			if portsStr == "" {
+				portsStr = node.PortRange
+			}
+			if portsStr == "" {
+				portsStr = node.MPort
+			}
+			if portsStr != "" {
+				opts.ServerPort = uint16(parseFirstPort(portsStr))
+			}
+		}
 		opts.TLS = makeTLS()
 		if len(opts.TLS.ALPN) == 0 {
 			opts.TLS.ALPN = []string{"h3"}
@@ -258,6 +270,19 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 			ServerOptions: serverOpts,
 			Password:      node.Password,
 			DialerOptions: dialerOpts,
+		}
+		portsStr := node.Ports
+		if portsStr == "" {
+			portsStr = node.PortRange
+		}
+		if portsStr == "" {
+			portsStr = node.MPort
+		}
+		if portsStr != "" {
+			opts.ServerPorts = badoption.Listable[string]{portsStr}
+			if opts.ServerPort == 0 {
+				opts.ServerPort = uint16(parseFirstPort(portsStr))
+			}
 		}
 		if node.Obfs != "" {
 			opts.Obfs = &option.Hysteria2Obfs{

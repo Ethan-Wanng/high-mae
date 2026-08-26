@@ -1520,6 +1520,10 @@ func testSingleHandler(w http.ResponseWriter, r *http.Request) {
 		lat, err = testActiveProxyLatency(8 * time.Second)
 	} else {
 		lat, err = proxy.FastTCPPing(targetNode)
+		if err != nil {
+			// 二级兜底：当极速握手失败时（混淆、特殊传输、UDP反探测），调用内核真实协议栈测速
+			lat, err = proxy.TestNodeLatency(targetNode)
+		}
 	}
 	if err != nil {
 		lat = -1
@@ -1657,6 +1661,9 @@ func testActiveProxyLatency(timeout time.Duration) (int64, error) {
 	defer cancel()
 	start := time.Now()
 	conn, err := client.CreateProxy(ctx, metadata.ParseSocksaddr("www.gstatic.com:80"))
+	if err != nil {
+		conn, err = client.CreateProxy(ctx, metadata.ParseSocksaddr("cp.cloudflare.com:80"))
+	}
 	if err != nil {
 		return -1, err
 	}
@@ -1796,7 +1803,11 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 
 			nodes := parsedFiles[fileName]
 			if subIdx >= 0 && subIdx < len(nodes) {
-				lat, err := proxy.FastTCPPing(nodes[subIdx])
+				node := nodes[subIdx]
+				lat, err := proxy.FastTCPPing(node)
+				if err != nil && (node.Type == "tuic" || node.Type == "hysteria2" || node.Type == "hy2" || node.Type == "mieru") {
+					lat, err = proxy.TestNodeLatency(node)
+				}
 				if err != nil {
 					lat = -1
 				}
