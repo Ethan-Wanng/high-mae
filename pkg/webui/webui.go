@@ -1789,7 +1789,7 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 50)
+	sem := make(chan struct{}, 20)
 
 	for _, gNode := range nodesToTest {
 		wg.Add(1)
@@ -1805,7 +1805,9 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 			if subIdx >= 0 && subIdx < len(nodes) {
 				node := nodes[subIdx]
 				lat, err := proxy.FastTCPPing(node)
-				if err != nil && (node.Type == "tuic" || node.Type == "hysteria2" || node.Type == "hy2" || node.Type == "mieru") {
+				if err != nil {
+					// 二级兜底：FastTCPPing 失败时（DNS 污染、CDN 伪连、特殊协议），
+					// 调用内核真实协议栈测速
 					lat, err = proxy.TestNodeLatency(node)
 				}
 				if err != nil {
