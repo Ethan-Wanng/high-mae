@@ -15,6 +15,8 @@ env:
   WING_VERSION: "1.0.6.1"
   FLUTTER_VERSION: "3.29.2"
   FLUTTER_BUILD_NUMBER: "10061"
+  GOPROXY: "https://proxy.golang.org,direct"
+  GONOSUMDB: "github.com/sagernet/*"
 
 jobs:
   windows:
