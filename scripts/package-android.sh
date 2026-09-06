@@ -40,7 +40,7 @@ if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
 fi
 
 echo "Found Android NDK at: $NDK_DIR"
-LLVM_BIN="$(find "$NDK_DIR/toolchains/llvm/prebuilt" -type d -name "bin" 2>/dev/null | head -n 1 || true)"
+LLVM_BIN="$(find "$NDK_DIR/toolchains/llvm/prebuilt" -mindepth 2 -maxdepth 2 -type d -name "bin" 2>/dev/null | head -n 1 || true)"
 if [ -z "$LLVM_BIN" ] || [ ! -d "$LLVM_BIN" ]; then
   echo "Android NDK LLVM toolchain was not found." >&2
   exit 1
