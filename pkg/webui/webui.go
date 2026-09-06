@@ -31,7 +31,6 @@ import (
 	"wing/pkg/utils"
 	"wing/protocol"
 
-	"github.com/getlantern/systray"
 	"github.com/sagernet/sing/common/metadata"
 	"github.com/skip2/go-qrcode"
 )
@@ -2485,7 +2484,7 @@ func scheduleExitAfterAdminRestart(name string) {
 func scheduleExitAfterRestart(name string) {
 	utils.SafeGo(name, func() {
 		time.Sleep(500 * time.Millisecond)
-		systray.Quit()
+		quitApplication()
 	})
 }
 

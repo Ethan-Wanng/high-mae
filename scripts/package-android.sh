@@ -26,27 +26,25 @@ echo "Building arm64-v8a backend..."
 mkdir -p flutter_ui/android/app/src/main/jniLibs/arm64-v8a
 env CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o flutter_ui/android/app/src/main/jniLibs/arm64-v8a/libwing_backend.so ./mobile
 
-# 2. Check for Android NDK to compile other architectures
+# 2. Android/amd64 and Android/arm require external linking. The Android build
+# excludes desktop systray code, so the NDK is used only as the target linker.
 NDK_DIR="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-${ANDROID_NDK_LATEST_HOME:-}}}"
 if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
-  if [ -d "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}/ndk" ]; then
-    NDK_DIR="$(find "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}/ndk" -maxdepth 1 -mindepth 1 2>/dev/null | sort -V | tail -n 1 || true)"
+  SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+  if [ -d "$SDK_DIR/ndk" ]; then
+    NDK_DIR="$(find "$SDK_DIR/ndk" -maxdepth 1 -mindepth 1 2>/dev/null | sort -V | tail -n 1 || true)"
   fi
 fi
-
 if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
-  echo "Android NDK is required for a universal APK (x86_64 and armeabi-v7a backends)." >&2
+  echo "Android NDK is required for x86_64 and armeabi-v7a backends." >&2
   exit 1
 fi
-
-echo "Found Android NDK at: $NDK_DIR"
 LLVM_BIN="$(find "$NDK_DIR/toolchains/llvm/prebuilt" -mindepth 2 -maxdepth 2 -type d -name "bin" 2>/dev/null | head -n 1 || true)"
 if [ -z "$LLVM_BIN" ] || [ ! -d "$LLVM_BIN" ]; then
   echo "Android NDK LLVM toolchain was not found." >&2
   exit 1
 fi
 
-# x86_64 is required for common Android emulators.
 CLANG_X86="$(find "$LLVM_BIN" -name "x86_64-linux-android*-clang" 2>/dev/null | grep -v 'clang++' | head -n 1 || true)"
 if [ -z "$CLANG_X86" ]; then
   echo "Android NDK x86_64 compiler was not found." >&2
@@ -56,7 +54,6 @@ echo "Building x86_64 backend with NDK: $CLANG_X86..."
 mkdir -p flutter_ui/android/app/src/main/jniLibs/x86_64
 env CGO_ENABLED=1 CC="$CLANG_X86" GOOS=android GOARCH=amd64 go build -o flutter_ui/android/app/src/main/jniLibs/x86_64/libwing_backend.so ./mobile
 
-# armeabi-v7a keeps compatibility with older 32-bit ARM devices.
 CLANG_ARM="$(find "$LLVM_BIN" -name "armv7a-linux-androideabi*-clang" 2>/dev/null | grep -v 'clang++' | head -n 1 || true)"
 if [ -z "$CLANG_ARM" ]; then
   echo "Android NDK armeabi-v7a compiler was not found." >&2
