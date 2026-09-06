@@ -502,7 +502,7 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 							}
 
 							parent.SetTitle(fmt.Sprintf("[%s] %s - 测速中...", strings.ToUpper(nd.Type), nd.Name))
-							latency, err := proxy.FastTCPPing(nd)
+							latency, err := proxy.MeasureNodeLatency(nd)
 							if err != nil {
 								parent.SetTitle(fmt.Sprintf("[%s] %s - ❌ 失败", strings.ToUpper(nd.Type), nd.Name))
 							} else {
@@ -750,17 +750,11 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 		return nil, nil, fmt.Errorf("出于安全原因，默认拒绝明文 HTTP 订阅；请改用 HTTPS")
 	}
 	if isRemoteSubscription(input) {
-		userAgents := []string{
-			"wing/1.0",
-			"ClashMeta",
-			"Clash.Meta",
-			"Clash",
-			"clash-verge/v2.0",
-			"sing-box",
-			"Shadowrocket",
-			"Karing/2.0.0",
-			"Mihomo/1.18.3",
-		}
+		// Most providers expose their richest variants to Karing or Clash Meta.
+		// Probe only those two in parallel to avoid hammering providers (and being
+		// rate-limited), then use a short compatibility fallback list on failure.
+		primaryUserAgents := []string{"Karing/2.0.0", "ClashMeta"}
+		fallbackUserAgents := []string{"sing-box", "Shadowrocket", "wing/1.0"}
 		type parseResult struct {
 			nodes   []protocol.Node
 			traffic *SubscriptionTraffic
@@ -768,32 +762,30 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		results := make(chan parseResult, len(userAgents))
-		for _, userAgent := range userAgents {
+		parseWithUserAgent := func(userAgent string) parseResult {
+			info, infoErr := protocol.LoadInputWithUserAgentInfoContext(ctx, input, userAgent)
+			if infoErr != nil {
+				return parseResult{err: infoErr}
+			}
+			currentTraffic := ParseSubscriptionTraffic(info.Headers)
+			parsed, parseErr := protocol.ParseSubscriptionRaw(info.Body)
+			return parseResult{nodes: parsed, traffic: currentTraffic, err: parseErr}
+		}
+
+		results := make(chan parseResult, len(primaryUserAgents))
+		for _, userAgent := range primaryUserAgents {
 			ua := userAgent
 			utils.SafeGo("parse subscription "+ua, func() {
-				info, infoErr := protocol.LoadInputWithUserAgentInfoContext(ctx, input, ua)
-				if infoErr != nil {
-					results <- parseResult{err: infoErr}
-					return
-				}
-
-				currentTraffic := ParseSubscriptionTraffic(info.Headers)
-
-				parsed, parseErr := protocol.ParseSubscriptionRaw(info.Body)
-				if parseErr != nil {
-					results <- parseResult{err: parseErr}
-					return
-				}
-				results <- parseResult{nodes: parsed, traffic: currentTraffic}
+				results <- parseWithUserAgent(ua)
 			})
 		}
 
 		var bestNodes []protocol.Node
 		var bestTraffic *SubscriptionTraffic
 		var firstErr error
+		var settleTimer *time.Timer
 		var settle <-chan time.Time
-		for i := 0; i < len(userAgents); i++ {
+		for i := 0; i < len(primaryUserAgents); i++ {
 			select {
 			case result := <-results:
 				if result.err != nil {
@@ -804,20 +796,41 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 				}
 				if len(result.nodes) > len(bestNodes) {
 					bestNodes = result.nodes
-					if result.traffic != nil {
-						bestTraffic = result.traffic
-					}
+					bestTraffic = result.traffic
+				} else if len(result.nodes) == len(bestNodes) && bestTraffic == nil && result.traffic != nil {
+					bestTraffic = result.traffic
 				}
 				if len(bestNodes) > 0 && settle == nil {
-					settle = time.After(2 * time.Second)
+					settleTimer = time.NewTimer(350 * time.Millisecond)
+					settle = settleTimer.C
 				}
 			case <-settle:
-				i = len(userAgents)
+				i = len(primaryUserAgents)
 			case <-ctx.Done():
 				if firstErr == nil {
 					firstErr = ctx.Err()
 				}
-				i = len(userAgents)
+				i = len(primaryUserAgents)
+			}
+		}
+		if settleTimer != nil {
+			settleTimer.Stop()
+		}
+
+		if len(bestNodes) == 0 {
+			for _, userAgent := range fallbackUserAgents {
+				result := parseWithUserAgent(userAgent)
+				if result.err != nil {
+					if firstErr == nil {
+						firstErr = result.err
+					}
+					continue
+				}
+				if len(result.nodes) > 0 {
+					bestNodes = result.nodes
+					bestTraffic = result.traffic
+					break
+				}
 			}
 		}
 

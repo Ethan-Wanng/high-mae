@@ -52,7 +52,9 @@ func ResolveDirectWithStrategy(host string, strategy string) string {
 	}
 
 	// 2. 发起系统 DNS 解析
-	ips, err := net.LookupHost(cleanHost)
+	lookupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupHost(lookupCtx, cleanHost)
 	isFakeIP := false
 	if len(ips) > 0 {
 		if ipObj := net.ParseIP(ips[0]); ipObj != nil {
@@ -284,7 +286,7 @@ func CreateTempHTTPClient(node protocol.Node) (*http.Client, func(), error) {
 	// 直接组装成原生 HTTP Client 返回
 	httpClient := &http.Client{
 		Transport: tr,
-		Timeout:   30 * time.Second,
+		Timeout:   10 * time.Second,
 	}
 
 	finalCleanup := func() {
@@ -387,12 +389,36 @@ func parseFirstPort(portStr string) int {
 	return p
 }
 
-// FastTCPPing 提供极低内存、极快速度的 TCP 握手测速，专门用于"一键测速全部节点"
-// 它不会启动任何代理内核，因此内存消耗几乎为 0，并且可以轻松绕过 TUN 网卡防止死循环
-func FastTCPPing(node protocol.Node) (int64, error) {
-	// 如果 Hysteria2 / Hy2 开启了混淆，普通裸 QUIC 包一定会被服务端丢弃，直接走完整内核握手
-	if (node.Type == "hysteria2" || node.Type == "hy2") && (node.Obfs != "" || node.ObfsPassword != "") {
+func requiresFullLatencyProbe(node protocol.Node) bool {
+	return (node.Type == "hysteria2" || node.Type == "hy2") &&
+		(node.Obfs != "" || node.ObfsPassword != "")
+}
+
+func isUDPNode(node protocol.Node) bool {
+	return node.Type == "tuic" ||
+		node.Type == "hysteria2" ||
+		node.Type == "hy2" ||
+		(node.Type == "naive" && node.QUIC) ||
+		(node.Type == "mieru" && strings.EqualFold(node.Transport, "UDP"))
+}
+
+// MeasureNodeLatency performs at most one full protocol probe.
+func MeasureNodeLatency(node protocol.Node) (int64, error) {
+	if requiresFullLatencyProbe(node) {
 		return TestNodeLatency(node)
+	}
+	latency, err := FastTCPPing(node)
+	if err == nil {
+		return latency, nil
+	}
+	return TestNodeLatency(node)
+}
+
+// FastTCPPing provides a low-overhead TCP/QUIC reachability probe. Call
+// MeasureNodeLatency when a full protocol fallback is desired.
+func FastTCPPing(node protocol.Node) (int64, error) {
+	if requiresFullLatencyProbe(node) {
+		return 0, fmt.Errorf("protocol-aware latency probe required")
 	}
 
 	newIP := ResolveNodeServer(node)
@@ -419,11 +445,7 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 	// 获取真实的本地 IP，绕过 TUN
 	var localAddr net.Addr
 
-	isUDP := node.Type == "tuic" ||
-		node.Type == "hysteria2" ||
-		node.Type == "hy2" ||
-		(node.Type == "naive" && node.QUIC) ||
-		(node.Type == "mieru" && strings.EqualFold(node.Transport, "UDP"))
+	isUDP := isUDPNode(node)
 
 	network := "tcp"
 	if isUDP {
@@ -451,13 +473,9 @@ func FastTCPPing(node protocol.Node) (int64, error) {
 
 	// 🚀 核心修复：UDP 的 Dial 是无连接的，永远"成功"且延迟为 0，根本测不出连通性！
 	// 对于 Hysteria2 / TUIC 等基于 QUIC 的 UDP 协议，先发 QUIC Initial 包探测；
-	// 若探测无回包（例如服务器开启了防探测静默丢弃，或需要特定握手），则优雅回退调用 TestNodeLatency 进行完整协议栈真实测速。
+	// A protocol-aware caller can fall back to a full handshake if no packet returns.
 	if isUDP {
-		lat, err := fastQUICPing(dialer, network, addr)
-		if err == nil {
-			return lat, nil
-		}
-		return TestNodeLatency(node)
+		return fastQUICPing(dialer, network, addr)
 	}
 
 	start := time.Now()

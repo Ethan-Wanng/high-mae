@@ -1687,6 +1687,34 @@ async function importSubscription(button = null) {
     }
 }
 
+let wingNativeRequestID = 0;
+const wingNativeRequests = new Map();
+
+window.__wingNativeResolve = function(response) {
+    const pending = wingNativeRequests.get(response?.id);
+    if (!pending) return;
+    wingNativeRequests.delete(response.id);
+    clearTimeout(pending.timeout);
+    pending.resolve(response);
+};
+
+function hasLocalAndroidVPNBridge() {
+    return !!window.WingNative && ['127.0.0.1', 'localhost', '::1'].includes(window.location.hostname);
+}
+
+function setNativeVPNEnabled(enabled) {
+    if (!hasLocalAndroidVPNBridge()) return Promise.resolve({ ok: true, skipped: true });
+    const id = ++wingNativeRequestID;
+    return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+            wingNativeRequests.delete(id);
+            resolve({ ok: false, error: 'Android VPN operation timed out' });
+        }, 20000);
+        wingNativeRequests.set(id, { resolve, timeout });
+        window.WingNative.postMessage(JSON.stringify({ id, type: 'setVpn', enabled: !!enabled }));
+    });
+}
+
 async function doAction(type, desiredState = null, options = {}) {
     if (options.signal?.aborted) {
         return { ok: false, aborted: true };
@@ -1704,7 +1732,21 @@ async function doAction(type, desiredState = null, options = {}) {
     }
     const modeActionTimeoutMs = (type === 'proxy' || type === 'tun' || type === 'tunnel') ? 30000 : 8000;
     const timeout = setTimeout(abortRequest, modeActionTimeoutMs);
+    let nativeVPNChanged = false;
+    let nativeVPNTarget = false;
     try {
+        if ((type === 'tun' || type === 'tunnel') && hasLocalAndroidVPNBridge()) {
+            nativeVPNTarget = typeof desiredState === 'boolean'
+                ? desiredState
+                : !currentProxyTunStatus().tun;
+            const nativeResult = await setNativeVPNEnabled(nativeVPNTarget);
+            if (!nativeResult?.ok) {
+                const message = nativeResult?.error || '未获得 Android VPN 权限。';
+                if (!options.silent) showToast(message, 'error');
+                return { ok: false, error: message };
+            }
+            nativeVPNChanged = true;
+        }
         const params = new URLSearchParams({ type });
         if (typeof desiredState === 'boolean') {
             params.set('enable', desiredState ? 'true' : 'false');
@@ -1722,6 +1764,9 @@ async function doAction(type, desiredState = null, options = {}) {
         }
         return data;
     } catch(e) {
+        if (nativeVPNChanged) {
+            await setNativeVPNEnabled(!nativeVPNTarget);
+        }
         if (options.signal?.aborted) {
             return { ok: false, aborted: true };
         }

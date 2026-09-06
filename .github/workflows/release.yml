@@ -12,9 +12,9 @@ permissions:
   contents: write
 
 env:
-  WING_VERSION: "1.0.6.1"
+  WING_VERSION: "1.0.6.2"
   FLUTTER_VERSION: "3.29.2"
-  FLUTTER_BUILD_NUMBER: "10061"
+  FLUTTER_BUILD_NUMBER: "10062"
   GOPROXY: "https://proxy.golang.org,direct"
   GONOSUMDB: "github.com/sagernet/*"
 
@@ -121,6 +121,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -192,6 +197,10 @@ jobs:
             - iOS: wing-${{ env.WING_VERSION }}-ios-unsigned.ipa
 
             Notes:
+            - Android now bundles the Go backend and uses native VpnService/TUN FD handoff instead of depending on an external desktop backend.
+            - Subscription parsing covers Hysteria2 port hopping plus VLESS WebSocket, Reality, and TLS variants; the supplied 62-node profile is fully parsed.
+            - Subscription refresh and latency probing use fewer redundant requests and bounded fallback timeouts.
+            - The repository is licensed under the MIT License.
             - The iOS IPA is unsigned and must be signed with an Apple Developer certificate before device distribution.
           files: artifacts/*
           overwrite_files: true

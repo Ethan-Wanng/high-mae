@@ -30,59 +30,60 @@ type RealityOpts struct {
 }
 
 type Node struct {
-	Type                string            `yaml:"type"`
-	Name                string            `yaml:"name"`
-	Server              string            `yaml:"server"`
-	Port                int               `yaml:"port"`
-	PortRange           string            `yaml:"port-range,omitempty"`
-	Ports               string            `yaml:"ports,omitempty"`
-	MPort               string            `yaml:"mport,omitempty"`
-	UUID                string            `yaml:"uuid"`
-	Username            string            `yaml:"username,omitempty"`
-	Password            string            `yaml:"password"`
-	HashedPassword      string            `yaml:"hashed-password,omitempty"`
-	Method              string            `yaml:"method,omitempty"`
-	SNI                 string            `yaml:"sni,omitempty"`
-	ALPN                []string          `yaml:"alpn"`
-	SkipCertVerify      bool              `yaml:"skip-cert-verify,omitempty"`
-	Insecure            bool              `yaml:"insecure,omitempty"`       // Clash 常用
-	AllowInsecure       bool              `yaml:"allow-insecure,omitempty"` // Clash 常用
-	DisableSNI          bool              `yaml:"disable-sni,omitempty"`
-	ReduceRTT           bool              `yaml:"reduce-rtt,omitempty"`
-	CongestionControl   string            `yaml:"congestion-control,omitempty"`
-	UDPRelayMode        string            `yaml:"udp-relay-mode,omitempty"`
-	ClientFingerprint   string            `yaml:"client-fingerprint,omitempty"`
-	UDP                 bool              `yaml:"udp,omitempty"`
-	TFO                 bool              `yaml:"tfo,omitempty"`
-	TLS                 bool              `yaml:"tls,omitempty"` // 统一使用 TLS 字段
-	Tls                 bool              `yaml:"-"`             // 兼容旧版，解析时忽略
-	AlterId             int               `yaml:"alterId,omitempty"`
-	Cipher              string            `yaml:"cipher,omitempty"`
-	Network             string            `yaml:"network,omitempty"`
-	Host                string            `yaml:"host,omitempty"`
-	WSPath              string            `yaml:"ws-path,omitempty"`
-	WSHeaders           map[string]string `yaml:"ws-headers,omitempty"`
-	WSOpts              WSOpts            `yaml:"ws-opts,omitempty"`
-	Flow                string            `yaml:"flow,omitempty"`
-	ServerName          string            `yaml:"servername,omitempty"` // VLESS 专用 SNI 别名
-	RealityOpts         *RealityOpts      `yaml:"reality-opts,omitempty"`
-	GrpcOpts            map[string]string `yaml:"grpc-opts,omitempty"`
-	Transport           string            `yaml:"transport,omitempty"`
-	Mtu                 int               `yaml:"mtu,omitempty"`
-	Multiplexing        string            `yaml:"multiplexing,omitempty"`
-	HandshakeMode       string            `yaml:"handshake-mode,omitempty"`
-	TrafficPattern      string            `yaml:"traffic-pattern,omitempty"`
-	DomainStrategy      string            `yaml:"domain-strategy,omitempty"`
-	QUIC                bool              `yaml:"quic,omitempty"`
-	QUICCongestion      string            `yaml:"quic-congestion-control,omitempty"`
-	InsecureConcurrency int               `yaml:"insecure-concurrency,omitempty"`
-	ExtraHeaders        map[string]string `yaml:"extra-headers,omitempty"`
-	Group               string            `yaml:"group,omitempty"`
-	Obfs                string            `yaml:"obfs,omitempty"`
-	ObfsPassword        string            `yaml:"obfs-password,omitempty"`
-	SourceFile          string            `yaml:"source-file,omitempty"`
-	SourceKey           string            `yaml:"source-key,omitempty"`
-	SourceName          string            `yaml:"source-name,omitempty"`
+	Type                   string            `yaml:"type"`
+	Name                   string            `yaml:"name"`
+	Server                 string            `yaml:"server"`
+	Port                   int               `yaml:"port"`
+	PortRange              string            `yaml:"port-range,omitempty"`
+	Ports                  string            `yaml:"ports,omitempty"`
+	MPort                  string            `yaml:"mport,omitempty"`
+	UUID                   string            `yaml:"uuid"`
+	Username               string            `yaml:"username,omitempty"`
+	Password               string            `yaml:"password"`
+	HashedPassword         string            `yaml:"hashed-password,omitempty"`
+	Method                 string            `yaml:"method,omitempty"`
+	SNI                    string            `yaml:"sni,omitempty"`
+	ALPN                   []string          `yaml:"alpn"`
+	SkipCertVerify         bool              `yaml:"skip-cert-verify,omitempty"`
+	Insecure               bool              `yaml:"insecure,omitempty"`       // Clash 常用
+	AllowInsecure          bool              `yaml:"allow-insecure,omitempty"` // Clash 常用
+	DisableSNI             bool              `yaml:"disable-sni,omitempty"`
+	ReduceRTT              bool              `yaml:"reduce-rtt,omitempty"`
+	CongestionControl      string            `yaml:"congestion-control,omitempty"`
+	UDPRelayMode           string            `yaml:"udp-relay-mode,omitempty"`
+	ClientFingerprint      string            `yaml:"client-fingerprint,omitempty"`
+	CertificateFingerprint string            `yaml:"fingerprint,omitempty"`
+	UDP                    bool              `yaml:"udp,omitempty"`
+	TFO                    bool              `yaml:"tfo,omitempty"`
+	TLS                    bool              `yaml:"tls,omitempty"` // 统一使用 TLS 字段
+	Tls                    bool              `yaml:"-"`             // 兼容旧版，解析时忽略
+	AlterId                int               `yaml:"alterId,omitempty"`
+	Cipher                 string            `yaml:"cipher,omitempty"`
+	Network                string            `yaml:"network,omitempty"`
+	Host                   string            `yaml:"host,omitempty"`
+	WSPath                 string            `yaml:"ws-path,omitempty"`
+	WSHeaders              map[string]string `yaml:"ws-headers,omitempty"`
+	WSOpts                 WSOpts            `yaml:"ws-opts,omitempty"`
+	Flow                   string            `yaml:"flow,omitempty"`
+	ServerName             string            `yaml:"servername,omitempty"` // VLESS 专用 SNI 别名
+	RealityOpts            *RealityOpts      `yaml:"reality-opts,omitempty"`
+	GrpcOpts               map[string]string `yaml:"grpc-opts,omitempty"`
+	Transport              string            `yaml:"transport,omitempty"`
+	Mtu                    int               `yaml:"mtu,omitempty"`
+	Multiplexing           string            `yaml:"multiplexing,omitempty"`
+	HandshakeMode          string            `yaml:"handshake-mode,omitempty"`
+	TrafficPattern         string            `yaml:"traffic-pattern,omitempty"`
+	DomainStrategy         string            `yaml:"domain-strategy,omitempty"`
+	QUIC                   bool              `yaml:"quic,omitempty"`
+	QUICCongestion         string            `yaml:"quic-congestion-control,omitempty"`
+	InsecureConcurrency    int               `yaml:"insecure-concurrency,omitempty"`
+	ExtraHeaders           map[string]string `yaml:"extra-headers,omitempty"`
+	Group                  string            `yaml:"group,omitempty"`
+	Obfs                   string            `yaml:"obfs,omitempty"`
+	ObfsPassword           string            `yaml:"obfs-password,omitempty"`
+	SourceFile             string            `yaml:"source-file,omitempty"`
+	SourceKey              string            `yaml:"source-key,omitempty"`
+	SourceName             string            `yaml:"source-name,omitempty"`
 }
 
 const (
