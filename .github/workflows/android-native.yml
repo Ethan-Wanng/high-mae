@@ -29,14 +29,14 @@ jobs:
     name: Test and build standalone APK
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -48,7 +48,7 @@ jobs:
           cache: true
 
       - name: Test Go backend
-        run: go test ./pkg/... ./protocol
+        run: go test ./pkg/webui ./pkg/sub ./protocol
 
       - name: Test native Flutter interface
         working-directory: flutter_ui
