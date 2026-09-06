@@ -34,6 +34,8 @@ android {
         jniLibs {
             // The Go backend is launched as a packaged native executable.
             useLegacyPackaging = true
+            // Stripping an executable that merely uses a .so filename can corrupt it.
+            keepDebugSymbols += "**/libwing_backend.so"
         }
     }
 

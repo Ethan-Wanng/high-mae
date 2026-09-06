@@ -34,27 +34,37 @@ if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
   fi
 fi
 
-if [ -n "$NDK_DIR" ] && [ -d "$NDK_DIR" ]; then
-  echo "Found Android NDK at: $NDK_DIR"
-  LLVM_BIN="$(find "$NDK_DIR/toolchains/llvm/prebuilt" -type d -name "bin" 2>/dev/null | head -n 1 || true)"
-  if [ -n "$LLVM_BIN" ] && [ -d "$LLVM_BIN" ]; then
-    # x86_64 (for emulators like LDPlayer / Thunder)
-    CLANG_X86="$(find "$LLVM_BIN" -name "x86_64-linux-android*-clang" 2>/dev/null | grep -v 'clang++' | head -n 1 || true)"
-    if [ -n "$CLANG_X86" ]; then
-      echo "Building x86_64 backend with NDK: $CLANG_X86..."
-      mkdir -p flutter_ui/android/app/src/main/jniLibs/x86_64
-      env CGO_ENABLED=1 CC="$CLANG_X86" GOOS=android GOARCH=amd64 go build -o flutter_ui/android/app/src/main/jniLibs/x86_64/libwing_backend.so ./mobile
-    fi
-
-    # armeabi-v7a (32-bit ARM)
-    CLANG_ARM="$(find "$LLVM_BIN" -name "armv7a-linux-androideabi*-clang" 2>/dev/null | grep -v 'clang++' | head -n 1 || true)"
-    if [ -n "$CLANG_ARM" ]; then
-      echo "Building armeabi-v7a backend with NDK: $CLANG_ARM..."
-      mkdir -p flutter_ui/android/app/src/main/jniLibs/armeabi-v7a
-      env CGO_ENABLED=1 CC="$CLANG_ARM" GOOS=android GOARCH=arm GOARM=7 go build -o flutter_ui/android/app/src/main/jniLibs/armeabi-v7a/libwing_backend.so ./mobile
-    fi
-  fi
+if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
+  echo "Android NDK is required for a universal APK (x86_64 and armeabi-v7a backends)." >&2
+  exit 1
 fi
+
+echo "Found Android NDK at: $NDK_DIR"
+LLVM_BIN="$(find "$NDK_DIR/toolchains/llvm/prebuilt" -type d -name "bin" 2>/dev/null | head -n 1 || true)"
+if [ -z "$LLVM_BIN" ] || [ ! -d "$LLVM_BIN" ]; then
+  echo "Android NDK LLVM toolchain was not found." >&2
+  exit 1
+fi
+
+# x86_64 is required for common Android emulators.
+CLANG_X86="$(find "$LLVM_BIN" -name "x86_64-linux-android*-clang" 2>/dev/null | grep -v 'clang++' | head -n 1 || true)"
+if [ -z "$CLANG_X86" ]; then
+  echo "Android NDK x86_64 compiler was not found." >&2
+  exit 1
+fi
+echo "Building x86_64 backend with NDK: $CLANG_X86..."
+mkdir -p flutter_ui/android/app/src/main/jniLibs/x86_64
+env CGO_ENABLED=1 CC="$CLANG_X86" GOOS=android GOARCH=amd64 go build -o flutter_ui/android/app/src/main/jniLibs/x86_64/libwing_backend.so ./mobile
+
+# armeabi-v7a keeps compatibility with older 32-bit ARM devices.
+CLANG_ARM="$(find "$LLVM_BIN" -name "armv7a-linux-androideabi*-clang" 2>/dev/null | grep -v 'clang++' | head -n 1 || true)"
+if [ -z "$CLANG_ARM" ]; then
+  echo "Android NDK armeabi-v7a compiler was not found." >&2
+  exit 1
+fi
+echo "Building armeabi-v7a backend with NDK: $CLANG_ARM..."
+mkdir -p flutter_ui/android/app/src/main/jniLibs/armeabi-v7a
+env CGO_ENABLED=1 CC="$CLANG_ARM" GOOS=android GOARCH=arm GOARM=7 go build -o flutter_ui/android/app/src/main/jniLibs/armeabi-v7a/libwing_backend.so ./mobile
 
 popd >/dev/null
 

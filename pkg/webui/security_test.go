@@ -89,6 +89,42 @@ func TestLocalAPIHandlerAllowsTrustedWebUIRequests(t *testing.T) {
 	}
 }
 
+func TestLocalAPIHandlerAllowsAuthenticatedLoopbackMobileRequests(t *testing.T) {
+	t.Setenv(mobileAPITokenEnv, "native-test-token")
+	handler := localAPIHandler(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:10809/api/status", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set(mobileAPITokenHeader, "native-test-token")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected authenticated mobile request through, got %d", rr.Code)
+	}
+}
+
+func TestLocalAPIHandlerRejectsRemoteMobileRequests(t *testing.T) {
+	t.Setenv(mobileAPITokenEnv, "native-test-token")
+	handler := localAPIHandler(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:10809/api/status", nil)
+	req.RemoteAddr = "192.168.1.50:54321"
+	req.Header.Set(mobileAPITokenHeader, "native-test-token")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected non-loopback mobile request to be blocked, got %d", rr.Code)
+	}
+}
+
 func TestRenderIndexHTMLInjectsAPIToken(t *testing.T) {
 	page := renderIndexHTML()
 	if !strings.Contains(page, `name="wing-api-token"`) || !strings.Contains(page, apiRequestToken) {

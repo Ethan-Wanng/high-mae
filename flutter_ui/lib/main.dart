@@ -1,91 +1,22 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-const _androidDefaultWebUIURL = 'http://127.0.0.1:10809/';
-const _iosDefaultWebUIURL = 'http://127.0.0.1:10809/';
-const _vpnChannel = MethodChannel('com.highmae.wing/vpn');
+import 'android_app.dart';
 
-void main() async {
+const _iosDefaultWebUIURL = 'http://127.0.0.1:10809/';
+
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isAndroid) {
-    await _startAndroidBackend();
+    runApp(const WingAndroidBootstrap());
+    return;
   }
   runApp(WingMobileApp(initialUrl: _defaultMobileWebUIURL()));
 }
 
-Future<bool> _setAndroidVpn(bool enabled) async {
-  try {
-    final result = await _vpnChannel.invokeMethod<bool>(
-      enabled ? 'startVpn' : 'stopVpn',
-    );
-    return result ?? false;
-  } catch (e) {
-    debugPrint('Failed to change Android VPN state: $e');
-    return false;
-  }
-}
-
-Future<void> _startAndroidBackend() async {
-  try {
-    final backendPath = await _vpnChannel.invokeMethod<String>('getBackendPath');
-    final dataPath = await _vpnChannel.invokeMethod<String>('getDataDirectory');
-    final exeFile = backendPath == null ? null : File(backendPath);
-
-    if (await _isBackendReady()) return;
-    if (exeFile == null) {
-      debugPrint('Android backend path is unavailable');
-      return;
-    }
-    if (!await exeFile.exists()) {
-      debugPrint('Backend executable not found at ${exeFile.path}');
-      return;
-    }
-
-    if (dataPath == null) {
-      debugPrint('Android data directory is unavailable');
-      return;
-    }
-    final dataDir = Directory(dataPath);
-    await dataDir.create(recursive: true);
-
-    await Process.start(
-      exeFile.path,
-      const [],
-      mode: ProcessStartMode.detached,
-      environment: {'WING_DB_PATH': '${dataDir.path}/wing.db'},
-    );
-
-    for (var attempt = 0; attempt < 40; attempt++) {
-      if (await _isBackendReady()) return;
-      await Future.delayed(const Duration(milliseconds: 125));
-    }
-    debugPrint('Android backend did not become ready within 5 seconds');
-  } catch (e) {
-    debugPrint('Failed to start Android backend: $e');
-  }
-}
-
-Future<bool> _isBackendReady() async {
-  final client = HttpClient()..connectionTimeout = const Duration(milliseconds: 350);
-  try {
-    final request = await client.getUrl(Uri.parse('http://127.0.0.1:10809/healthz'));
-    final response = await request.close().timeout(const Duration(milliseconds: 500));
-    await response.drain<void>();
-    return response.statusCode == HttpStatus.ok;
-  } catch (_) {
-    return false;
-  } finally {
-    client.close(force: true);
-  }
-}
-
 String _defaultMobileWebUIURL() {
-  if (Platform.isAndroid) return _androidDefaultWebUIURL;
   return _iosDefaultWebUIURL;
 }
 
@@ -150,10 +81,6 @@ class _WingWebViewState extends State<WingWebView> {
         WebViewController()
           ..setJavaScriptMode(JavaScriptMode.unrestricted)
           ..setBackgroundColor(const Color(0xFF111827))
-          ..addJavaScriptChannel(
-            'WingNative',
-            onMessageReceived: _handleNativeMessage,
-          )
           ..setNavigationDelegate(
             NavigationDelegate(
               onNavigationRequest: (request) {
@@ -201,29 +128,6 @@ class _WingWebViewState extends State<WingWebView> {
           );
     _controller = controller;
     return controller;
-  }
-
-  Future<void> _handleNativeMessage(JavaScriptMessage message) async {
-    if (!Platform.isAndroid) return;
-    Object? id;
-    var ok = false;
-    String? error;
-    try {
-      final request = jsonDecode(message.message) as Map<String, dynamic>;
-      id = request['id'];
-      if (request['type'] != 'setVpn' || request['enabled'] is! bool) {
-        throw const FormatException('unsupported native request');
-      }
-      ok = await _setAndroidVpn(request['enabled'] as bool);
-      if (!ok) error = 'VPN permission was not granted';
-    } catch (e) {
-      error = e.toString();
-    }
-
-    final payload = jsonEncode({'id': id, 'ok': ok, 'error': error});
-    await _controller?.runJavaScript(
-      'window.__wingNativeResolve && window.__wingNativeResolve($payload);',
-    );
   }
 
   Future<void> _openWebUI() async {

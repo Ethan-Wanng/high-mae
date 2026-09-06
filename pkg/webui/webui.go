@@ -218,6 +218,8 @@ const (
 	apiRequestHeader      = "X-Wing-Request"
 	apiRequestHeaderValue = "webui"
 	apiRequestTokenHeader = "X-Wing-Token"
+	mobileAPITokenHeader  = "X-Wing-Mobile-Token"
+	mobileAPITokenEnv     = "WING_MOBILE_API_TOKEN"
 	smallJSONBodyLimit    = 64 * 1024
 	defaultJSONBodyLimit  = 1 << 20
 	largeJSONBodyLimit    = 8 << 20
@@ -261,8 +263,28 @@ func isTrustedLocalAPIRequest(r *http.Request) bool {
 	if referer := strings.TrimSpace(r.Header.Get("Referer")); referer != "" && !isTrustedWebUIOrigin(referer) {
 		return false
 	}
+	if isTrustedMobileAPIRequest(r) {
+		return true
+	}
 	return constantTimeHeaderEqual(r, apiRequestHeader, apiRequestHeaderValue) &&
 		constantTimeHeaderEqual(r, apiRequestTokenHeader, apiRequestToken)
+}
+
+func isTrustedMobileAPIRequest(r *http.Request) bool {
+	want := strings.TrimSpace(os.Getenv(mobileAPITokenEnv))
+	if want == "" || !isLoopbackRemoteAddr(r.RemoteAddr) {
+		return false
+	}
+	return constantTimeHeaderEqual(r, mobileAPITokenHeader, want)
+}
+
+func isLoopbackRemoteAddr(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func constantTimeHeaderEqual(r *http.Request, name, want string) bool {
@@ -2683,16 +2705,35 @@ func importSubscriptionHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": ok, "msg": msg})
 	}
 
-	// 1. 读取剪贴板
-	out, err := utils.RunHiddenCommand("powershell", "-NoProfile", "-Command", "Get-Clipboard")
-	if err != nil {
-		respond(false, "无法读取剪贴板内容！")
-		return
+	// 原生移动端直接提交订阅内容；桌面 WebUI 保留读取剪贴板的行为。
+	var input string
+	if r.Body != nil {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, largeJSONBodyLimit))
+		if err != nil {
+			respond(false, "订阅内容过大或读取失败")
+			return
+		}
+		if len(strings.TrimSpace(string(body))) > 0 {
+			var req struct {
+				Input string `json:"input"`
+			}
+			if err := json.Unmarshal(body, &req); err != nil {
+				respond(false, "订阅请求格式错误")
+				return
+			}
+			input = strings.TrimSpace(req.Input)
+		}
 	}
-
-	input := strings.TrimSpace(string(out))
 	if input == "" {
-		respond(false, "剪贴板为空！请复制订阅链接或节点内容。")
+		out, err := utils.RunHiddenCommand("powershell", "-NoProfile", "-Command", "Get-Clipboard")
+		if err != nil {
+			respond(false, "请输入订阅链接或节点内容")
+			return
+		}
+		input = strings.TrimSpace(string(out))
+	}
+	if input == "" {
+		respond(false, "订阅内容为空")
 		return
 	}
 

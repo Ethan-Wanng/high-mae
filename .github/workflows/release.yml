@@ -197,7 +197,7 @@ jobs:
             - iOS: wing-${{ env.WING_VERSION }}-ios-unsigned.ipa
 
             Notes:
-            - Android now bundles the Go backend and uses native VpnService/TUN FD handoff instead of depending on an external desktop backend.
+            - Android is a standalone Flutter-native client (not a WebView shell), bundles the Go backend, and uses the system VpnService permission flow plus TUN FD handoff.
             - Subscription parsing covers Hysteria2 port hopping plus VLESS WebSocket, Reality, and TLS variants; the supplied 62-node profile is fully parsed.
             - Subscription refresh and latency probing use fewer redundant requests and bounded fallback timeouts.
             - The repository is licensed under the MIT License.

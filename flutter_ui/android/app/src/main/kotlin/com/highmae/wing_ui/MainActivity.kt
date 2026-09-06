@@ -4,12 +4,26 @@ import android.app.Activity
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.util.Log
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.UUID
+import kotlin.concurrent.thread
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+
+    companion object {
+        private const val TAG = "WingMainActivity"
+        private const val PREFS = "wing_native"
+        private const val TOKEN_KEY = "mobile_api_token"
+
+        @Volatile
+        private var backendProcess: Process? = null
+    }
 
     private val CHANNEL = "com.highmae.wing/vpn"
     private val VPN_REQUEST_CODE = 10809
@@ -37,6 +51,9 @@ class MainActivity : FlutterActivity() {
                 "getVpnStatus" -> {
                     result.success(WingVpnService.isRunning)
                 }
+                "startBackend" -> {
+                    startBackend(result)
+                }
                 "getBackendPath" -> {
                     result.success(File(applicationInfo.nativeLibraryDir, "libwing_backend.so").absolutePath)
                 }
@@ -63,6 +80,85 @@ class MainActivity : FlutterActivity() {
 
     private fun stopVpnService() {
         stopService(Intent(this, WingVpnService::class.java))
+    }
+
+    private fun startBackend(result: MethodChannel.Result) {
+        val token = getOrCreateMobileApiToken()
+        thread(name = "wing-backend-launch", isDaemon = true) {
+            var error: String? = null
+            try {
+                if (!isBackendReady(token)) {
+                    val backend = File(applicationInfo.nativeLibraryDir, "libwing_backend.so")
+                    if (!backend.exists()) {
+                        error = "当前 APK 不包含 ${Build.SUPPORTED_ABIS.firstOrNull() ?: "此设备"} 的代理核心"
+                    } else {
+                        backend.setExecutable(true, true)
+                        val process = ProcessBuilder(backend.absolutePath)
+                            .directory(filesDir)
+                            .redirectErrorStream(true)
+                            .apply {
+                                environment()["WING_DB_PATH"] = File(filesDir, "wing.db").absolutePath
+                                environment()["WING_MOBILE_API_TOKEN"] = token
+                            }
+                            .start()
+                        backendProcess = process
+                        thread(name = "wing-backend-log", isDaemon = true) {
+                            process.inputStream.bufferedReader().useLines { lines ->
+                                lines.forEach { Log.i(TAG, "backend: $it") }
+                            }
+                        }
+
+                        for (attempt in 0 until 80) {
+                            if (isBackendReady(token)) break
+                            if (!process.isAlive) {
+                                error = "代理核心已退出（exit ${process.exitValue()}）"
+                                break
+                            }
+                            Thread.sleep(100)
+                        }
+                        if (!isBackendReady(token) && error == null) {
+                            error = "代理核心启动超时"
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start backend", e)
+                error = e.message ?: e.javaClass.simpleName
+            }
+
+            val payload = mapOf(
+                "ready" to (error == null && isBackendReady(token)),
+                "token" to token,
+                "error" to error,
+                "abi" to (Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown")
+            )
+            runOnUiThread { result.success(payload) }
+        }
+    }
+
+    private fun getOrCreateMobileApiToken(): String {
+        val preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val existing = preferences.getString(TOKEN_KEY, null)
+        if (!existing.isNullOrBlank()) return existing
+        val created = UUID.randomUUID().toString() + UUID.randomUUID().toString()
+        preferences.edit().putString(TOKEN_KEY, created).apply()
+        return created
+    }
+
+    private fun isBackendReady(token: String): Boolean {
+        var connection: HttpURLConnection? = null
+        return try {
+            connection = URL("http://127.0.0.1:10809/api/status").openConnection() as HttpURLConnection
+            connection.connectTimeout = 250
+            connection.readTimeout = 250
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("X-Wing-Mobile-Token", token)
+            connection.responseCode in 200..299
+        } catch (_: Exception) {
+            false
+        } finally {
+            connection?.disconnect()
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
