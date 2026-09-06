@@ -2,19 +2,40 @@
 
 package systray
 
-func registerSystray() {}
+// Android uses Flutter and VpnService instead of a desktop notification-area
+// menu. These no-op hooks keep shared proxy state portable without linking the
+// GTK/AppIndicator C implementation into the Android executable.
 
-func nativeLoop() {
-	// block forever
-	select {}
+func registerSystray() {
+	if systrayReady != nil {
+		systrayReady()
+	}
 }
 
-func quit() {}
+func nativeLoop() {}
 
-func SetIcon(iconBytes []byte) {}
-func SetTitle(title string) {}
-func SetTooltip(tooltip string) {}
-func addSeparator(id uint32) {}
-func hideMenuItem(item *MenuItem) {}
-func showMenuItem(item *MenuItem) {}
-func addOrUpdateMenuItem(item *MenuItem) {}
+func quit() {
+	if systrayExit != nil {
+		systrayExit()
+	}
+}
+
+func SetIcon([]byte) {}
+
+func SetTemplateIcon([]byte, []byte) {}
+
+func SetTitle(string) {}
+
+func SetTooltip(string) {}
+
+func addOrUpdateMenuItem(*MenuItem) {}
+
+func addSeparator(uint32) {}
+
+func hideMenuItem(*MenuItem) {}
+
+func showMenuItem(*MenuItem) {}
+
+func (*MenuItem) SetIcon([]byte) {}
+
+func (*MenuItem) SetTemplateIcon([]byte, []byte) {}

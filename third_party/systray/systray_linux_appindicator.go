@@ -1,5 +1,5 @@
-// +build linux,legacy_appindicator
-//go:build linux && legacy_appindicator
+//go:build linux && !android && legacy_appindicator
+// +build linux,!android,legacy_appindicator
 
 package systray
 

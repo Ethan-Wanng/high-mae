@@ -1,5 +1,5 @@
-// +build !windows
-// go:build !windows
+//go:build !windows && !android
+// +build !windows,!android
 
 package systray
 

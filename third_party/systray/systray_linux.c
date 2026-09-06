@@ -1,3 +1,6 @@
+//go:build linux && !android
+// +build linux,!android
+
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>

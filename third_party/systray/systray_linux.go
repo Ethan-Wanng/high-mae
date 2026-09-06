@@ -1,3 +1,6 @@
+//go:build linux && !android
+// +build linux,!android
+
 package systray
 
 // SetTemplateIcon sets the systray icon as a template icon (on macOS), falling back
