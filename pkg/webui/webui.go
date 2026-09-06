@@ -1370,31 +1370,49 @@ func switchNodeHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "节点正在切换中，请稍候。"})
 		return
 	}
+	if r.URL.Query().Get("wait") == "1" {
+		defer nodeSwitching.Store(false)
+		if err := switchGlobalNode(node); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "节点切换失败: " + err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": false, "msg": "节点已切换"})
+		return
+	}
 
 	utils.SafeGo("webui switch node", func() {
 		defer nodeSwitching.Store(false)
-
-		// Switch config file if needed
-		if sub.CurrentConfigFile != node.FileName {
-			nodes, err := protocol.ParseNodes(node.FileName)
-			if err == nil {
-				sub.SetActiveConfigFile(node.FileName)
-				common.SetAllNodes(nodes)
-				sub.RefreshNodeMenu(nil)
-			}
-		}
-
-		// Double check to make sure the sub-index is valid in the current node snapshot.
-		if targetNode, ok := common.GetAllNode(node.SubIndex); ok {
-			if err := proxy.SwitchNode(targetNode); err != nil {
-				fmt.Printf("节点切换失败: %v\n", err)
-				return
-			}
-			sub.RefreshNodeMenu(nil)
+		if err := switchGlobalNode(node); err != nil {
+			fmt.Printf("节点切换失败: %v\n", err)
 		}
 	})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "pending": true, "msg": "正在切换节点..."})
+}
+
+func switchGlobalNode(node GlobalNodeInfo) error {
+	if sub.CurrentConfigFile != node.FileName {
+		nodes, err := protocol.ParseNodes(node.FileName)
+		if err != nil {
+			return fmt.Errorf("读取节点组失败: %w", err)
+		}
+		if node.SubIndex < 0 || node.SubIndex >= len(nodes) {
+			return fmt.Errorf("节点索引已失效")
+		}
+		sub.SetActiveConfigFile(node.FileName)
+		common.SetAllNodes(nodes)
+		sub.RefreshNodeMenu(nil)
+	}
+
+	targetNode, ok := common.GetAllNode(node.SubIndex)
+	if !ok {
+		return fmt.Errorf("节点索引已失效")
+	}
+	if err := proxy.SwitchNode(targetNode); err != nil {
+		return err
+	}
+	sub.RefreshNodeMenu(nil)
+	return nil
 }
 
 func directNodeHandler(w http.ResponseWriter, r *http.Request) {
@@ -2558,21 +2576,26 @@ func switchSupplierHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Supplier not found", http.StatusNotFound)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	nodes, err := protocol.ParseNodes(supplier.FileName)
-	if err == nil && len(nodes) > 0 {
-		sub.SetActiveConfigFile(supplier.FileName)
-		common.SetAllNodes(nodes)
-		resetNodeMetricCaches()
-		sub.RefreshNodeMenu(nil)
-		if len(nodes) > 0 {
-			if err := proxy.SwitchNode(nodes[0]); err != nil {
-				json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "供应商已切换，但节点初始化失败: " + err.Error()})
-				return
-			}
-			sub.RefreshNodeMenu(nil)
+	if err != nil || len(nodes) == 0 {
+		message := "订阅中没有可用节点"
+		if err != nil {
+			message = "读取订阅节点失败: " + err.Error()
 		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": message})
+		return
 	}
-	w.WriteHeader(http.StatusOK)
+	sub.SetActiveConfigFile(supplier.FileName)
+	common.SetAllNodes(nodes)
+	resetNodeMetricCaches()
+	sub.RefreshNodeMenu(nil)
+	if err := proxy.SwitchNode(nodes[0]); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "供应商已切换，但节点初始化失败: " + err.Error()})
+		return
+	}
+	sub.RefreshNodeMenu(nil)
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "msg": "订阅已切换"})
 }
 
 func updateSupplierHandler(w http.ResponseWriter, r *http.Request) {

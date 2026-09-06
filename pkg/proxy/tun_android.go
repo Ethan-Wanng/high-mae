@@ -64,6 +64,15 @@ func StartAndroidTunListener() {
 
 func handleVpnSocket(conn *net.UnixConn) {
 	defer conn.Close()
+	acknowledge := func(ok bool) {
+		value := byte(0)
+		if ok {
+			value = 1
+		}
+		if _, err := conn.Write([]byte{value}); err != nil {
+			log.Printf("[Android TUN] Failed to acknowledge VPN service: %v", err)
+		}
+	}
 
 	buf := make([]byte, 32)
 	oob := make([]byte, syscall.CmsgSpace(4))
@@ -97,6 +106,7 @@ func handleVpnSocket(conn *net.UnixConn) {
 	}
 	if receivedFd < 0 {
 		log.Printf("[Android TUN] Failed to receive valid FD from VpnService")
+		acknowledge(false)
 		return
 	}
 
@@ -117,12 +127,14 @@ func handleVpnSocket(conn *net.UnixConn) {
 	if err := startAndroidTunEngineLocked(receivedFd); err != nil {
 		log.Printf("[Android TUN] Start TUN engine error: %v", err)
 		androidTunFd = -1
+		acknowledge(false)
 		return
 	}
 
 	common.SetTunModeOn(true)
 	proxyOn, tunOn, _ := common.GetNetworkState()
 	_ = SaveLastNetworkMode(proxyOn, tunOn)
+	acknowledge(true)
 	log.Println("[Android TUN] Android Native VPN TUN is now active and routing traffic!")
 }
 

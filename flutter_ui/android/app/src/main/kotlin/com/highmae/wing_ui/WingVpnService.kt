@@ -20,6 +20,7 @@ class WingVpnService : VpnService() {
     companion object {
         const val TAG = "WingVpnService"
         const val ACTION_START = "com.highmae.wing_ui.START_VPN"
+        const val ACTION_RECONNECT = "com.highmae.wing_ui.RECONNECT_VPN"
         const val CHANNEL_ID = "wing_vpn_channel"
         const val NOTIFICATION_ID = 10809
         const val ABSTRACT_SOCKET_NAME = "wing_vpn_fd"
@@ -27,22 +28,37 @@ class WingVpnService : VpnService() {
         @Volatile
         var isRunning = false
             private set
+
+        @Volatile
+        var isStarting = false
+            private set
+
+        @Volatile
+        var lastError: String? = null
+            private set
+
+        fun prepareForStart() {
+            lastError = null
+        }
     }
 
     private var vpnInterface: ParcelFileDescriptor? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_START
-        if (action == ACTION_START) {
-            startVpn()
+        when (action) {
+            ACTION_START -> startVpn()
+            ACTION_RECONNECT -> reconnectBackend()
         }
         return START_NOT_STICKY
     }
 
     private fun startVpn() {
-        if (isRunning) return
+        if (isRunning || isStarting) return
+        isStarting = true
+        lastError = null
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, createNotification())
+        startForeground(NOTIFICATION_ID, createNotification(false))
 
         try {
             val builder = Builder()
@@ -64,13 +80,11 @@ class WingVpnService : VpnService() {
 
             vpnInterface = builder.establish()
             if (vpnInterface == null) {
-                Log.e(TAG, "Failed to establish VPN interface (null)")
-                stopSelf()
+                failVpn("系统未能建立 VPN 接口")
                 return
             }
 
             val fd = vpnInterface!!.fileDescriptor
-            isRunning = true
             Log.i(TAG, "VPN interface established. Sending FD to Go backend...")
 
             // Send FD to Go backend in background thread
@@ -79,29 +93,73 @@ class WingVpnService : VpnService() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error starting VPN: ${e.message}", e)
-            stopSelf()
+            failVpn("VPN 启动失败：${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private fun reconnectBackend() {
+        val currentInterface = vpnInterface ?: return
+        if (isStarting) return
+        isRunning = false
+        isStarting = true
+        lastError = null
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, createNotification(false))
+        thread {
+            sendFdToGoBackend(currentInterface.fileDescriptor)
         }
     }
 
     private fun sendFdToGoBackend(fd: FileDescriptor) {
         var retries = 0
-        while (isRunning && retries < 30) {
+        while (isStarting && retries < 30) {
+            var socket: LocalSocket? = null
+            var commandSent = false
             try {
-                val socket = LocalSocket()
+                socket = LocalSocket()
                 socket.connect(LocalSocketAddress(ABSTRACT_SOCKET_NAME, LocalSocketAddress.Namespace.ABSTRACT))
                 socket.setFileDescriptorsForSend(arrayOf(fd))
+                socket.soTimeout = 15000
                 val output = socket.outputStream
                 output.write(1) // start command; also triggers SCM_RIGHTS transmission
                 output.flush()
-                socket.close()
-                Log.i(TAG, "Successfully passed VPN FD to Go backend via @$ABSTRACT_SOCKET_NAME")
+                commandSent = true
+                val acknowledged = socket.inputStream.read() == 1
+                if (acknowledged) {
+                    isRunning = true
+                    isStarting = false
+                    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    manager.notify(NOTIFICATION_ID, createNotification(true))
+                    Log.i(TAG, "VPN FD accepted by Go backend via @$ABSTRACT_SOCKET_NAME")
+                    return
+                }
+                failVpn("内置代理核心未能接管 VPN 隧道")
                 return
             } catch (e: Exception) {
+                if (commandSent) {
+                    failVpn("内置代理核心接管 VPN 隧道超时")
+                    return
+                }
                 retries++
-                Thread.sleep(500)
+                if (retries < 30) Thread.sleep(500)
+            } finally {
+                try {
+                    socket?.close()
+                } catch (_: Exception) {
+                }
             }
         }
-        Log.w(TAG, "Could not send FD to Go backend after 30 retries")
+        if (isStarting) {
+            Log.w(TAG, "Could not send FD to Go backend after 30 retries")
+            failVpn("无法连接内置代理核心，请重新启动应用")
+        }
+    }
+
+    private fun failVpn(message: String) {
+        lastError = message
+        isStarting = false
+        isRunning = false
+        Log.e(TAG, message)
         stopVpn()
         stopSelf()
     }
@@ -110,6 +168,7 @@ class WingVpnService : VpnService() {
         if (isRunning) {
             sendStopToGoBackend()
         }
+        isStarting = false
         isRunning = false
         try {
             vpnInterface?.close()
@@ -161,7 +220,7 @@ class WingVpnService : VpnService() {
         }
     }
 
-    private fun createNotification(): Notification {
+    private fun createNotification(connected: Boolean): Notification {
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
@@ -178,10 +237,13 @@ class WingVpnService : VpnService() {
 
         return builder
             .setContentTitle("wing 代理服务")
-            .setContentText("正在通过安全隧道保护您的网络连接")
+            .setContentText(
+                if (connected) "VPN 已连接，正在保护您的网络连接" else "正在建立 VPN 安全隧道"
+            )
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
+            .setCategory(Notification.CATEGORY_SERVICE)
             .build()
     }
 }
