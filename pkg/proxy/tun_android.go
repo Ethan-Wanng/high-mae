@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/netip"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -18,8 +19,10 @@ import (
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	singtun "github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/logger"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
 
 	"wing/pkg/common"
@@ -143,6 +146,44 @@ type androidPlatformInterface struct {
 	fd int
 }
 
+// androidDefaultInterfaceMonitor deliberately keeps no system routes. The
+// Android VpnService owns route selection and excludes this application from
+// its VPN, while sing-box only needs a non-nil monitor for its lifecycle and
+// TUN adapter wiring.
+type androidDefaultInterfaceMonitor struct {
+	mu          sync.RWMutex
+	myInterface string
+}
+
+func (m *androidDefaultInterfaceMonitor) Start() error { return nil }
+
+func (m *androidDefaultInterfaceMonitor) Close() error { return nil }
+
+func (m *androidDefaultInterfaceMonitor) DefaultInterface() *control.Interface { return nil }
+
+func (m *androidDefaultInterfaceMonitor) OverrideAndroidVPN() bool { return false }
+
+func (m *androidDefaultInterfaceMonitor) AndroidVPNEnabled() bool { return true }
+
+func (m *androidDefaultInterfaceMonitor) RegisterCallback(callback singtun.DefaultInterfaceUpdateCallback) *list.Element[singtun.DefaultInterfaceUpdateCallback] {
+	return nil
+}
+
+func (m *androidDefaultInterfaceMonitor) UnregisterCallback(element *list.Element[singtun.DefaultInterfaceUpdateCallback]) {
+}
+
+func (m *androidDefaultInterfaceMonitor) RegisterMyInterface(interfaceName string) {
+	m.mu.Lock()
+	m.myInterface = interfaceName
+	m.mu.Unlock()
+}
+
+func (m *androidDefaultInterfaceMonitor) MyInterface() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.myInterface
+}
+
 func (p *androidPlatformInterface) Initialize(networkManager adapter.NetworkManager) error {
 	return nil
 }
@@ -172,7 +213,7 @@ func (p *androidPlatformInterface) UsePlatformDefaultInterfaceMonitor() bool {
 }
 
 func (p *androidPlatformInterface) CreateDefaultInterfaceMonitor(logger logger.Logger) singtun.DefaultInterfaceMonitor {
-	return nil
+	return &androidDefaultInterfaceMonitor{}
 }
 
 func (p *androidPlatformInterface) UsePlatformNetworkInterfaces() bool {
@@ -225,7 +266,15 @@ func (p *androidPlatformInterface) SendNotification(notification *adapter.Notifi
 	return nil
 }
 
-func startAndroidTunEngineLocked(fd int) error {
+func startAndroidTunEngineLocked(fd int) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			_ = syscall.Close(fd)
+			log.Printf("[Android TUN] Recovered core panic: %v\n%s", recovered, debug.Stack())
+			err = fmt.Errorf("Android VPN 核心初始化异常: %v", recovered)
+		}
+	}()
+
 	opts, err := buildAndroidTunBoxOptions()
 	if err != nil {
 		return err
@@ -276,7 +325,7 @@ func buildAndroidTunBoxOptions() (option.Options, error) {
 						Options: &option.RemoteDNSServerOptions{
 							DNSServerAddressOptions: option.DNSServerAddressOptions{
 								Server:     "127.0.0.2",
-								ServerPort: 53,
+								ServerPort: uint16(localDNSListenPort()),
 							},
 						},
 					},

@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -66,7 +67,19 @@ const (
 	maxIPDomainMapSize    = 20000
 	ipDomainMapTrimTarget = maxIPDomainMapSize * 9 / 10
 	maxDNSTTL             = 3600
+	androidLocalDNSPort   = 1053
+	desktopLocalDNSPort   = 53
 )
+
+func localDNSListenPort() int {
+	if runtime.GOOS == "android" {
+		// Android applications cannot bind the privileged DNS port. The TUN
+		// engine still intercepts client traffic on port 53, then forwards it
+		// to this loopback-only, unprivileged listener.
+		return androidLocalDNSPort
+	}
+	return desktopLocalDNSPort
+}
 
 func dnsEntryExpiry(ttl uint32, now time.Time) time.Time {
 	if ttl == 0 {
@@ -239,7 +252,7 @@ func matchDNSRule(config DNSConfig, domain string) string {
 }
 
 func StartLocalDNS() {
-	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.2"), Port: 53}
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.2"), Port: localDNSListenPort()}
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		log.Printf("Failed to start DNS server: %v", err)
