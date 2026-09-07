@@ -1351,21 +1351,10 @@ func deleteAggregateGroupHandler(w http.ResponseWriter, r *http.Request) {
 
 func switchNodeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	idxStr := r.URL.Query().Get("idx")
-	idx, err := strconv.Atoi(idxStr)
-	if err != nil {
-		http.Error(w, "Invalid index", http.StatusBadRequest)
+	node, _, ok := getGlobalNodeFromRequest(w, r)
+	if !ok {
 		return
 	}
-
-	globalNodesMu.Lock()
-	if idx < 0 || idx >= len(globalNodesCache) {
-		globalNodesMu.Unlock()
-		http.Error(w, "Index out of bounds", http.StatusBadRequest)
-		return
-	}
-	node := globalNodesCache[idx]
-	globalNodesMu.Unlock()
 	if !nodeSwitching.CompareAndSwap(false, true) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "节点正在切换中，请稍候。"})
 		return
@@ -1391,23 +1380,19 @@ func switchNodeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func switchGlobalNode(node GlobalNodeInfo) error {
-	if sub.CurrentConfigFile != node.FileName {
-		nodes, err := protocol.ParseNodes(node.FileName)
-		if err != nil {
-			return fmt.Errorf("读取节点组失败: %w", err)
-		}
-		if node.SubIndex < 0 || node.SubIndex >= len(nodes) {
-			return fmt.Errorf("节点索引已失效")
-		}
-		sub.SetActiveConfigFile(node.FileName)
-		common.SetAllNodes(nodes)
-		sub.RefreshNodeMenu(nil)
+	nodes, err := protocol.ParseNodes(node.FileName)
+	if err != nil {
+		return fmt.Errorf("读取节点组失败: %w", err)
 	}
-
-	targetNode, ok := common.GetAllNode(node.SubIndex)
-	if !ok {
+	if node.SubIndex < 0 || node.SubIndex >= len(nodes) {
 		return fmt.Errorf("节点索引已失效")
 	}
+	if sub.CurrentConfigFile != node.FileName {
+		sub.SetActiveConfigFile(node.FileName)
+	}
+	common.SetAllNodes(nodes)
+	sub.RefreshNodeMenu(nil)
+	targetNode := nodes[node.SubIndex]
 	if err := proxy.SwitchNode(targetNode); err != nil {
 		return err
 	}
@@ -1523,6 +1508,47 @@ func deleteNodeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getGlobalNodeFromRequest(w http.ResponseWriter, r *http.Request) (GlobalNodeInfo, protocol.Node, bool) {
+	fileName := strings.TrimSpace(r.URL.Query().Get("file"))
+	if fileName != "" {
+		if !isKnownNodeFile(fileName) {
+			http.Error(w, "Unknown node source", http.StatusBadRequest)
+			return GlobalNodeInfo{}, protocol.Node{}, false
+		}
+		subIndex, err := strconv.Atoi(r.URL.Query().Get("sub"))
+		if err != nil || subIndex < 0 {
+			http.Error(w, "Invalid node position", http.StatusBadRequest)
+			return GlobalNodeInfo{}, protocol.Node{}, false
+		}
+		nodes, err := protocol.ParseNodes(fileName)
+		if err != nil || subIndex >= len(nodes) {
+			http.Error(w, "Node list changed; refresh and retry", http.StatusConflict)
+			return GlobalNodeInfo{}, protocol.Node{}, false
+		}
+		targetNode := nodes[subIndex]
+		expectedName := strings.TrimSpace(r.URL.Query().Get("name"))
+		if expectedName != "" && targetNode.Name != expectedName {
+			http.Error(w, "Node list changed; refresh and retry", http.StatusConflict)
+			return GlobalNodeInfo{}, protocol.Node{}, false
+		}
+		nodeInfo := GlobalNodeInfo{
+			Index:    -1,
+			Name:     targetNode.Name,
+			Type:     targetNode.Type,
+			Group:    fileName,
+			FileName: fileName,
+			SubIndex: subIndex,
+		}
+		globalNodesMu.Lock()
+		for _, cached := range globalNodesCache {
+			if cached.FileName == fileName && cached.SubIndex == subIndex {
+				nodeInfo = cached
+				break
+			}
+		}
+		globalNodesMu.Unlock()
+		return nodeInfo, targetNode, true
+	}
+
 	idxStr := r.URL.Query().Get("idx")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil {
@@ -1547,6 +1573,17 @@ func getGlobalNodeFromRequest(w http.ResponseWriter, r *http.Request) (GlobalNod
 	return nodeInfo, nodes[nodeInfo.SubIndex], true
 }
 
+func isKnownNodeFile(fileName string) bool {
+	if fileName == CustomNodesFile {
+		return true
+	}
+	if _, ok := subscriptionByFile(fileName); ok {
+		return true
+	}
+	_, ok := aggregateGroupByFile(fileName)
+	return ok
+}
+
 func testSingleHandler(w http.ResponseWriter, r *http.Request) {
 	nodeInfo, targetNode, ok := getGlobalNodeFromRequest(w, r)
 	if !ok {
@@ -1563,7 +1600,9 @@ func testSingleHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		lat = -1
 	}
-	latencyCache.Store(nodeInfo.Index, lat)
+	if nodeInfo.Index >= 0 {
+		latencyCache.Store(nodeInfo.Index, lat)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int64{"latency": lat})
 }
@@ -2983,7 +3022,7 @@ func getStatsHandler(w http.ResponseWriter, r *http.Request) {
 	runtime.ReadMemStats(&m)
 	speedIn, speedOut := stats.GetCurrentSpeeds()
 
-	stats := map[string]interface{}{
+	payload := map[string]interface{}{
 		"memAlloc":         m.Alloc,
 		"memSys":           m.Sys,
 		"heapInuse":        m.HeapInuse,
@@ -2996,13 +3035,15 @@ func getStatsHandler(w http.ResponseWriter, r *http.Request) {
 		"connections":      atomic.LoadInt32(&stats.ActiveConnections),
 		"activeSpeedtests": atomic.LoadInt32(&common.ActiveSpeedtests),
 		"activeDNSQueries": atomic.LoadInt32(&common.ActiveDNSQueries),
-		"logs":             stats.GetRecentConnLogs(200),
 		"totalIn":          atomic.LoadUint64(&common.GlobalProxyIn),
 		"totalOut":         atomic.LoadUint64(&common.GlobalProxyOut),
-		"trafficSessions":  stats.GetTrafficSessions(),
+	}
+	if r.URL.Query().Get("summary") != "1" {
+		payload["logs"] = stats.GetRecentConnLogs(200)
+		payload["trafficSessions"] = stats.GetTrafficSessions()
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
+	json.NewEncoder(w).Encode(payload)
 }
 
 func clearLogsHandler(w http.ResponseWriter, r *http.Request) {

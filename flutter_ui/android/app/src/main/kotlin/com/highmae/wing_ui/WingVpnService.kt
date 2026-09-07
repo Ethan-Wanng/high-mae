@@ -124,7 +124,9 @@ class WingVpnService : VpnService() {
                 output.write(1) // start command; also triggers SCM_RIGHTS transmission
                 output.flush()
                 commandSent = true
-                val acknowledged = socket.inputStream.read() == 1
+                val input = socket.inputStream
+                val acknowledged = input.read() == 1
+                val detail = input.bufferedReader(Charsets.UTF_8).readText().trim()
                 if (acknowledged) {
                     isRunning = true
                     isStarting = false
@@ -133,7 +135,10 @@ class WingVpnService : VpnService() {
                     Log.i(TAG, "VPN FD accepted by Go backend via @$ABSTRACT_SOCKET_NAME")
                     return
                 }
-                failVpn("内置代理核心未能接管 VPN 隧道")
+                failVpn(
+                    if (detail.isNotEmpty()) "内置代理核心未能接管 VPN 隧道：$detail"
+                    else "内置代理核心未能接管 VPN 隧道"
+                )
                 return
             } catch (e: Exception) {
                 if (commandSent) {

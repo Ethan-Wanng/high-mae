@@ -362,6 +362,66 @@ func TestSwitchSupplierRejectsUnknownFile(t *testing.T) {
 	}
 }
 
+func TestStableNodeIdentityWorksWithoutIndexCache(t *testing.T) {
+	_ = storage.Close()
+	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))
+	t.Cleanup(func() { _ = storage.Close() })
+
+	fileName, _, err := sub.AppendSubscriptionWithTraffic("https://stable.example/sub", nil)
+	if err != nil {
+		t.Fatalf("append subscription: %v", err)
+	}
+	nodes := []protocol.Node{
+		{Type: "vless", Name: "first", Server: "one.example", Port: 443},
+		{Type: "trojan", Name: "stable-node", Server: "two.example", Port: 443},
+	}
+	if err := sub.SaveNodesToYAML(fileName, nodes); err != nil {
+		t.Fatalf("save nodes: %v", err)
+	}
+	globalNodesMu.Lock()
+	globalNodesCache = nil
+	globalNodesMu.Unlock()
+
+	query := url.Values{
+		"idx":  {"999"},
+		"file": {fileName},
+		"sub":  {"1"},
+		"name": {"stable-node"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/test_single?"+query.Encode(), nil)
+	rr := httptest.NewRecorder()
+	info, node, ok := getGlobalNodeFromRequest(rr, req)
+	if !ok {
+		t.Fatalf("stable lookup failed: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if info.FileName != fileName || info.SubIndex != 1 || info.Index != -1 {
+		t.Fatalf("node info = %+v, want stable file/sub index without global index", info)
+	}
+	if node.Name != "stable-node" || node.Type != "trojan" {
+		t.Fatalf("node = %+v, want stable-node trojan", node)
+	}
+}
+
+func TestSummaryStatsOmitsHeavyHistory(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/stats?summary=1", nil)
+	rr := httptest.NewRecorder()
+	getStatsHandler(rr, req)
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("summary stats JSON error: %v", err)
+	}
+	if _, ok := payload["logs"]; ok {
+		t.Fatal("summary stats should omit connection logs")
+	}
+	if _, ok := payload["trafficSessions"]; ok {
+		t.Fatal("summary stats should omit traffic sessions")
+	}
+	if _, ok := payload["totalIn"]; !ok {
+		t.Fatal("summary stats should retain total traffic")
+	}
+}
+
 func TestGetSuppliersHandlerRedactsSubscriptionURL(t *testing.T) {
 	_ = storage.Close()
 	t.Setenv("WING_DB_PATH", filepath.Join(t.TempDir(), "wing.db"))

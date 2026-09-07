@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${WING_VERSION:-1.0.6.2}"
+TAGS="with_quic,with_utls,with_gvisor"
 BUILD_NUMBER="${FLUTTER_BUILD_NUMBER:-10062}"
 FLUTTER_BUILD_NAME="${FLUTTER_BUILD_NAME:-$VERSION}"
 if [[ "$FLUTTER_BUILD_NAME" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.[0-9]+(\.[0-9]+)?$ ]]; then
@@ -24,7 +25,7 @@ echo "Compiling Android Go backend (libwing_backend.so)..."
 # 1. Always compile arm64-v8a (supports pure Go / CGO_ENABLED=0)
 echo "Building arm64-v8a backend..."
 mkdir -p flutter_ui/android/app/src/main/jniLibs/arm64-v8a
-env CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o flutter_ui/android/app/src/main/jniLibs/arm64-v8a/libwing_backend.so ./mobile
+env CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -tags "$TAGS" -o flutter_ui/android/app/src/main/jniLibs/arm64-v8a/libwing_backend.so ./mobile
 
 # 2. Android/amd64 and Android/arm require external linking. The Android build
 # excludes desktop systray code, so the NDK is used only as the target linker.
@@ -52,7 +53,7 @@ if [ -z "$CLANG_X86" ]; then
 fi
 echo "Building x86_64 backend with NDK: $CLANG_X86..."
 mkdir -p flutter_ui/android/app/src/main/jniLibs/x86_64
-env CGO_ENABLED=1 CC="$CLANG_X86" GOOS=android GOARCH=amd64 go build -o flutter_ui/android/app/src/main/jniLibs/x86_64/libwing_backend.so ./mobile
+env CGO_ENABLED=1 CC="$CLANG_X86" GOOS=android GOARCH=amd64 go build -tags "$TAGS" -o flutter_ui/android/app/src/main/jniLibs/x86_64/libwing_backend.so ./mobile
 
 CLANG_ARM="$(find "$LLVM_BIN" -name "armv7a-linux-androideabi*-clang" 2>/dev/null | grep -v 'clang++' | head -n 1 || true)"
 if [ -z "$CLANG_ARM" ]; then
@@ -61,7 +62,7 @@ if [ -z "$CLANG_ARM" ]; then
 fi
 echo "Building armeabi-v7a backend with NDK: $CLANG_ARM..."
 mkdir -p flutter_ui/android/app/src/main/jniLibs/armeabi-v7a
-env CGO_ENABLED=1 CC="$CLANG_ARM" GOOS=android GOARCH=arm GOARM=7 go build -o flutter_ui/android/app/src/main/jniLibs/armeabi-v7a/libwing_backend.so ./mobile
+env CGO_ENABLED=1 CC="$CLANG_ARM" GOOS=android GOARCH=arm GOARM=7 go build -tags "$TAGS" -o flutter_ui/android/app/src/main/jniLibs/armeabi-v7a/libwing_backend.so ./mobile
 
 popd >/dev/null
 

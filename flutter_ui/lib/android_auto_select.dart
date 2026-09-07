@@ -325,7 +325,7 @@ Future<Map<String, dynamic>> _performAutoSelect(
       final node = candidates[position];
       var latency = -1;
       try {
-        latency = await api.testNode((node['index'] as num).toInt());
+        latency = await api.testNode(node);
       } catch (_) {}
       candidates[position] = {...node, 'latency': latency};
     }
@@ -352,7 +352,7 @@ Future<Map<String, dynamic>> _performAutoSelect(
   final siteMode = siteCheck['mode']?.toString() ?? 'none';
   final selectedSiteIds = _stringSet(siteCheck['ids']);
   for (final candidate in candidates) {
-    final response = await api.switchNode((candidate['index'] as num).toInt());
+    final response = await api.switchNode(candidate);
     if (response['ok'] != true) continue;
     if (siteMode == 'none') return candidate;
     try {

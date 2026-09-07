@@ -64,8 +64,8 @@ abstract class WingApi {
   Future<Map<String, dynamic>> saveAutoSelectConfig(
     Map<String, dynamic> config,
   );
-  Future<Map<String, dynamic>> switchNode(int index);
-  Future<int> testNode(int index);
+  Future<Map<String, dynamic>> switchNode(Map<String, dynamic> node);
+  Future<int> testNode(Map<String, dynamic> node);
   Future<void> testAllNodes();
   Future<Map<String, dynamic>> importSubscription(String input);
   Future<Map<String, dynamic>> switchSupplier(String fileName);
@@ -171,7 +171,7 @@ class LocalWingApi implements WingApi {
 
   @override
   Future<Map<String, dynamic>> getStats() async =>
-      _map(await _request('/api/stats'));
+      _map(await _request('/api/stats?summary=1'));
 
   @override
   Future<Map<String, dynamic>> getDns() async =>
@@ -210,25 +210,40 @@ class LocalWingApi implements WingApi {
   );
 
   @override
-  Future<Map<String, dynamic>> switchNode(int index) async => _map(
-    await _request(
-      '/api/switch?idx=$index&wait=1',
-      method: 'POST',
-      timeout: const Duration(seconds: 30),
-    ),
-  );
+  Future<Map<String, dynamic>> switchNode(Map<String, dynamic> node) async =>
+      _map(
+        await _request(
+          '/api/switch?${_nodeQuery(node, extra: const {'wait': '1'})}',
+          method: 'POST',
+          timeout: const Duration(seconds: 30),
+        ),
+      );
 
   @override
-  Future<int> testNode(int index) async {
+  Future<int> testNode(Map<String, dynamic> node) async {
     final data = _map(
       await _request(
-        '/api/test_single?idx=$index',
+        '/api/test_single?${_nodeQuery(node)}',
         method: 'POST',
         timeout: const Duration(seconds: 15),
       ),
     );
     return (data['latency'] as num?)?.toInt() ?? -1;
   }
+
+  String _nodeQuery(
+    Map<String, dynamic> node, {
+    Map<String, String> extra = const {},
+  }) =>
+      Uri(
+        queryParameters: {
+          'idx': node['index']?.toString() ?? '-1',
+          'file': node['fileName']?.toString() ?? '',
+          'sub': node['subIndex']?.toString() ?? '-1',
+          'name': node['name']?.toString() ?? '',
+          ...extra,
+        },
+      ).query;
 
   @override
   Future<void> testAllNodes() async {
@@ -618,24 +633,29 @@ class _WingAndroidHomeState extends State<WingAndroidHome> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      _OverviewPage(
-        status: _status,
-        stats: _stats,
-        vpnRunning: _vpnRunning,
-        busy: _busy,
-        error: _error,
-        onToggleVpn: _toggleVpn,
-        onRefresh: () => _refreshStatus(refreshStats: true),
-        onModeChanged: (global) async {
-          await widget.api.setGlobalMode(global);
-          await _refreshStatus();
-        },
-      ),
-      _NodesPage(api: widget.api, onChanged: _refreshStatus),
-      _SubscriptionsPage(api: widget.api, onChanged: _refreshStatus),
-      _ToolsPage(api: widget.api, abi: widget.backend.abi),
-    ];
+    final Widget page;
+    switch (_tab) {
+      case 0:
+        page = _OverviewPage(
+          status: _status,
+          stats: _stats,
+          vpnRunning: _vpnRunning,
+          busy: _busy,
+          error: _error,
+          onToggleVpn: _toggleVpn,
+          onRefresh: () => _refreshStatus(refreshStats: true),
+          onModeChanged: (global) async {
+            await widget.api.setGlobalMode(global);
+            await _refreshStatus();
+          },
+        );
+      case 1:
+        page = _NodesPage(api: widget.api, onChanged: _refreshStatus);
+      case 2:
+        page = _SubscriptionsPage(api: widget.api, onChanged: _refreshStatus);
+      default:
+        page = _ToolsPage(api: widget.api, abi: widget.backend.abi);
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -650,7 +670,7 @@ class _WingAndroidHomeState extends State<WingAndroidHome> {
           ),
         ],
       ),
-      body: IndexedStack(index: _tab, children: pages),
+      body: page,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (value) {
@@ -936,7 +956,7 @@ class _NodesPageState extends State<_NodesPage> {
     final index = (node['index'] as num).toInt();
     setState(() => _switchingIndex = index);
     try {
-      final response = await widget.api.switchNode(index);
+      final response = await widget.api.switchNode(node);
       if (response['ok'] != true) {
         throw WingApiException(response['msg']?.toString() ?? '节点切换失败');
       }
@@ -951,7 +971,7 @@ class _NodesPageState extends State<_NodesPage> {
     final index = (node['index'] as num).toInt();
     setState(() => _testing.add(index));
     try {
-      final latency = await widget.api.testNode(index);
+      final latency = await widget.api.testNode(node);
       final position = _nodes.indexWhere((item) => item['index'] == index);
       if (mounted && position >= 0) {
         setState(

@@ -71,6 +71,10 @@ void main() {
     final api = _FakeWingApi(autoSelectEnabled: true, nodeCount: 12);
     await tester.pumpWidget(WingAndroidApp(api: api));
     await tester.pumpAndSettle();
+    expect(api.switchedNode, isNull);
+
+    await tester.tap(find.text('节点'));
+    await tester.pumpAndSettle();
 
     expect(api.switchedNode, 11);
   });
@@ -178,8 +182,8 @@ class _FakeWingApi implements WingApi {
   Future<Map<String, dynamic>> setGlobalMode(bool global) async => {'ok': true};
 
   @override
-  Future<Map<String, dynamic>> switchNode(int index) async {
-    switchedNode = index;
+  Future<Map<String, dynamic>> switchNode(Map<String, dynamic> node) async {
+    switchedNode = (node['index'] as num).toInt();
     return {'ok': true};
   }
 
@@ -198,7 +202,8 @@ class _FakeWingApi implements WingApi {
   Future<void> testAllNodes() async {}
 
   @override
-  Future<int> testNode(int index) async => 500 - index;
+  Future<int> testNode(Map<String, dynamic> node) async =>
+      500 - (node['index'] as num).toInt();
 
   @override
   Future<Map<String, dynamic>> updateSupplier(String fileName) async => {

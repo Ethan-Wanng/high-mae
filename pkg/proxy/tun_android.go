@@ -31,7 +31,7 @@ const (
 	tunLocalSocksTag = "wing-local-socks"
 	tunLocalDNSTag   = "wing-local-dns"
 	tunMTU           = 1500
-	tunStack         = "system"
+	tunStack         = "gvisor"
 	tunUDPTimeout    = 30 * time.Second
 )
 
@@ -64,12 +64,13 @@ func StartAndroidTunListener() {
 
 func handleVpnSocket(conn *net.UnixConn) {
 	defer conn.Close()
-	acknowledge := func(ok bool) {
+	acknowledge := func(ok bool, message string) {
 		value := byte(0)
 		if ok {
 			value = 1
 		}
-		if _, err := conn.Write([]byte{value}); err != nil {
+		payload := append([]byte{value}, []byte(message)...)
+		if _, err := conn.Write(payload); err != nil {
 			log.Printf("[Android TUN] Failed to acknowledge VPN service: %v", err)
 		}
 	}
@@ -106,7 +107,7 @@ func handleVpnSocket(conn *net.UnixConn) {
 	}
 	if receivedFd < 0 {
 		log.Printf("[Android TUN] Failed to receive valid FD from VpnService")
-		acknowledge(false)
+		acknowledge(false, "未收到 Android VPN 文件描述符")
 		return
 	}
 
@@ -127,14 +128,14 @@ func handleVpnSocket(conn *net.UnixConn) {
 	if err := startAndroidTunEngineLocked(receivedFd); err != nil {
 		log.Printf("[Android TUN] Start TUN engine error: %v", err)
 		androidTunFd = -1
-		acknowledge(false)
+		acknowledge(false, err.Error())
 		return
 	}
 
 	common.SetTunModeOn(true)
 	proxyOn, tunOn, _ := common.GetNetworkState()
 	_ = SaveLastNetworkMode(proxyOn, tunOn)
-	acknowledge(true)
+	acknowledge(true, "")
 	log.Println("[Android TUN] Android Native VPN TUN is now active and routing traffic!")
 }
 
