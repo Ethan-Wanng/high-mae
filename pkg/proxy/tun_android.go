@@ -247,11 +247,18 @@ func (p *androidPlatformInterface) SystemCertificates() []string {
 }
 
 func (p *androidPlatformInterface) UsePlatformConnectionOwnerFinder() bool {
-	return false
+	// A non-nil Android platform interface makes sing-box require a platform
+	// process finder. Falling back to its built-in Android finder is unsafe
+	// here because that finder dereferences a PackageManager which is only
+	// created when no platform interface is present.
+	return true
 }
 
 func (p *androidPlatformInterface) FindConnectionOwner(request *adapter.FindConnectionOwnerRequest) (*adapter.ConnectionOwner, error) {
-	return nil, nil
+	// The standalone VPN route does not use per-application rules. Return a
+	// valid unknown owner so sing-box can continue matching network rules
+	// without performing an unsupported package lookup.
+	return &adapter.ConnectionOwner{UserId: -1}, nil
 }
 
 func (p *androidPlatformInterface) UsePlatformWIFIMonitor() bool {
