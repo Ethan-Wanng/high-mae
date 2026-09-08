@@ -52,7 +52,7 @@ class AndroidBackendLauncher {
 
 abstract class WingApi {
   Future<Map<String, dynamic>> getStatus();
-  Future<List<Map<String, dynamic>>> getNodes();
+  Future<List<Map<String, dynamic>>> getNodes({String? fileName});
   Future<List<Map<String, dynamic>>> getSuppliers();
   Future<Map<String, dynamic>> getStats();
   Future<Map<String, dynamic>> getDns();
@@ -162,8 +162,11 @@ class LocalWingApi implements WingApi {
       _map(await _request('/api/status'));
 
   @override
-  Future<List<Map<String, dynamic>>> getNodes() async =>
-      _list(await _request('/api/nodes'));
+  Future<List<Map<String, dynamic>>> getNodes({String? fileName}) async {
+    final query =
+        fileName == null ? '' : '?file=${Uri.encodeQueryComponent(fileName)}';
+    return _list(await _request('/api/nodes$query'));
+  }
 
   @override
   Future<List<Map<String, dynamic>>> getSuppliers() async =>
@@ -910,14 +913,18 @@ class _NodesPage extends StatefulWidget {
 
 class _NodesPageState extends State<_NodesPage> {
   List<Map<String, dynamic>> _nodes = const [];
+  List<Map<String, dynamic>> _suppliers = const [];
   final _search = TextEditingController();
   bool _loading = true;
+  bool _switchingSupplier = false;
   bool _testingAll = false;
   bool _autoSelecting = false;
-  int? _switchingIndex;
-  final Set<int> _testing = {};
+  String? _selectedSupplierFile;
+  String? _switchingNodeKey;
+  final Set<String> _testing = {};
   String? _error;
   Timer? _autoTimer;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -930,11 +937,26 @@ class _NodesPageState extends State<_NodesPage> {
   }
 
   Future<void> _initialize() async {
+    try {
+      final suppliers = await widget.api.getSuppliers();
+      if (!mounted) return;
+      final active = suppliers.where((item) => item['active'] == true);
+      setState(() {
+        _suppliers = suppliers;
+        _selectedSupplierFile =
+            active.isNotEmpty
+                ? active.first['fileName']?.toString()
+                : suppliers.firstOrNull?['fileName']?.toString();
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    }
     await _load();
     await _runAutoSelect(onlyWhenEnabled: true, silent: true);
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     if (mounted) {
       setState(() {
         _loading = true;
@@ -942,19 +964,62 @@ class _NodesPageState extends State<_NodesPage> {
       });
     }
     try {
-      final nodes = await widget.api.getNodes();
-      if (mounted) setState(() => _nodes = nodes);
+      final nodes = await widget.api.getNodes(fileName: _selectedSupplierFile);
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _nodes = nodes);
+      }
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _error = error.toString());
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  String _nodeKey(Map<String, dynamic> node) =>
+      '${node['fileName'] ?? ''}:${node['subIndex'] ?? node['index']}:${node['name'] ?? ''}';
+
+  Future<void> _selectSupplier(String fileName) async {
+    if (_switchingSupplier || fileName == _selectedSupplierFile) return;
+    final previousFile = _selectedSupplierFile;
+    ++_loadGeneration;
+    setState(() {
+      _switchingSupplier = true;
+      _selectedSupplierFile = fileName;
+      _nodes = const [];
+      _testing.clear();
+      _switchingNodeKey = null;
+      _error = null;
+      _search.clear();
+    });
+    try {
+      final response = await widget.api.switchSupplier(fileName);
+      if (response['ok'] != true) {
+        throw WingApiException(response['msg']?.toString() ?? '订阅切换失败');
+      }
+      final suppliers = await widget.api.getSuppliers();
+      if (mounted) setState(() => _suppliers = suppliers);
+      await _load();
+      await widget.onChanged();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _selectedSupplierFile = previousFile;
+          _error = error.toString();
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _switchingSupplier = false);
     }
   }
 
   Future<void> _switch(Map<String, dynamic> node) async {
-    if (_switchingIndex != null) return;
-    final index = (node['index'] as num).toInt();
-    setState(() => _switchingIndex = index);
+    if (_switchingNodeKey != null) return;
+    final key = _nodeKey(node);
+    setState(() => _switchingNodeKey = key);
     try {
       final response = await widget.api.switchNode(node);
       if (response['ok'] != true) {
@@ -963,23 +1028,23 @@ class _NodesPageState extends State<_NodesPage> {
       await _load();
       await widget.onChanged();
     } finally {
-      if (mounted) setState(() => _switchingIndex = null);
+      if (mounted) setState(() => _switchingNodeKey = null);
     }
   }
 
   Future<void> _test(Map<String, dynamic> node) async {
-    final index = (node['index'] as num).toInt();
-    setState(() => _testing.add(index));
+    final key = _nodeKey(node);
+    setState(() => _testing.add(key));
     try {
       final latency = await widget.api.testNode(node);
-      final position = _nodes.indexWhere((item) => item['index'] == index);
+      final position = _nodes.indexWhere((item) => _nodeKey(item) == key);
       if (mounted && position >= 0) {
         setState(
           () => _nodes[position] = {..._nodes[position], 'latency': latency},
         );
       }
     } finally {
-      if (mounted) setState(() => _testing.remove(index));
+      if (mounted) setState(() => _testing.remove(key));
     }
   }
 
@@ -1001,7 +1066,7 @@ class _NodesPageState extends State<_NodesPage> {
     bool onlyWhenEnabled = false,
     bool silent = false,
   }) async {
-    if (_autoSelecting || _switchingIndex != null || _nodes.isEmpty) return;
+    if (_autoSelecting || _switchingNodeKey != null || _nodes.isEmpty) return;
     setState(() => _autoSelecting = true);
     try {
       final config = await widget.api.getAutoSelectConfig();
@@ -1048,7 +1113,37 @@ class _NodesPageState extends State<_NodesPage> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          child: DropdownButtonFormField<String>(
+            key: ValueKey(_selectedSupplierFile),
+            value: _selectedSupplierFile,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: '选择订阅',
+              prefixIcon: Icon(Icons.cloud_queue_rounded),
+            ),
+            items: _suppliers
+                .map((supplier) {
+                  final file = supplier['fileName']?.toString() ?? '';
+                  return DropdownMenuItem(
+                    value: file,
+                    child: Text(
+                      supplier['name']?.toString() ?? file,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                })
+                .toList(growable: false),
+            onChanged:
+                _switchingSupplier
+                    ? null
+                    : (file) {
+                      if (file != null) _selectSupplier(file);
+                    },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: TextField(
             controller: _search,
             onChanged: (_) => setState(() {}),
@@ -1115,18 +1210,24 @@ class _NodesPageState extends State<_NodesPage> {
                       message: '暂无节点，请先导入订阅',
                     )
                     : ListView.builder(
+                      key: PageStorageKey<String>(
+                        'nodes:${_selectedSupplierFile ?? 'all'}',
+                      ),
                       padding: const EdgeInsets.fromLTRB(12, 6, 12, 28),
+                      cacheExtent: 328,
+                      addAutomaticKeepAlives: false,
                       itemCount: filtered.length,
                       itemExtent: 82,
                       itemBuilder: (context, index) {
                         final node = filtered[index];
                         final active = node['active'] == true;
                         final latency = (node['latency'] as num?)?.toInt() ?? 0;
-                        final nodeIndex = (node['index'] as num).toInt();
+                        final nodeKey = _nodeKey(node);
                         final nodeType = node['type']?.toString() ?? '';
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 6),
                           child: Card(
+                            key: ValueKey(nodeKey),
                             color: active ? const Color(0xFF173D37) : null,
                             child: ListTile(
                               onTap: () async {
@@ -1158,8 +1259,8 @@ class _NodesPageState extends State<_NodesPage> {
                                 '${node['group'] ?? '未分组'} · ${node['type'] ?? 'unknown'}',
                               ),
                               trailing:
-                                  _switchingIndex == nodeIndex ||
-                                          _testing.contains(nodeIndex)
+                                  _switchingNodeKey == nodeKey ||
+                                          _testing.contains(nodeKey)
                                       ? const SizedBox.square(
                                         dimension: 24,
                                         child: CircularProgressIndicator(

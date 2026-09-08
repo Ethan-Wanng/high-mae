@@ -582,6 +582,15 @@ func getNodes(w http.ResponseWriter, r *http.Request) {
 	globalNodesMu.Lock()
 	globalNodesCache = newCache
 	globalNodesMu.Unlock()
+	if fileName := strings.TrimSpace(r.URL.Query().Get("file")); fileName != "" {
+		filtered := make([]GlobalNodeInfo, 0)
+		for _, node := range newCache {
+			if node.FileName == fileName {
+				filtered = append(filtered, node)
+			}
+		}
+		newCache = filtered
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(newCache)

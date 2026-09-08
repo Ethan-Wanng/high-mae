@@ -346,6 +346,17 @@ func TestGetNodesMarksOnlyActiveSourceNodeActive(t *testing.T) {
 	if !activeByFile[secondFile] {
 		t.Fatalf("node from current file %s was not marked active", secondFile)
 	}
+
+	filteredReq := httptest.NewRequest(http.MethodGet, "/api/nodes?file="+url.QueryEscape(firstFile), nil)
+	filteredRR := httptest.NewRecorder()
+	getNodes(filteredRR, filteredReq)
+	var filtered []GlobalNodeInfo
+	if err := json.Unmarshal(filteredRR.Body.Bytes(), &filtered); err != nil {
+		t.Fatalf("filtered response JSON error: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].FileName != firstFile {
+		t.Fatalf("filtered nodes = %+v, want only %s", filtered, firstFile)
+	}
 }
 
 func TestSwitchSupplierRejectsUnknownFile(t *testing.T) {

@@ -78,6 +78,27 @@ void main() {
 
     expect(api.switchedNode, 11);
   });
+
+  testWidgets('switching subscription replaces the visible node list', (
+    tester,
+  ) async {
+    final api = _FakeWingApi(nodeCount: 8);
+    await tester.pumpWidget(WingAndroidApp(api: api));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('节点'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('测试节点 0'), findsOneWidget);
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('备用订阅').last);
+    await tester.pumpAndSettle();
+
+    expect(api.activeFile, 'backup.yml');
+    expect(find.text('备用节点 0'), findsOneWidget);
+    expect(find.text('测试节点 0'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _FakeWingApi implements WingApi {
@@ -86,6 +107,7 @@ class _FakeWingApi implements WingApi {
   final bool autoSelectEnabled;
   final int nodeCount;
   int? switchedNode;
+  String activeFile = 'test.yml';
 
   @override
   Future<Map<String, dynamic>> getStatus() async => {
@@ -121,20 +143,37 @@ class _FakeWingApi implements WingApi {
   ];
 
   @override
-  Future<List<Map<String, dynamic>>> getNodes() async => List.generate(
-    nodeCount,
-    (index) => {
-      'index': index,
-      'name': '测试节点 $index',
-      'group': '测试订阅',
-      'type': 'vless',
-      'latency': 0,
-      'active': switchedNode == index,
-    },
-  );
+  Future<List<Map<String, dynamic>>> getNodes({String? fileName}) async {
+    final selectedFile = fileName ?? activeFile;
+    final backup = selectedFile == 'backup.yml';
+    return List.generate(
+      nodeCount,
+      (index) => {
+        'index': index,
+        'name': '${backup ? '备用' : '测试'}节点 $index',
+        'group': backup ? '备用订阅' : '测试订阅',
+        'fileName': selectedFile,
+        'subIndex': index,
+        'type': 'vless',
+        'latency': 0,
+        'active': switchedNode == index,
+      },
+    );
+  }
 
   @override
-  Future<List<Map<String, dynamic>>> getSuppliers() async => [];
+  Future<List<Map<String, dynamic>>> getSuppliers() async => [
+    {
+      'name': '测试订阅',
+      'fileName': 'test.yml',
+      'active': activeFile == 'test.yml',
+    },
+    {
+      'name': '备用订阅',
+      'fileName': 'backup.yml',
+      'active': activeFile == 'backup.yml',
+    },
+  ];
 
   @override
   Future<Map<String, dynamic>> deleteSupplier(String fileName) async => {
@@ -188,9 +227,10 @@ class _FakeWingApi implements WingApi {
   }
 
   @override
-  Future<Map<String, dynamic>> switchSupplier(String fileName) async => {
-    'ok': true,
-  };
+  Future<Map<String, dynamic>> switchSupplier(String fileName) async {
+    activeFile = fileName;
+    return {'ok': true};
+  }
 
   @override
   Future<Map<String, dynamic>> testSites() async => {
