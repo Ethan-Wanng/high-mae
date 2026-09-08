@@ -279,7 +279,7 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 			portsStr = node.MPort
 		}
 		if portsStr != "" {
-			opts.ServerPorts = badoption.Listable[string]{portsStr}
+			opts.ServerPorts = badoption.Listable[string](normalizeHysteriaPorts(portsStr))
 			if opts.ServerPort == 0 {
 				opts.ServerPort = uint16(parseFirstPort(portsStr))
 			}

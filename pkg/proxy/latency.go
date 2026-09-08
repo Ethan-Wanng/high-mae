@@ -378,7 +378,7 @@ func TestNodeLatency(node protocol.Node) (int64, error) {
 }
 
 func parseFirstPort(portStr string) int {
-	portStr = strings.TrimSpace(portStr)
+	portStr = strings.Trim(strings.TrimSpace(portStr), "[]\"' ")
 	for _, sep := range []string{"-", ":", "/", ","} {
 		if idx := strings.Index(portStr, sep); idx != -1 {
 			portStr = portStr[:idx]
@@ -387,6 +387,18 @@ func parseFirstPort(portStr string) int {
 	}
 	p, _ := strconv.Atoi(strings.TrimSpace(portStr))
 	return p
+}
+
+// Subscription formats may encode hopping ports as a list or a range.
+// sing-box expects individual ranges with a colon separator, without brackets.
+func normalizeHysteriaPorts(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '[' || r == ']' || r == ',' || r == ' ' || r == '"' || r == '\''
+	})
+	for i := range parts {
+		parts[i] = strings.ReplaceAll(parts[i], "-", ":")
+	}
+	return parts
 }
 
 func requiresFullLatencyProbe(node protocol.Node) bool {
