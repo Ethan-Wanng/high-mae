@@ -1,12 +1,13 @@
 package proxy
 
 import (
+	"bufio"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 	"wing/pkg/common"
@@ -116,7 +117,7 @@ func handleSOCKS5(conn net.Conn) {
 		return
 	}
 	port := binary.BigEndian.Uint16(buf[:2])
-	targetAddr := fmt.Sprintf("%s:%d", host, port)
+	targetAddr := net.JoinHostPort(host, strconv.Itoa(int(port)))
 
 	if cmd == 0x03 {
 		// UDP ASSOCIATE
@@ -132,38 +133,42 @@ func handleSOCKS5(conn net.Conn) {
 		return
 	}
 
-	// Reply Success
-	if _, err := conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}); err != nil {
-		return
-	}
-	_ = conn.SetDeadline(time.Time{})
-
 	// 模拟 HTTP CONNECT 请求转发给本地 HTTPProxyHandler 处理
 	// 这样可以复用所有路由规则和统计逻辑
 	proxyConn, err := net.DialTimeout("tcp", "127.0.0.1:"+common.LocalHttpPort, 5*time.Second)
 	if err != nil {
+		_, _ = conn.Write([]byte{5, 1, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
 	defer proxyConn.Close()
+	_ = proxyConn.SetDeadline(time.Now().Add(10 * time.Second))
 
-	connectReq, _ := http.NewRequest(http.MethodConnect, "http://"+targetAddr, nil)
+	connectReq, err := http.NewRequest(http.MethodConnect, "http://"+targetAddr, nil)
+	if err != nil {
+		return
+	}
 	connectReq.Host = targetAddr
 	if err := connectReq.Write(proxyConn); err != nil {
 		return
 	}
 
-	// 读取 200 OK 响应
-	respBuf := make([]byte, 1024)
-	n, err := proxyConn.Read(respBuf)
-	if err != nil || n == 0 {
+	// Parse the complete response and retain any tunnel bytes read with it.
+	reader := bufio.NewReader(proxyConn)
+	response, err := http.ReadResponse(reader, connectReq)
+	if err != nil || response.StatusCode != http.StatusOK {
+		_, _ = conn.Write([]byte{5, 1, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	// 不把 200 OK 发给 client，因为 SOCKS5 已经握手成功了，直接开始双向传输
+	if _, err := conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
+		return
+	}
+	_ = conn.SetDeadline(time.Time{})
+	_ = proxyConn.SetDeadline(time.Time{})
 
 	// 双向复制
 	go func() {
 		_, _ = io.Copy(proxyConn, conn)
 		_ = proxyConn.Close()
 	}()
-	_, _ = io.Copy(conn, proxyConn)
+	_, _ = io.Copy(conn, reader)
 }
