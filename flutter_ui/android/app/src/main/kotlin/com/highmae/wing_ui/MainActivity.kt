@@ -49,8 +49,7 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 "stopVpn" -> {
-                    stopVpnService()
-                    result.success(true)
+                    stopVpnAndWait(result)
                 }
                 "getVpnStatus" -> {
                     result.success(WingVpnService.isRunning)
@@ -96,8 +95,33 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun stopVpnService() {
-        stopService(Intent(this, WingVpnService::class.java))
+    private fun stopVpnAndWait(result: MethodChannel.Result) {
+        if (!WingVpnService.isRunning && !WingVpnService.isStarting) {
+            result.success(true)
+            return
+        }
+        val intent = Intent(this, WingVpnService::class.java).apply {
+            action = WingVpnService.ACTION_STOP
+        }
+        startService(intent)
+        thread(name = "wing-vpn-stop", isDaemon = true) {
+            for (attempt in 0 until 50) {
+                if (!WingVpnService.isRunning && !WingVpnService.isStarting) {
+                    runOnUiThread { result.success(true) }
+                    return@thread
+                }
+                Thread.sleep(100)
+            }
+            // Fall back to the framework stop path if the explicit command was not handled.
+            stopService(Intent(this, WingVpnService::class.java))
+            runOnUiThread {
+                if (!WingVpnService.isRunning && !WingVpnService.isStarting) {
+                    result.success(true)
+                } else {
+                    result.error("VPN_STOP_TIMEOUT", "VPN 隧道断开超时，请重试", null)
+                }
+            }
+        }
     }
 
     private fun reconnectVpnBackend() {

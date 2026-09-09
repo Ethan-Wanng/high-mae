@@ -101,6 +101,31 @@ void main() {
     expect(find.text('测试节点 0'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('connected VPN can be disconnected', (tester) async {
+    var connected = true;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('com.highmae.wing/vpn'), (
+          call,
+        ) async {
+          if (call.method == 'getVpnStatus') return connected;
+          if (call.method == 'stopVpn') {
+            connected = false;
+            return true;
+          }
+          return true;
+        });
+
+    await tester.pumpWidget(WingAndroidApp(api: _FakeWingApi()));
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel('断开 VPN'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('断开 VPN'));
+    await tester.pumpAndSettle();
+
+    expect(connected, isFalse);
+    expect(find.bySemanticsLabel('连接 VPN'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _FakeWingApi implements WingApi {

@@ -598,7 +598,10 @@ class _WingAndroidHomeState extends State<WingAndroidHome> {
       if (allowed != true) {
         _message('需要允许系统 VPN 请求才能建立连接');
       }
-      await Future<void>.delayed(const Duration(milliseconds: 450));
+      if (_vpnRunning && mounted) {
+        setState(() => _vpnRunning = false);
+        _message('VPN 已断开');
+      }
       await _refreshStatus();
     } catch (error) {
       _message('VPN 操作失败：$error');

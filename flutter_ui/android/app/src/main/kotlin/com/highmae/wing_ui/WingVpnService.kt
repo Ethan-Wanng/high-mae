@@ -20,6 +20,7 @@ class WingVpnService : VpnService() {
     companion object {
         const val TAG = "WingVpnService"
         const val ACTION_START = "com.highmae.wing_ui.START_VPN"
+        const val ACTION_STOP = "com.highmae.wing_ui.STOP_VPN"
         const val ACTION_RECONNECT = "com.highmae.wing_ui.RECONNECT_VPN"
         const val CHANNEL_ID = "wing_vpn_channel"
         const val NOTIFICATION_ID = 10809
@@ -48,6 +49,10 @@ class WingVpnService : VpnService() {
         val action = intent?.action ?: ACTION_START
         when (action) {
             ACTION_START -> startVpn()
+            ACTION_STOP -> {
+                stopVpn()
+                stopSelf()
+            }
             ACTION_RECONNECT -> reconnectBackend()
         }
         return START_NOT_STICKY
