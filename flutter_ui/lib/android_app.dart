@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 part 'android_editors.dart';
-part 'android_auto_select.dart';
 
 const _nativeChannel = MethodChannel('com.highmae.wing/vpn');
 const _apiBase = 'http://127.0.0.1:10809';
@@ -60,10 +59,6 @@ abstract class WingApi {
   Future<Map<String, dynamic>> saveDns(Map<String, dynamic> config);
   Future<Map<String, dynamic>> saveRules(List<Map<String, dynamic>> groups);
   Future<Map<String, dynamic>> resetRules();
-  Future<Map<String, dynamic>> getAutoSelectConfig();
-  Future<Map<String, dynamic>> saveAutoSelectConfig(
-    Map<String, dynamic> config,
-  );
   Future<Map<String, dynamic>> switchNode(Map<String, dynamic> node);
   Future<int> testNode(Map<String, dynamic> node);
   Future<void> testAllNodes();
@@ -196,21 +191,6 @@ class LocalWingApi implements WingApi {
   @override
   Future<Map<String, dynamic>> resetRules() async =>
       _map(await _request('/api/rules/reset_default', method: 'POST'));
-
-  @override
-  Future<Map<String, dynamic>> getAutoSelectConfig() async {
-    final response = _map(await _request('/api/auto_select_config'));
-    return Map<String, dynamic>.from(
-      response['config'] as Map? ?? _defaultAutoSelectConfig(),
-    );
-  }
-
-  @override
-  Future<Map<String, dynamic>> saveAutoSelectConfig(
-    Map<String, dynamic> config,
-  ) async => _map(
-    await _request('/api/auto_select_config', method: 'POST', body: config),
-  );
 
   @override
   Future<Map<String, dynamic>> switchNode(Map<String, dynamic> node) async =>
@@ -918,22 +898,16 @@ class _NodesPageState extends State<_NodesPage> {
   bool _loading = true;
   bool _switchingSupplier = false;
   bool _testingAll = false;
-  bool _autoSelecting = false;
   String? _selectedSupplierFile;
   String? _switchingNodeKey;
   final Set<String> _testing = {};
   String? _error;
-  Timer? _autoTimer;
   int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _initialize();
-    _autoTimer = Timer.periodic(
-      const Duration(minutes: 10),
-      (_) => _runAutoSelect(onlyWhenEnabled: true, silent: true),
-    );
   }
 
   Future<void> _initialize() async {
@@ -952,7 +926,6 @@ class _NodesPageState extends State<_NodesPage> {
       if (mounted) setState(() => _error = error.toString());
     }
     await _load();
-    await _runAutoSelect(onlyWhenEnabled: true, silent: true);
   }
 
   Future<void> _load() async {
@@ -984,7 +957,6 @@ class _NodesPageState extends State<_NodesPage> {
 
   Future<void> _selectSupplier(String fileName) async {
     if (_switchingSupplier || fileName == _selectedSupplierFile) return;
-    final previousFile = _selectedSupplierFile;
     ++_loadGeneration;
     setState(() {
       _switchingSupplier = true;
@@ -996,21 +968,9 @@ class _NodesPageState extends State<_NodesPage> {
       _search.clear();
     });
     try {
-      final response = await widget.api.switchSupplier(fileName);
-      if (response['ok'] != true) {
-        throw WingApiException(response['msg']?.toString() ?? '订阅切换失败');
-      }
-      final suppliers = await widget.api.getSuppliers();
-      if (mounted) setState(() => _suppliers = suppliers);
       await _load();
-      await widget.onChanged();
     } catch (error) {
-      if (mounted) {
-        setState(() {
-          _selectedSupplierFile = previousFile;
-          _error = error.toString();
-        });
-      }
+      if (mounted) setState(() => _error = error.toString());
     } finally {
       if (mounted) setState(() => _switchingSupplier = false);
     }
@@ -1059,44 +1019,6 @@ class _NodesPageState extends State<_NodesPage> {
       }
     } finally {
       if (mounted) setState(() => _testingAll = false);
-    }
-  }
-
-  Future<void> _runAutoSelect({
-    bool onlyWhenEnabled = false,
-    bool silent = false,
-  }) async {
-    if (_autoSelecting || _switchingNodeKey != null || _nodes.isEmpty) return;
-    setState(() => _autoSelecting = true);
-    try {
-      final config = await widget.api.getAutoSelectConfig();
-      if (onlyWhenEnabled && config['enabled'] != true) return;
-      final result = await _performAutoSelect(
-        widget.api,
-        config,
-        onProgress:
-            silent || !mounted ? null : (message) => _snack(context, message),
-      );
-      await _load();
-      await widget.onChanged();
-      if (!silent && mounted) {
-        _snack(context, '已选择 ${result['name']} · ${result['latency']} ms');
-      }
-    } catch (error) {
-      if (!silent && mounted) _snack(context, error.toString());
-    } finally {
-      if (mounted) setState(() => _autoSelecting = false);
-    }
-  }
-
-  Future<void> _openAutoSelectSettings() async {
-    final enabled = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => _AutoSelectSettingsPage(api: widget.api),
-      ),
-    );
-    if (enabled == true) {
-      await _runAutoSelect();
     }
   }
 
@@ -1164,34 +1086,6 @@ class _NodesPageState extends State<_NodesPage> {
             ),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _autoSelecting ? null : _openAutoSelectSettings,
-                  icon: const Icon(Icons.auto_awesome_rounded),
-                  label: const Text('自动选择设置'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _autoSelecting ? null : _runAutoSelect,
-                  icon:
-                      _autoSelecting
-                          ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                          : const Icon(Icons.bolt_rounded),
-                  label: Text(_autoSelecting ? '正在选优' : '立即选优'),
-                ),
-              ),
-            ],
-          ),
-        ),
         Expanded(
           child: RefreshIndicator(
             onRefresh: _load,
@@ -1214,8 +1108,10 @@ class _NodesPageState extends State<_NodesPage> {
                         'nodes:${_selectedSupplierFile ?? 'all'}',
                       ),
                       padding: const EdgeInsets.fromLTRB(12, 6, 12, 28),
-                      cacheExtent: 328,
+                      cacheExtent: 82,
                       addAutomaticKeepAlives: false,
+                      addRepaintBoundaries: false,
+                      addSemanticIndexes: false,
                       itemCount: filtered.length,
                       itemExtent: 82,
                       itemBuilder: (context, index) {
@@ -1298,7 +1194,6 @@ class _NodesPageState extends State<_NodesPage> {
 
   @override
   void dispose() {
-    _autoTimer?.cancel();
     _search.dispose();
     super.dispose();
   }

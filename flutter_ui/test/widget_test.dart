@@ -59,7 +59,7 @@ void main() {
     },
   );
 
-  testWidgets('Android automatic selection switches to the fastest node', (
+  testWidgets('opening nodes does not trigger automatic selection', (
     tester,
   ) async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -68,7 +68,7 @@ void main() {
           (call) async => call.method == 'getVpnStatus' ? false : true,
         );
 
-    final api = _FakeWingApi(autoSelectEnabled: true, nodeCount: 12);
+    final api = _FakeWingApi(nodeCount: 12);
     await tester.pumpWidget(WingAndroidApp(api: api));
     await tester.pumpAndSettle();
     expect(api.switchedNode, isNull);
@@ -76,7 +76,7 @@ void main() {
     await tester.tap(find.text('节点'));
     await tester.pumpAndSettle();
 
-    expect(api.switchedNode, 11);
+    expect(api.switchedNode, isNull);
   });
 
   testWidgets('switching subscription replaces the visible node list', (
@@ -94,7 +94,9 @@ void main() {
     await tester.tap(find.text('备用订阅').last);
     await tester.pumpAndSettle();
 
-    expect(api.activeFile, 'backup.yml');
+    expect(api.activeFile, 'test.yml');
+    expect(api.lastRequestedFile, 'backup.yml');
+    expect(api.switchSupplierCalls, 0);
     expect(find.text('备用节点 0'), findsOneWidget);
     expect(find.text('测试节点 0'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -102,12 +104,13 @@ void main() {
 }
 
 class _FakeWingApi implements WingApi {
-  _FakeWingApi({this.autoSelectEnabled = false, this.nodeCount = 120});
+  _FakeWingApi({this.nodeCount = 120});
 
-  final bool autoSelectEnabled;
   final int nodeCount;
   int? switchedNode;
   String activeFile = 'test.yml';
+  String? lastRequestedFile;
+  int switchSupplierCalls = 0;
 
   @override
   Future<Map<String, dynamic>> getStatus() async => {
@@ -131,19 +134,13 @@ class _FakeWingApi implements WingApi {
   };
 
   @override
-  Future<Map<String, dynamic>> getAutoSelectConfig() async => {
-    'enabled': autoSelectEnabled,
-    'scope': 'all',
-    'rules': <Object>[],
-  };
-
-  @override
   Future<List<Map<String, dynamic>>> getRules() async => [
     {'id': 'direct', 'name': '直连', 'action': 'direct', 'rules': <Object>[]},
   ];
 
   @override
   Future<List<Map<String, dynamic>>> getNodes({String? fileName}) async {
+    lastRequestedFile = fileName;
     final selectedFile = fileName ?? activeFile;
     final backup = selectedFile == 'backup.yml';
     return List.generate(
@@ -208,11 +205,6 @@ class _FakeWingApi implements WingApi {
   };
 
   @override
-  Future<Map<String, dynamic>> saveAutoSelectConfig(
-    Map<String, dynamic> config,
-  ) async => {'ok': true};
-
-  @override
   Future<Map<String, dynamic>> saveRules(
     List<Map<String, dynamic>> groups,
   ) async => {'ok': true};
@@ -228,6 +220,7 @@ class _FakeWingApi implements WingApi {
 
   @override
   Future<Map<String, dynamic>> switchSupplier(String fileName) async {
+    switchSupplierCalls++;
     activeFile = fileName;
     return {'ok': true};
   }
