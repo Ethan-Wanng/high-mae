@@ -24,9 +24,15 @@ if ! command -v flutter >/dev/null 2>&1; then
 fi
 
 mkdir -p "$DIST"
+bash "$ROOT/scripts/build-ios-core.sh"
 
 pushd "$ROOT/flutter_ui" >/dev/null
 flutter pub get
+if ! ruby -e "require 'xcodeproj'" >/dev/null 2>&1; then
+  echo "Ruby gem xcodeproj is required (gem install xcodeproj)." >&2
+  exit 1
+fi
+ruby "$ROOT/scripts/configure-ios-project.rb"
 
 if [[ -n "$EXPORT_OPTIONS_PLIST" ]]; then
   if [[ ! -f "$EXPORT_OPTIONS_PLIST" ]]; then

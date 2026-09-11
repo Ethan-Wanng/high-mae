@@ -48,3 +48,4 @@ evaluation_tasks.md
 test_link
 scratch/*
 !flutter_ui/assets/bin/
+flutter_ui/ios/Frameworks/

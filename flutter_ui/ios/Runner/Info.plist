@@ -32,7 +32,7 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>用于连接本机或局域网内的 wing 控制面板。</string>
+	<string>wing 使用本机代理核心处理订阅、节点和网络连接。</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

@@ -9,7 +9,7 @@ const _iosDefaultWebUIURL = 'http://127.0.0.1:10809/';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  if (Platform.isAndroid) {
+  if (Platform.isAndroid || Platform.isIOS) {
     runApp(const WingAndroidBootstrap());
     return;
   }
