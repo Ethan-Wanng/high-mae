@@ -39,7 +39,12 @@ jobs:
           flutter analyze
           flutter test
       - name: Build unsigned native IPA
-        run: bash scripts/package-ios.sh
+        run: bash scripts/package-ios.sh 2>&1 | tee ios-build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wing-ios-native-build-log
+          path: ios-build.log
       - uses: actions/upload-artifact@v4
         with:
           name: wing-ios-native-unsigned
