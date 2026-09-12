@@ -22,7 +22,7 @@ if [[ ! -f "$PROFILE" || ! -f "$TUNNEL_PROFILE" || ! -f "$P12" ]]; then
   exit 1
 fi
 
-KEYCHAIN="$RUNNER_TEMP/wing-signing.keychain-db"
+KEYCHAIN="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/wing-signing.keychain-db"
 KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
 PROFILE_UUID="$(security cms -D -i "$PROFILE" | plutil -extract UUID raw -)"
 PROFILE_NAME="$(security cms -D -i "$PROFILE" | plutil -extract Name raw -)"
@@ -39,7 +39,7 @@ security import "$P12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
 security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
 security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 
-EXPORT_PLIST="$RUNNER_TEMP/wing-export-options.plist"
+EXPORT_PLIST="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/wing-export-options.plist"
 cat >"$EXPORT_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
