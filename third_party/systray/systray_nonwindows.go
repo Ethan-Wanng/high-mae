@@ -1,4 +1,4 @@
-//go:build !windows && !android
+//go:build !windows && !android && !ios
 // +build !windows,!android
 
 package systray
