@@ -30,12 +30,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 return
             }
             self?.logger.info("wing packet tunnel network settings installed")
-            // The embedded wing core framework is attached here by the macOS
-            // packaging step; never report a connected tunnel without it.
+            // The packetFlow-to-core bridge is not implemented yet. Do not
+            // report a connected tunnel that would blackhole device traffic.
             let unavailable = NSError(
                 domain: "com.highmae.wing.PacketTunnel",
                 code: 1001,
-                userInfo: [NSLocalizedDescriptionKey: "wing iOS core framework is not embedded"]
+                userInfo: [NSLocalizedDescriptionKey: "wing iOS packet processing is not ready"]
             )
             completionHandler(unavailable)
         }
