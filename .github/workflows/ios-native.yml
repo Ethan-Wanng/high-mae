@@ -43,7 +43,12 @@ jobs:
           set -o pipefail
           if ! bash scripts/package-ios.sh >ios-build.log 2>&1; then
             tail -n 100 ios-build.log
-            echo "::error::Native iOS package failed; see build log artifact"
+            while IFS= read -r line; do
+              line="${line//'%'/'%25'}"
+              line="${line//$'\r'/'%0D'}"
+              line="${line//$'\n'/'%0A'}"
+              echo "::error file=scripts/package-ios.sh,line=1::$line"
+            done < <(tail -n 20 ios-build.log)
             exit 1
           fi
           tail -n 30 ios-build.log
