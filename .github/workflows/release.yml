@@ -146,14 +146,28 @@ jobs:
   ios:
     name: iOS unsigned IPA
     runs-on: macos-15
+    # The native iOS client is still in progress; a failed IPA build must not block
+    # the desktop and Android release assets.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+
+      - name: Install iOS build tools
+        run: |
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
+          gem install xcodeproj --no-document
 
       - name: Build unsigned iOS IPA
         run: |
@@ -175,6 +189,13 @@ jobs:
       - macos
       - android
       - ios
+    # Publish when every required platform succeeded; the iOS IPA is attached only if it built.
+    if: >-
+      ${{ !cancelled() &&
+      needs.windows.result == 'success' &&
+      needs.linux.result == 'success' &&
+      needs.macos.result == 'success' &&
+      needs.android.result == 'success' }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -194,13 +215,13 @@ jobs:
             - Linux: wing-${{ env.WING_VERSION }}-linux-x64.run
             - macOS: wing-${{ env.WING_VERSION }}-macos-x64.pkg
             - Android: wing-${{ env.WING_VERSION }}-android-universal.apk
-            - iOS: wing-${{ env.WING_VERSION }}-ios-unsigned.ipa
+            ${{ hashFiles('artifacts/*.ipa') != '' && format('- iOS: wing-{0}-ios-unsigned.ipa', env.WING_VERSION) || '- iOS: not included in this release (native iOS build in progress)' }}
 
             Notes:
             - Node domains are resolved through the DoH servers declared in the subscription (Clash nameserver-policy, sing-box dns.rules / domain_resolver), fixing whole subscriptions timing out when public DNS returns placeholder IPs.
             - Subscriptions are fetched as mihomo and sing-box in parallel and merged, so Mieru and Naive nodes offered only in one format are included; placeholder "client too old" responses are rejected.
             - sing-box subscriptions now honor disable_sni, ALPN and uTLS fingerprint settings.
             - Existing subscriptions need one refresh to pick up the new DNS settings.
-            - The iOS IPA is unsigned and must be signed with an Apple Developer certificate before device distribution.
+            ${{ hashFiles('artifacts/*.ipa') != '' && '- The iOS IPA is unsigned and must be signed with an Apple Developer certificate before device distribution.' || '' }}
           files: artifacts/*
           overwrite_files: true
