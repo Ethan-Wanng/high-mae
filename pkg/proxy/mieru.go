@@ -118,7 +118,7 @@ func newMieruClientAdapter(node protocol.Node) (*MieruClientAdapter, error) {
 
 	config := &mieruClient.ClientConfig{
 		Profile:  profile,
-		Resolver: mieruResolver{strategy: node.DomainStrategy},
+		Resolver: mieruResolver{strategy: node.DomainStrategy, dnsServers: node.DNSServers},
 		DNSConfig: &mieruCommon.ClientDNSConfig{
 			BypassDialerDNS: false,
 		},
@@ -149,7 +149,7 @@ func newMieruSocks5Adapter(node protocol.Node, forceNoWait bool) (*MieruSocks5Ad
 	}
 
 	dialer, packetDialer := newMieruBypassDialers()
-	resolver := mieruResolver{strategy: node.DomainStrategy}
+	resolver := mieruResolver{strategy: node.DomainStrategy, dnsServers: node.DNSServers}
 	var mux *mieruProtocol.Mux
 	if dialer != nil {
 		mux, err = mieruAppctlCommon.NewClientMuxFromProfile(profile, dialer, packetDialer, resolver, nil)
@@ -445,11 +445,15 @@ func parseMieruHandshakeMode(value string) (mieruPB.HandshakeMode, bool) {
 }
 
 type mieruResolver struct {
-	strategy string
+	strategy   string
+	dnsServers []string
 }
 
 func (r mieruResolver) LookupIP(ctx context.Context, network, host string) ([]net.IP, error) {
-	resolved := ResolveDirectWithStrategy(host, r.strategy)
+	resolved := resolveHostWithNodeDNS(host, r.dnsServers, r.strategy)
+	if resolved == "" {
+		resolved = ResolveDirectWithStrategy(host, r.strategy)
+	}
 	if resolved == "" {
 		return nil, fmt.Errorf("failed to resolve %s", host)
 	}

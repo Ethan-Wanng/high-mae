@@ -750,11 +750,13 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 		return nil, nil, fmt.Errorf("出于安全原因，默认拒绝明文 HTTP 订阅；请改用 HTTPS")
 	}
 	if isRemoteSubscription(input) {
-		// Most providers expose their richest variants to Karing or Clash Meta.
-		// Probe only those two in parallel to avoid hammering providers (and being
-		// rate-limited), then use a short compatibility fallback list on failure.
-		primaryUserAgents := []string{"Karing/2.0.0", "ClashMeta"}
-		fallbackUserAgents := []string{"sing-box", "Shadowrocket", "wing/1.0"}
+		// Providers gate node variants on versioned client names: unversioned or old
+		// UAs may receive "client too old" placeholder nodes, and the Clash-family
+		// variant (e.g. mieru) and sing-box variant (e.g. naive) can each carry
+		// protocols the other omits. Probe one of each in parallel and merge them,
+		// then use a short compatibility fallback list if both fail.
+		primaryUserAgents := []string{"mihomo/1.19.15", "sing-box/1.13.6"}
+		fallbackUserAgents := []string{"Karing/2.0.0", "ClashMeta", "Shadowrocket", "wing/1.0"}
 		type parseResult struct {
 			nodes   []protocol.Node
 			traffic *SubscriptionTraffic
@@ -769,53 +771,57 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 			}
 			currentTraffic := ParseSubscriptionTraffic(info.Headers)
 			parsed, parseErr := protocol.ParseSubscriptionRaw(info.Body)
+			if parseErr == nil && len(parsed) > 0 && allPlaceholderNodes(parsed) {
+				parseErr = fmt.Errorf("订阅仅返回占位节点（客户端标识不受支持）")
+				parsed = nil
+			}
 			return parseResult{nodes: parsed, traffic: currentTraffic, err: parseErr}
 		}
 
-		results := make(chan parseResult, len(primaryUserAgents))
-		for _, userAgent := range primaryUserAgents {
-			ua := userAgent
+		type indexedResult struct {
+			index int
+			parseResult
+		}
+		results := make(chan indexedResult, len(primaryUserAgents))
+		for i, userAgent := range primaryUserAgents {
+			index, ua := i, userAgent
 			utils.SafeGo("parse subscription "+ua, func() {
-				results <- parseWithUserAgent(ua)
+				results <- indexedResult{index: index, parseResult: parseWithUserAgent(ua)}
 			})
 		}
 
-		var bestNodes []protocol.Node
-		var bestTraffic *SubscriptionTraffic
-		var firstErr error
-		var settleTimer *time.Timer
-		var settle <-chan time.Time
-		for i := 0; i < len(primaryUserAgents); i++ {
+		// 按 UA 顺序保存结果，使合并基准不受响应先后影响。
+		ordered := make([]parseResult, len(primaryUserAgents))
+		for received := 0; received < len(primaryUserAgents); received++ {
 			select {
 			case result := <-results:
-				if result.err != nil {
-					if firstErr == nil {
-						firstErr = result.err
-					}
-					continue
-				}
-				if len(result.nodes) > len(bestNodes) {
-					bestNodes = result.nodes
-					bestTraffic = result.traffic
-				} else if len(result.nodes) == len(bestNodes) && bestTraffic == nil && result.traffic != nil {
-					bestTraffic = result.traffic
-				}
-				if len(bestNodes) > 0 && settle == nil {
-					settleTimer = time.NewTimer(350 * time.Millisecond)
-					settle = settleTimer.C
-				}
-			case <-settle:
-				i = len(primaryUserAgents)
+				ordered[result.index] = result.parseResult
 			case <-ctx.Done():
-				if firstErr == nil {
-					firstErr = ctx.Err()
-				}
-				i = len(primaryUserAgents)
+				received = len(primaryUserAgents)
 			}
 		}
-		if settleTimer != nil {
-			settleTimer.Stop()
+
+		var variants [][]protocol.Node
+		var bestTraffic *SubscriptionTraffic
+		var firstErr error
+		for _, result := range ordered {
+			if result.err != nil {
+				if firstErr == nil {
+					firstErr = result.err
+				}
+				continue
+			}
+			if len(result.nodes) > 0 {
+				variants = append(variants, result.nodes)
+			}
+			if bestTraffic == nil && result.traffic != nil {
+				bestTraffic = result.traffic
+			}
 		}
+		if len(variants) == 0 && firstErr == nil && ctx.Err() != nil {
+			firstErr = ctx.Err()
+		}
+		bestNodes := mergeSubscriptionVariants(variants)
 
 		if len(bestNodes) == 0 {
 			for _, userAgent := range fallbackUserAgents {

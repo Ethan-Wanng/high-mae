@@ -30,7 +30,7 @@ func ResolveDirect(host string) string {
 }
 
 func ResolveNodeServer(node protocol.Node) string {
-	return ResolveDirectWithStrategy(node.Server, defaultDomainStrategy())
+	return resolveNodeServerWithStrategy(node, defaultDomainStrategy())
 }
 
 func defaultDomainStrategy() string {

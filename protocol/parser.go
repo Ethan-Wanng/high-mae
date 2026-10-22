@@ -81,6 +81,7 @@ type Node struct {
 	Group                  string            `yaml:"group,omitempty"`
 	Obfs                   string            `yaml:"obfs,omitempty"`
 	ObfsPassword           string            `yaml:"obfs-password,omitempty"`
+	DNSServers             []string          `yaml:"dns-servers,omitempty"` // 订阅指定的节点域名 DoH 解析器
 	SourceFile             string            `yaml:"source-file,omitempty"`
 	SourceKey              string            `yaml:"source-key,omitempty"`
 	SourceName             string            `yaml:"source-name,omitempty"`

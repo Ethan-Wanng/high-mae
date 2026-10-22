@@ -18,11 +18,11 @@ type clashSubscription struct {
 
 func ParseSubscriptionRaw(raw []byte) ([]Node, error) {
 	if nodes, err := ParseClashMetaNodes(raw); err == nil && len(nodes) > 0 {
-		return nodes, nil
+		return ApplySubscriptionDNSPolicy(raw, nodes), nil
 	}
 
 	if nodes, err := ParseSingBoxNodes(raw); err == nil && len(nodes) > 0 {
-		return nodes, nil
+		return ApplySubscriptionDNSPolicy(raw, nodes), nil
 	}
 
 	content, err := NormalizeSubscription(raw)
@@ -120,7 +120,15 @@ func singBoxOutboundToNode(outbound map[string]any) (Node, bool) {
 		node.Insecure = truthy(tlsMap["insecure"])
 		node.AllowInsecure = node.Insecure
 		node.SkipCertVerify = node.Insecure
-		node.ClientFingerprint = getString(tlsMap, "utls")
+		node.DisableSNI = truthy(tlsMap["disable_sni"])
+		node.ALPN = stringList(tlsMap["alpn"])
+		if utlsMap, ok := tlsMap["utls"].(map[string]any); ok {
+			if truthy(utlsMap["enabled"]) {
+				node.ClientFingerprint = getString(utlsMap, "fingerprint")
+			}
+		} else {
+			node.ClientFingerprint = getString(tlsMap, "utls")
+		}
 	}
 	if node.Type == "tuic" {
 		node.CongestionControl = getString(outbound, "congestion_control")
