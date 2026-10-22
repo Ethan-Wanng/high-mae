@@ -197,10 +197,10 @@ jobs:
             - iOS: wing-${{ env.WING_VERSION }}-ios-unsigned.ipa
 
             Notes:
-            - Android is a standalone Flutter-native client (not a WebView shell), bundles the Go backend, and uses the system VpnService permission flow plus TUN FD handoff.
-            - Subscription parsing covers Hysteria2 port hopping plus VLESS WebSocket, Reality, and TLS variants; the supplied 62-node profile is fully parsed.
-            - Subscription refresh and latency probing use fewer redundant requests and bounded fallback timeouts.
-            - The repository is licensed under the MIT License.
+            - Node domains are resolved through the DoH servers declared in the subscription (Clash nameserver-policy, sing-box dns.rules / domain_resolver), fixing whole subscriptions timing out when public DNS returns placeholder IPs.
+            - Subscriptions are fetched as mihomo and sing-box in parallel and merged, so Mieru and Naive nodes offered only in one format are included; placeholder "client too old" responses are rejected.
+            - sing-box subscriptions now honor disable_sni, ALPN and uTLS fingerprint settings.
+            - Existing subscriptions need one refresh to pick up the new DNS settings.
             - The iOS IPA is unsigned and must be signed with an Apple Developer certificate before device distribution.
           files: artifacts/*
           overwrite_files: true
