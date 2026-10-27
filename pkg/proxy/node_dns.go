@@ -66,14 +66,19 @@ func resolveNodeServerWithStrategy(node protocol.Node, strategy string) string {
 	if len(ips) == 0 {
 		ips = lookupSystemIPs(cleanHost)
 	}
-	candidates := candidateResolvedIPs(ips, strategy)
-	switch len(candidates) {
-	case 0:
-		return ""
-	case 1:
-		return candidates[0]
+	groups := candidateIPGroups(ips, strategy)
+	total := 0
+	only := ""
+	for _, group := range groups {
+		total += len(group)
+		if len(group) > 0 && only == "" {
+			only = group[0]
+		}
 	}
-	return pickReachableNodeIP(node, candidates)
+	if total <= 1 {
+		return only
+	}
+	return pickReachableNodeIP(node, groups)
 }
 
 func lookupNodeDoH(host string, servers []string, strategy string) []string {

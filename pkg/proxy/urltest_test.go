@@ -49,6 +49,33 @@ func TestURLTestReportsSecondRequestOnReusedConnection(t *testing.T) {
 	}
 }
 
+func TestURLTestFallsBackToFirstRequestWhenSecondTimesOut(t *testing.T) {
+	var requests atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) > 1 {
+			<-release // 第二次请求卡住直到超时
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	defer close(release)
+
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", server.Listener.Addr().String())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	latency, err := URLTest(ctx, dial, server.URL+"/generate_204")
+	if err != nil {
+		t.Fatalf("URLTest() error = %v", err)
+	}
+	if latency >= 400 {
+		t.Fatalf("latency = %dms, want first request duration, not the timed-out second request", latency)
+	}
+}
+
 func TestURLTestFailsWhenProxyDialFails(t *testing.T) {
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return nil, errors.New("proxy unreachable")

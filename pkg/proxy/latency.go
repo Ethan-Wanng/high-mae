@@ -81,6 +81,37 @@ func selectResolvedIP(ips []string, strategy string) string {
 	return ""
 }
 
+// candidateIPGroups 按解析策略返回按优先级排列的地址族分组：*_only 只返回该族，
+// 优先某族时先返回该族再返回另一族，便于首选族不可达时回退（与 mihomo 的 Happy Eyeballs 一致）。
+func candidateIPGroups(ips []string, strategy string) [][]string {
+	v4, v6 := splitIPFamilies(ips)
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(strategy), "-", "_")) {
+	case "ipv4_only":
+		return [][]string{v4}
+	case "ipv6_only":
+		return [][]string{v6}
+	case "prefer_ipv6":
+		return [][]string{v6, v4}
+	default:
+		return [][]string{v4, v6}
+	}
+}
+
+func splitIPFamilies(ips []string) (v4, v6 []string) {
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil {
+			v4 = append(v4, ipStr)
+			continue
+		}
+		v6 = append(v6, ipStr)
+	}
+	return v4, v6
+}
+
 // candidateResolvedIPs 返回按解析策略应使用的那一族地址（保持原顺序）。
 func candidateResolvedIPs(ips []string, strategy string) []string {
 	preferIPv6 := false

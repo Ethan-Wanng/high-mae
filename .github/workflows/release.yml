@@ -220,6 +220,8 @@ jobs:
             Notes:
             - Latency tests now match Clash Party (mihomo URLTest with unified delay): a HEAD request to https://www.gstatic.com/generate_204 through the node, 5s timeout, timed on the reused connection; test-all runs 50 nodes in parallel.
             - When a node domain resolves to several IPs, all are probed (TCP connect, or QUIC version negotiation for Hysteria2/TUIC/Naive QUIC) and the first live one is used, so offline IPs in rotating pools no longer cause timeouts or failed connections.
+            - With "Prefer IPv6" enabled but no usable public IPv6, node addresses now fall back to IPv4 instead of timing out; a failed second unified-delay request no longer reports a near-timeout latency.
+            - Node search keeps focus while typing and is no longer interrupted by IME composition (e.g. Chinese input).
             - Fixes Hysteria2 nodes failing certificate verification: subscriptions are fetched as "mihomo/1.19.15 clash.meta" to get full Clash configs, structured configs win over share links on ties, and hysteria2:// links honor pinSHA256 / insecure=true. Refresh existing subscriptions once.
             - Includes 1.0.7: node domains resolve through the subscription's declared DoH servers, and mihomo/sing-box subscription variants are merged (refresh existing subscriptions once).
             ${{ hashFiles('artifacts/*.ipa') != '' && '- The iOS IPA is unsigned and must be signed with an Apple Developer certificate before device distribution.' || '' }}

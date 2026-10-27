@@ -84,14 +84,14 @@ func URLTest(ctx context.Context, dial DialContextFunc, testURL string) (int64, 
 	}
 	_ = resp.Body.Close()
 
-	// unified-delay：第二次请求复用已建立的连接；失败时退回第一次（含握手）的耗时。
+	// unified-delay：第二次请求复用已建立的连接；失败时退回第一次（含握手）的耗时，
+	// 不把失败的第二次请求等待时间计入，避免显示为接近超时的虚高延迟。
 	second := time.Now()
+	elapsed := second.Sub(start).Milliseconds()
 	if secondResp, secondErr := client.Do(req); secondErr == nil {
 		_ = secondResp.Body.Close()
-		start = second
+		elapsed = time.Since(second).Milliseconds()
 	}
-
-	elapsed := time.Since(start).Milliseconds()
 	if elapsed < 1 {
 		elapsed = 1
 	}

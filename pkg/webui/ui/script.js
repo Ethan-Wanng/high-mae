@@ -1030,6 +1030,8 @@ function renderNodes(options = {}) {
     const grid = document.getElementById('nodeGrid');
     const autoPane = document.getElementById('autoSelectNodePane');
     if (!grid) return;
+    // 输入法组字期间（含测速结果、轮询触发的刷新）不重绘，compositionend 后会统一刷新。
+    if (nodeSearchComposing) return;
     const searchFocus = captureNodeSearchFocus();
     parkNodeInlineToolbar();
     syncAutoNodesTabVisibility();
@@ -1177,7 +1179,6 @@ function renderNodes(options = {}) {
         list.appendChild(item);
     });
 
-    restoreNodeSearchFocus(searchFocus);
     if (!selectedGroup) {
         if (!groups.length && nodeGroupMode !== "aggregate") {
             grid.querySelector('.node-card-table').insertAdjacentHTML('beforeend', '<div class="empty-state">当前没有订阅组，点击 <strong>导入订阅</strong> 开始使用。</div>');
@@ -1185,6 +1186,8 @@ function renderNodes(options = {}) {
         return;
     }
     mountNodeInlineToolbar(grid.querySelector('.node-inline-toolbar-slot'));
+    // 必须在工具栏挂回网格后再恢复焦点：移动已聚焦的输入框会使其失焦。
+    restoreNodeSearchFocus(searchFocus);
     const body = grid.querySelector('.node-detail-body');
     if (!selectedNodes.length) {
         body.innerHTML = nodeGroupMode === "custom" && !keyword
@@ -1198,6 +1201,7 @@ function renderNodes(options = {}) {
 function renderAutoNodes() {
     const grid = document.getElementById('nodeGrid');
     if (!grid) return;
+    if (nodeSearchComposing) return;
     const searchFocus = captureNodeSearchFocus();
     parkNodeInlineToolbar();
     syncIgnoreTimeoutNodesToggle();
@@ -1235,7 +1239,31 @@ function renderAutoNodes() {
 }
 
 let filterNodesTimeout = null;
-function filterNodes() {
+// 中文等输入法组字期间会持续触发 input 事件；此时重绘会移动搜索框并打断组字，
+// 因此组字期间不过滤、不重绘，在 compositionend 后用最终文本过滤一次。
+let nodeSearchComposing = false;
+
+function bindNodeSearchComposition() {
+    const input = document.getElementById('nodeSearch');
+    if (!input || input.dataset.compositionBound) return;
+    input.dataset.compositionBound = '1';
+    input.addEventListener('compositionstart', () => {
+        nodeSearchComposing = true;
+    });
+    input.addEventListener('compositionend', () => {
+        nodeSearchComposing = false;
+        filterNodes();
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindNodeSearchComposition);
+} else {
+    bindNodeSearchComposition();
+}
+
+function filterNodes(event) {
+    if (nodeSearchComposing || event?.isComposing) return;
     if (filterNodesTimeout) clearTimeout(filterNodesTimeout);
     filterNodesTimeout = setTimeout(() => {
         if (nodeGroupMode === "auto_nodes") renderAutoNodes();

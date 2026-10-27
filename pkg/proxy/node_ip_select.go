@@ -32,31 +32,55 @@ var (
 	nodeIPChoices  = make(map[string]nodeIPChoice)
 )
 
-// pickReachableNodeIP 从候选地址中选出可连通的地址；都探测不通时退回第一个。
-func pickReachableNodeIP(node protocol.Node, candidates []string) string {
+// pickReachableNodeIP 按优先级依次探测各组候选地址（如优先 IPv6 时先 IPv6 再 IPv4），
+// 返回最先连通的地址；都探测不通时退回首选组的第一个地址。
+func pickReachableNodeIP(node protocol.Node, groups [][]string) string {
+	fallback := ""
+	for _, group := range groups {
+		if len(group) > 0 {
+			fallback = group[0]
+			break
+		}
+	}
+	if fallback == "" {
+		return ""
+	}
 	port := nodeProbePort(node)
 	quic := isQUICNode(node)
 	if !quic && isUDPNode(node) {
 		// 非 QUIC 的 UDP 传输（如 Mieru UDP）没有通用的存活探测方式。
-		return candidates[0]
+		return fallback
 	}
 	key := strings.ToLower(node.Server) + "|" + strconv.Itoa(port) + "|" + strconv.FormatBool(quic)
 
 	nodeIPChoiceMu.Lock()
-	if choice, ok := nodeIPChoices[key]; ok && time.Now().Before(choice.expires) && containsString(candidates, choice.ip) {
+	if choice, ok := nodeIPChoices[key]; ok && time.Now().Before(choice.expires) && groupsContain(groups, choice.ip) {
 		nodeIPChoiceMu.Unlock()
 		return choice.ip
 	}
 	nodeIPChoiceMu.Unlock()
 
-	winner := raceNodeIPs(candidates, port, quic)
-	if winner == "" {
-		return candidates[0]
+	for _, group := range groups {
+		if len(group) == 0 {
+			continue
+		}
+		if winner := raceNodeIPs(group, port, quic); winner != "" {
+			nodeIPChoiceMu.Lock()
+			nodeIPChoices[key] = nodeIPChoice{ip: winner, expires: time.Now().Add(nodeIPChoiceTTL)}
+			nodeIPChoiceMu.Unlock()
+			return winner
+		}
 	}
-	nodeIPChoiceMu.Lock()
-	nodeIPChoices[key] = nodeIPChoice{ip: winner, expires: time.Now().Add(nodeIPChoiceTTL)}
-	nodeIPChoiceMu.Unlock()
-	return winner
+	return fallback
+}
+
+func groupsContain(groups [][]string, target string) bool {
+	for _, group := range groups {
+		if containsString(group, target) {
+			return true
+		}
+	}
+	return false
 }
 
 func raceNodeIPs(candidates []string, port int, quic bool) string {
