@@ -33,7 +33,13 @@ func ParseHysteria2(link string) (Node, error) {
 	}
 
 	// 判断是否允许不安全的证书
-	insecure := q.Get("insecure") == "1" || q.Get("skip-cert-verify") == "true"
+	insecure := q.Get("insecure") == "1" || strings.EqualFold(q.Get("insecure"), "true") || q.Get("skip-cert-verify") == "true"
+	// pinSHA256 表示服务端使用自签名证书并按证书指纹固定。内核只支持公钥指纹，
+	// 无法校验证书指纹，因此与同一订阅的 Clash/sing-box 格式一致按跳过证书验证处理。
+	pin := strings.ReplaceAll(firstNonEmpty(q.Get("pinSHA256"), q.Get("pinsha256")), ":", "")
+	if pin != "" {
+		insecure = true
+	}
 
 	portRange := q.Get("mport")
 	if portRange == "" {
@@ -47,16 +53,17 @@ func ParseHysteria2(link string) (Node, error) {
 	}
 
 	return Node{
-		Type:           "hysteria2",
-		Name:           name,
-		Server:         u.Hostname(),
-		Port:           port,
-		PortRange:      portRange,
-		Password:       u.User.Username(),
-		SNI:            sni,
-		SkipCertVerify: insecure,
-		Obfs:           obfs,
-		ObfsPassword:   obfsPassword,
-		UDP:            true, // Hysteria2 基于 QUIC，天然支持并且默认走 UDP
+		Type:                   "hysteria2",
+		Name:                   name,
+		Server:                 u.Hostname(),
+		Port:                   port,
+		PortRange:              portRange,
+		Password:               u.User.Username(),
+		SNI:                    sni,
+		SkipCertVerify:         insecure,
+		CertificateFingerprint: strings.ToLower(pin),
+		Obfs:                   obfs,
+		ObfsPassword:           obfsPassword,
+		UDP:                    true, // Hysteria2 基于 QUIC，天然支持并且默认走 UDP
 	}, nil
 }

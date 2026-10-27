@@ -19,6 +19,7 @@ wing 是一款基于 Flutter + Go 的跨平台代理客户端。它集成 sing-b
 - 延迟测试改为与 Clash Party（mihomo URLTest + unified-delay）一致：经节点代理向 `https://www.gstatic.com/generate_204` 发送 HEAD 请求，超时 5 秒，以复用连接后的第二次请求耗时为准，不再用直连节点服务器的 TCP/QUIC 探测代替；全量测速并发提升到 50。
 - 节点多 IP 选择：节点域名解析出多个地址时，并发探测（TCP 握手或 QUIC 版本协商）并使用最先连通的地址，避免轮换 IP 池中已下线的地址导致测速 Timeout 或连接失败；测速、连接、TUN 路由和 Mieru 均生效。
 - 控制面板“极速测速”更名为“延迟测试”。
+- 修复 Hysteria2 节点全部失效：订阅改用同时带 `mihomo` 与 `clash.meta` 标识的客户端名获取完整 Clash 配置，节点数相同时优先结构化配置而非分享链接；Hysteria2 链接支持 `pinSHA256` 与 `insecure=true`，带证书指纹的自签名节点不再因证书校验失败而不可用。已导入的订阅需刷新一次。
 - 版本统一升级至 `1.0.7.1`。
 
 ## 1.0.7 更新

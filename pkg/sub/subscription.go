@@ -754,11 +754,14 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 		// UAs may receive "client too old" placeholder nodes, and the Clash-family
 		// variant (e.g. mieru) and sing-box variant (e.g. naive) can each carry
 		// protocols the other omits. Probe one of each in parallel and merge them,
-		// then use a short compatibility fallback list if both fail.
-		primaryUserAgents := []string{"mihomo/1.19.15", "sing-box/1.13.6"}
+		// then use a short compatibility fallback list if both fail. The Clash UA
+		// carries both the "mihomo" and "clash.meta" markers (like Clash Party) so
+		// providers that only match one of them still return full Clash YAML
+		// instead of share links that drop fields such as skip-cert-verify.
+		primaryUserAgents := []string{"mihomo/1.19.15 clash.meta", "sing-box/1.13.6"}
 		fallbackUserAgents := []string{"Karing/2.0.0", "ClashMeta", "Shadowrocket", "wing/1.0"}
 		type parseResult struct {
-			nodes   []protocol.Node
+			variant subscriptionVariant
 			traffic *SubscriptionTraffic
 			err     error
 		}
@@ -775,7 +778,11 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 				parseErr = fmt.Errorf("订阅仅返回占位节点（客户端标识不受支持）")
 				parsed = nil
 			}
-			return parseResult{nodes: parsed, traffic: currentTraffic, err: parseErr}
+			return parseResult{
+				variant: subscriptionVariant{nodes: parsed, structured: isStructuredSubscription(info.Body)},
+				traffic: currentTraffic,
+				err:     parseErr,
+			}
 		}
 
 		type indexedResult struct {
@@ -801,7 +808,7 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 			}
 		}
 
-		var variants [][]protocol.Node
+		var variants []subscriptionVariant
 		var bestTraffic *SubscriptionTraffic
 		var firstErr error
 		for _, result := range ordered {
@@ -811,8 +818,8 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 				}
 				continue
 			}
-			if len(result.nodes) > 0 {
-				variants = append(variants, result.nodes)
+			if len(result.variant.nodes) > 0 {
+				variants = append(variants, result.variant)
 			}
 			if bestTraffic == nil && result.traffic != nil {
 				bestTraffic = result.traffic
@@ -832,8 +839,8 @@ func ParseSubscriptionWithInfo(input string) ([]protocol.Node, *SubscriptionTraf
 					}
 					continue
 				}
-				if len(result.nodes) > 0 {
-					bestNodes = result.nodes
+				if len(result.variant.nodes) > 0 {
+					bestNodes = result.variant.nodes
 					bestTraffic = result.traffic
 					break
 				}

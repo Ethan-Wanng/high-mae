@@ -54,6 +54,28 @@ func TestBuildSingBoxOptionsNaiveUsesNaiveOutbound(t *testing.T) {
 	}
 }
 
+func TestBuildSingBoxOptionsPinnedHysteria2AcceptsSelfSignedCert(t *testing.T) {
+	opts, err := buildSingBoxOptions(protocol.Node{
+		Type:                   "hysteria2",
+		Server:                 "198.51.100.7",
+		Port:                   50000,
+		PortRange:              "50000-53000",
+		Password:               "secret",
+		SNI:                    "www.microsoft.com",
+		CertificateFingerprint: "b46e09c2",
+	}, "")
+	if err != nil {
+		t.Fatalf("buildSingBoxOptions() error = %v", err)
+	}
+	hy2, ok := opts.Outbounds[0].Options.(*option.Hysteria2OutboundOptions)
+	if !ok {
+		t.Fatalf("outbound options type = %T", opts.Outbounds[0].Options)
+	}
+	if hy2.TLS == nil || !hy2.TLS.Insecure || hy2.TLS.ServerName != "www.microsoft.com" {
+		t.Fatalf("TLS options = %+v, want insecure with masquerade SNI", hy2.TLS)
+	}
+}
+
 func TestBuildSingBoxOptionsUsesResolvedServerAddress(t *testing.T) {
 	opts, err := buildSingBoxOptions(protocol.Node{
 		Type:           "trojan",

@@ -18,7 +18,10 @@ func TestMergeSubscriptionVariantsKeepsBaseOrderAndAddsUniqueNodes(t *testing.T)
 		{Type: "naive", Name: "naive", Server: "n.example.com", Port: 443, Username: "u", Password: "p"},
 	}
 
-	merged := mergeSubscriptionVariants([][]protocol.Node{clashVariant, singBoxVariant})
+	merged := mergeSubscriptionVariants([]subscriptionVariant{
+		{nodes: clashVariant, structured: true},
+		{nodes: singBoxVariant, structured: true},
+	})
 	var names []string
 	for _, node := range merged {
 		names = append(names, node.Name)
@@ -45,5 +48,30 @@ func TestAllPlaceholderNodesDetectsOutdatedClientResponse(t *testing.T) {
 	real := append(placeholders, protocol.Node{Type: "anytls", Server: "a.example.com", Port: 4430, Password: "p"})
 	if allPlaceholderNodes(real) {
 		t.Fatal("expected response with a real node to be accepted")
+	}
+}
+
+func TestMergeSubscriptionVariantsPrefersStructuredOnTie(t *testing.T) {
+	linkVariant := []protocol.Node{{Type: "hysteria2", Name: "from-link", Server: "a.example.com", Port: 50000, Password: "p"}}
+	yamlVariant := []protocol.Node{{Type: "hysteria2", Name: "from-yaml", Server: "a.example.com", Port: 50000, Password: "p", SkipCertVerify: true}}
+
+	merged := mergeSubscriptionVariants([]subscriptionVariant{{nodes: linkVariant}, {nodes: yamlVariant, structured: true}})
+	if len(merged) != 1 || merged[0].Name != "from-yaml" || !merged[0].SkipCertVerify {
+		t.Fatalf("merged = %+v, want the structured YAML node", merged)
+	}
+}
+
+func TestIsStructuredSubscription(t *testing.T) {
+	cases := map[string]bool{
+		"mixed-port: 7890\nproxies:\n  - {name: a}": true,
+		"proxies:\n  - {name: a}":                   true,
+		`{"outbounds": []}`:                         true,
+		"aHlzdGVyaWEyOi8vMDJiMDE2ZDEt":              false,
+		"hysteria2://pw@1.2.3.4:443#a":              false,
+	}
+	for raw, want := range cases {
+		if got := isStructuredSubscription([]byte(raw)); got != want {
+			t.Fatalf("isStructuredSubscription(%q) = %v, want %v", raw, got, want)
+		}
 	}
 }

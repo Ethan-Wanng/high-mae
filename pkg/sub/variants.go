@@ -7,13 +7,36 @@ import (
 	"wing/protocol"
 )
 
+// subscriptionVariant 是同一订阅按某个客户端标识返回的节点列表。
+type subscriptionVariant struct {
+	nodes []protocol.Node
+	// structured 表示 Clash YAML / sing-box JSON 等完整配置；分享链接列表常丢失
+	// skip-cert-verify、端口跳跃等字段，节点数相同时不应作为基准。
+	structured bool
+}
+
+// isStructuredSubscription 判断订阅原文是否为 Clash YAML 或 sing-box JSON 配置。
+func isStructuredSubscription(raw []byte) bool {
+	text := strings.TrimSpace(strings.TrimPrefix(string(raw), string([]byte{0xEF, 0xBB, 0xBF})))
+	if strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
+		return true
+	}
+	return strings.Contains(text, "\nproxies:") || strings.HasPrefix(text, "proxies:")
+}
+
 // mergeSubscriptionVariants 合并同一订阅按不同客户端标识返回的节点列表。
-// 以节点最多的变体为基准保持其顺序（数量相同时取靠前的变体），再追加其它变体独有的节点
-// （如仅 sing-box 变体提供的 naive）。
-func mergeSubscriptionVariants(variants [][]protocol.Node) []protocol.Node {
+// 以节点最多的变体为基准保持其顺序（数量相同时优先结构化配置，其次取靠前的变体），
+// 再追加其它变体独有的节点（如仅 sing-box 变体提供的 naive）。
+func mergeSubscriptionVariants(variants []subscriptionVariant) []protocol.Node {
 	baseIndex := -1
-	for i, nodes := range variants {
-		if baseIndex < 0 || len(nodes) > len(variants[baseIndex]) {
+	for i, variant := range variants {
+		if baseIndex < 0 {
+			baseIndex = i
+			continue
+		}
+		base := variants[baseIndex]
+		if len(variant.nodes) > len(base.nodes) ||
+			(len(variant.nodes) == len(base.nodes) && variant.structured && !base.structured) {
 			baseIndex = i
 		}
 	}
@@ -21,16 +44,16 @@ func mergeSubscriptionVariants(variants [][]protocol.Node) []protocol.Node {
 		return nil
 	}
 
-	merged := append([]protocol.Node(nil), variants[baseIndex]...)
+	merged := append([]protocol.Node(nil), variants[baseIndex].nodes...)
 	seen := make(map[string]bool, len(merged))
 	for _, node := range merged {
 		seen[subscriptionNodeKey(node)] = true
 	}
-	for i, nodes := range variants {
+	for i, variant := range variants {
 		if i == baseIndex {
 			continue
 		}
-		for _, node := range nodes {
+		for _, node := range variant.nodes {
 			key := subscriptionNodeKey(node)
 			if seen[key] {
 				continue

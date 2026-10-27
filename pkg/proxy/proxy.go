@@ -143,8 +143,10 @@ func buildSingBoxOptions(node protocol.Node, resolvedIP string) (option.Options,
 	}
 	makeTLS := func() *option.OutboundTLSOptions {
 		tls := &option.OutboundTLSOptions{
-			Enabled:  true,
-			Insecure: node.SkipCertVerify,
+			Enabled: true,
+			// 证书指纹（Clash fingerprint / Hysteria2 pinSHA256）意味着服务端使用自签名证书；
+			// mihomo 会跳过 CA 校验改为比对指纹，内核只支持公钥指纹，这里按跳过 CA 校验处理。
+			Insecure: node.SkipCertVerify || node.CertificateFingerprint != "",
 		}
 		if !node.DisableSNI {
 			tls.ServerName = sni
