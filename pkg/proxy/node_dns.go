@@ -49,23 +49,31 @@ var (
 	nodeDoHInsecure    *http.Client
 )
 
+// resolveNodeServerWithStrategy 解析节点地址：优先订阅指定的 DoH，其次系统 DNS；
+// 域名对应多个地址时选出当前可连通的那个（见 pickReachableNodeIP）。解析失败返回空字符串。
 func resolveNodeServerWithStrategy(node protocol.Node, strategy string) string {
-	if ip := resolveHostWithNodeDNS(node.Server, node.DNSServers, strategy); ip != "" {
-		return ip
-	}
-	return ResolveDirectWithStrategy(node.Server, strategy)
-}
-
-// resolveHostWithNodeDNS 使用订阅指定的 DoH 解析节点域名；未配置或解析失败时返回空字符串。
-func resolveHostWithNodeDNS(host string, servers []string, strategy string) string {
-	cleanHost := strings.Trim(strings.TrimSpace(host), "[]")
-	if cleanHost == "" || len(servers) == 0 {
+	cleanHost := strings.Trim(strings.TrimSpace(node.Server), "[]")
+	if cleanHost == "" {
 		return ""
 	}
 	if net.ParseIP(cleanHost) != nil {
 		return cleanHost
 	}
-	return selectResolvedIP(lookupNodeDoH(cleanHost, servers, strategy), strategy)
+	var ips []string
+	if len(node.DNSServers) > 0 {
+		ips = lookupNodeDoH(cleanHost, node.DNSServers, strategy)
+	}
+	if len(ips) == 0 {
+		ips = lookupSystemIPs(cleanHost)
+	}
+	candidates := candidateResolvedIPs(ips, strategy)
+	switch len(candidates) {
+	case 0:
+		return ""
+	case 1:
+		return candidates[0]
+	}
+	return pickReachableNodeIP(node, candidates)
 }
 
 func lookupNodeDoH(host string, servers []string, strategy string) []string {

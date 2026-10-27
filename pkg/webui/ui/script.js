@@ -3991,7 +3991,7 @@ async function testAll() {
     btn.textContent = '测速中...';
     await fetch('/api/test_all', { method: 'POST' });
     btn.disabled = false;
-    btn.textContent = '极速测速';
+    btn.textContent = '延迟测试';
     loadNodes();
 }
 
@@ -4399,7 +4399,7 @@ const helpTopics = {
                 <div><strong>节点入口</strong><span>订阅组、聚合组、自定义节点和自动选择都在“节点管理”。这里决定当前出口是谁。</span></div>
                 <div><strong>运行模式</strong><span>设置里的代理服务、全局路由、TUN、WebRTC 决定流量怎么被接管。</span></div>
                 <div><strong>规则中心</strong><span>规则分流和 DNS 在“设置 / 管理”。聚合组直接在“节点管理 / 聚合组”里组合节点。</span></div>
-                <div><strong>验证工具</strong><span>极速测速看节点延迟，测试网站看目标服务是否真的可用。</span></div>
+                <div><strong>验证工具</strong><span>延迟测试经节点访问 gstatic 测往返延迟（与 Clash Party 一致），测试网站看目标服务是否真的可用。</span></div>
                 <div><strong>状态看板</strong><span>看板展示流量、连接和日志，用来判断当前状态是否符合预期。</span></div>
             </div>
             <h3>页面职责</h3>
@@ -4486,7 +4486,7 @@ const helpTopics = {
                 <li>订阅链接变更时，在订阅组详情里点“编辑”，同时更新订阅地址和自动更新时间。</li>
                 <li>测速后如果 Timeout 节点太多，可打开节点来源标签下方的“忽略超时节点”。</li>
                 <li>普通浏览器和多数桌面软件可先开启“代理服务”；游戏、命令行、部分不认系统代理的软件建议开启 TUN。</li>
-                <li>先用“极速测速”确认延迟，再用“测试网站”确认目标服务能否访问。</li>
+                <li>先用“延迟测试”确认延迟，再用“测试网站”确认目标服务能否访问。</li>
             </ol>
             ${helpJumpButtons([
                 { label: '订阅组', target: 'nodes', value: 'subscription', primary: true },

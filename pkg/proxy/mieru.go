@@ -118,7 +118,7 @@ func newMieruClientAdapter(node protocol.Node) (*MieruClientAdapter, error) {
 
 	config := &mieruClient.ClientConfig{
 		Profile:  profile,
-		Resolver: mieruResolver{strategy: node.DomainStrategy, dnsServers: node.DNSServers},
+		Resolver: mieruResolver{strategy: node.DomainStrategy, node: node},
 		DNSConfig: &mieruCommon.ClientDNSConfig{
 			BypassDialerDNS: false,
 		},
@@ -149,7 +149,7 @@ func newMieruSocks5Adapter(node protocol.Node, forceNoWait bool) (*MieruSocks5Ad
 	}
 
 	dialer, packetDialer := newMieruBypassDialers()
-	resolver := mieruResolver{strategy: node.DomainStrategy, dnsServers: node.DNSServers}
+	resolver := mieruResolver{strategy: node.DomainStrategy, node: node}
 	var mux *mieruProtocol.Mux
 	if dialer != nil {
 		mux, err = mieruAppctlCommon.NewClientMuxFromProfile(profile, dialer, packetDialer, resolver, nil)
@@ -445,15 +445,15 @@ func parseMieruHandshakeMode(value string) (mieruPB.HandshakeMode, bool) {
 }
 
 type mieruResolver struct {
-	strategy   string
-	dnsServers []string
+	strategy string
+	node     protocol.Node
 }
 
+// LookupIP 只用于解析 Mieru 服务端地址，走与其它协议相同的 DoH + 可达地址选择逻辑。
 func (r mieruResolver) LookupIP(ctx context.Context, network, host string) ([]net.IP, error) {
-	resolved := resolveHostWithNodeDNS(host, r.dnsServers, r.strategy)
-	if resolved == "" {
-		resolved = ResolveDirectWithStrategy(host, r.strategy)
-	}
+	node := r.node
+	node.Server = host
+	resolved := resolveNodeServerWithStrategy(node, r.strategy)
 	if resolved == "" {
 		return nil, fmt.Errorf("failed to resolve %s", host)
 	}

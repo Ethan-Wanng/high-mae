@@ -476,10 +476,10 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 				case <-ctx.Done():
 					return
 				case <-common.MTestAll.ClickedCh:
-					common.MTestAll.SetTitle("⏳ 极速测速中...")
+					common.MTestAll.SetTitle("⏳ 延迟测试中...")
 					common.MTestAll.Disable()
 
-					// 🚀 核心优化：改用极低内存消耗的 proxy.FastTCPPing，并将并发放宽到 50
+					// 与 Clash Party 一致：经节点代理 URLTest，并发 50
 					sem := make(chan struct{}, 50)
 					var wg sync.WaitGroup
 					nodesToTest := common.GetAllNodes()
@@ -490,7 +490,7 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 						wg.Add(1)
 						nd := n
 						parent := nodeParents[i]
-						utils.SafeGo("tray node tcp ping", func() {
+						utils.SafeGo("tray node latency test", func() {
 							defer wg.Done()
 							sem <- struct{}{}        // 获取令牌
 							defer func() { <-sem }() // 释放令牌
@@ -511,7 +511,7 @@ func RefreshNodeMenu(newNodes []protocol.Node) {
 						})
 					}
 					wg.Wait()
-					common.MTestAll.SetTitle("⚡ 极速测速所有节点 (TCP)")
+					common.MTestAll.SetTitle("⚡ 测试所有节点延迟")
 					common.MTestAll.Enable()
 					// 强制进行一次垃圾回收并释放系统内存
 					runtime.GC()

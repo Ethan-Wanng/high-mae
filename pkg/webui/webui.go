@@ -1602,7 +1602,7 @@ func testSingleHandler(w http.ResponseWriter, r *http.Request) {
 	var lat int64
 	var err error
 	if r.URL.Query().Get("current") == "1" && isCurrentActiveNode(targetNode) {
-		lat, err = testActiveProxyLatency(8 * time.Second)
+		lat, err = proxy.MeasureActiveLatency(proxy.DefaultLatencyTestTimeout)
 	} else {
 		lat, err = proxy.MeasureNodeLatency(targetNode)
 	}
@@ -1735,25 +1735,6 @@ func activeProxyHTTPClient() (*http.Client, error) {
 	return &http.Client{Transport: transport}, nil
 }
 
-func testActiveProxyLatency(timeout time.Duration) (int64, error) {
-	client := common.GetActiveClient()
-	if client == nil {
-		return -1, errors.New("当前没有正在工作的节点连接")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	start := time.Now()
-	conn, err := client.CreateProxy(ctx, metadata.ParseSocksaddr("www.gstatic.com:80"))
-	if err != nil {
-		conn, err = client.CreateProxy(ctx, metadata.ParseSocksaddr("cp.cloudflare.com:80"))
-	}
-	if err != nil {
-		return -1, err
-	}
-	_ = conn.Close()
-	return time.Since(start).Milliseconds(), nil
-}
-
 func runBandwidthSample(client *http.Client, targetURL string, timeout time.Duration) (bandwidthSample, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -1872,7 +1853,8 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 20)
+	// 与 Clash Party 默认的延迟测试并发数一致。
+	sem := make(chan struct{}, 50)
 
 	for _, gNode := range nodesToTest {
 		wg.Add(1)
