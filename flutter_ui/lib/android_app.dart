@@ -1781,7 +1781,7 @@ class _ToolsPageState extends State<_ToolsPage> {
         Card(
           child: ListTile(
             leading: const _WingMark(size: 42),
-            title: const Text('wing 1.0.7'),
+            title: const Text('wing 1.0.7.1'),
             subtitle: Text(
               'Android 原生客户端 · 内置代理核心\n架构：${widget.abi ?? 'unknown'} · MIT License',
             ),

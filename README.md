@@ -14,6 +14,13 @@
 
 wing 是一款基于 Flutter + Go 的跨平台代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，把节点订阅、测速、网站可用性测试、自动选点、规则分流、隧道连接、DNS 分流、WebRTC 防泄漏和命令行进程规则收进一个轻量桌面入口。界面采用扁平化布局，随网络状态切换直连、代理、TUN、代理 + TUN 四套配色；安装包、桌面窗口和搜索入口使用彩色渐变 wing 图标，首页、自动选择入口和托盘图标会按当前模式自动换成对应图标。
 
+## 1.0.7.1 更新
+
+- 延迟测试改为与 Clash Party（mihomo URLTest + unified-delay）一致：经节点代理向 `https://www.gstatic.com/generate_204` 发送 HEAD 请求，超时 5 秒，以复用连接后的第二次请求耗时为准，不再用直连节点服务器的 TCP/QUIC 探测代替；全量测速并发提升到 50。
+- 节点多 IP 选择：节点域名解析出多个地址时，并发探测（TCP 握手或 QUIC 版本协商）并使用最先连通的地址，避免轮换 IP 池中已下线的地址导致测速 Timeout 或连接失败；测速、连接、TUN 路由和 Mieru 均生效。
+- 控制面板“极速测速”更名为“延迟测试”。
+- 版本统一升级至 `1.0.7.1`。
+
 ## 1.0.7 更新
 
 - 节点域名 DNS 修复：读取订阅中声明的节点专用 DoH（Clash `nameserver-policy`、sing-box `dns.rules` / `domain_resolver`），测速、连接、TUN 路由和 Mieru 均通过它解析节点地址，修复公共 DNS 返回占位 IP 导致整批节点 Timeout 的问题。
@@ -136,14 +143,14 @@ go mod download
 双击根目录的 `package-wing.bat` 可以构建并生成给最终用户使用的 Windows 标准安装包：
 
 ```text
-dist/wing-1.0.7-windows-x64-setup.exe
+dist/wing-1.0.7.1-windows-x64-setup.exe
 ```
 
 命令行方式如下：
 
 ```powershell
 ./scripts/mk.ps1 build  # 构建 Flutter 控制面板与 Go 后端
-./scripts/mk.ps1 package # 构建并生成 dist/wing-1.0.7-windows-x64-setup.exe 标准安装包
+./scripts/mk.ps1 package # 构建并生成 dist/wing-1.0.7.1-windows-x64-setup.exe 标准安装包
 ./scripts/mk.ps1 installer # 同 package
 ./scripts/mk.ps1 portable # 生成旧版自解压安装包，不建议作为公开 Release 资产
 ./scripts/mk.ps1 backend # 仅构建 Go 后端
@@ -157,7 +164,7 @@ dist/wing-1.0.7-windows-x64-setup.exe
 
 - `wing.exe`：Go 后端、系统托盘、本地代理与本地 Web API。
 - `build/bin/flutter_ui/wing_ui.exe`：Flutter 桌面控制面板，会加载 `http://127.0.0.1:10809/`。
-- `dist/wing-1.0.7-windows-x64-setup.exe`：标准 Windows 安装包，用户双击后可选择安装目录。
+- `dist/wing-1.0.7.1-windows-x64-setup.exe`：标准 Windows 安装包，用户双击后可选择安装目录。
 - `dist/wing-installer.exe`：旧版自解压安装器，仅通过 `portable` 命令生成，公开分发时不推荐使用。
 
 ### 其他平台打包
@@ -182,18 +189,18 @@ bash scripts/package-ios.sh
 可通过环境变量覆盖版本与构建号：
 
 ```bash
-WING_VERSION=1.0.7 FLUTTER_BUILD_NUMBER=10070 bash scripts/package-android.sh
+WING_VERSION=1.0.7.1 FLUTTER_BUILD_NUMBER=10071 bash scripts/package-android.sh
 ```
 
 ### Release 资产
 
 GitHub Actions 的 `release.yml` 会为 `v*` 标签生成并上传以下资产：
 
-- `wing-1.0.7-windows-x64-setup.exe`
-- `wing-1.0.7-linux-x64.run`
-- `wing-1.0.7-macos-x64.pkg`
-- `wing-1.0.7-android-universal.apk`
-- `wing-1.0.7-ios-unsigned.ipa`
+- `wing-1.0.7.1-windows-x64-setup.exe`
+- `wing-1.0.7.1-linux-x64.run`
+- `wing-1.0.7.1-macos-x64.pkg`
+- `wing-1.0.7.1-android-universal.apk`
+- `wing-1.0.7.1-ios-unsigned.ipa`
 
 iOS 默认 Release 资产是未签名 IPA，需要 Apple Developer 证书签名后才能真机分发；本地可通过 `IOS_EXPORT_OPTIONS_PLIST=/path/to/ExportOptions.plist bash scripts/package-ios.sh` 生成签名 IPA。Windows 代理软件未签名时仍可能被部分安全软件误报；仓库提供 `scripts/sign-windows.ps1`，在配置代码签名证书后可自动签名 Windows 可执行文件和安装包。
 

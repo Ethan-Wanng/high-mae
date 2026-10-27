@@ -38,7 +38,7 @@ unless extension
     config.build_settings['SKIP_INSTALL'] = 'YES'
     config.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
     config.build_settings['MARKETING_VERSION'] = ENV.fetch('FLUTTER_BUILD_NAME', '1.0.6')
-    config.build_settings['CURRENT_PROJECT_VERSION'] = ENV.fetch('FLUTTER_BUILD_NUMBER', '10070')
+    config.build_settings['CURRENT_PROJECT_VERSION'] = ENV.fetch('FLUTTER_BUILD_NUMBER', '10071')
   end
 
   runner.add_dependency(extension)

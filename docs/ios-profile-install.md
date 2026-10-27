@@ -22,6 +22,6 @@ IOS_BUNDLE_ID=com.highmae.wing \
 bash scripts/package-ios-profile.sh
 ```
 
-签名链打通后 IPA 位于 `dist/wing-1.0.7-ios.ipa`，可通过 Xcode Devices and Simulators、Apple Configurator 或受信任的 MDM 安装。设备 UDID 必须包含在 development/ad-hoc 描述文件中。
+签名链打通后 IPA 位于 `dist/wing-1.0.7.1-ios.ipa`，可通过 Xcode Devices and Simulators、Apple Configurator 或受信任的 MDM 安装。设备 UDID 必须包含在 development/ad-hoc 描述文件中。
 
 不要把 `.p12`、密码或 `.mobileprovision` 提交到仓库。Packet Tunnel entitlement 必须由 Apple 开发者后台实际授权；普通个人免费签名无法启用该能力。
