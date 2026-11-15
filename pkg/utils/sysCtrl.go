@@ -169,6 +169,12 @@ func RestartApp() error {
 	if err != nil {
 		return err
 	}
+	if strings.HasSuffix(strings.ToLower(exe), ".old") {
+		rebuilt := exe[:len(exe)-len(".old")]
+		if _, statErr := os.Stat(rebuilt); statErr == nil {
+			exe = rebuilt
+		}
+	}
 	cwd, _ := os.Getwd()
 	args := append(StripRestartHandoffArgs(os.Args[1:]), RestartHandoffArg())
 	cmd := exec.Command(exe, args...)

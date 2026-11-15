@@ -192,3 +192,63 @@ func TestCmdRuleSnapshotsAreIsolated(t *testing.T) {
 		t.Fatalf("EvaluateCmdRouting after snapshot mutation = %q/%v, want direct/true", action, matched)
 	}
 }
+
+func TestMergeMissingDefaultDirectRules(t *testing.T) {
+	oldRules := GetRuleGroups()
+	oldMode := common.GetProxyMode()
+	t.Cleanup(func() {
+		setRuleGroups(oldRules)
+		common.SetProxyMode(oldMode)
+	})
+
+	groups := []RuleGroup{
+		{
+			ID:     "proxy_override",
+			Name:   "Proxy Override",
+			Action: "proxy",
+			Rules: []CustomRule{
+				{Type: "domain_suffix", Value: "volces.com"},
+			},
+		},
+		{
+			ID:     "direct",
+			Name:   "直连组",
+			Action: "direct",
+			Rules: []CustomRule{
+				{Type: "domain_suffix", Value: "baidu.com"},
+			},
+		},
+	}
+
+	merged := mergeMissingDefaultDirectRules(groups)
+	common.SetProxyMode("Rule")
+	setRuleGroups(merged)
+
+	baiduCount := 0
+	for _, r := range merged[1].Rules {
+		if r.Type == "domain_suffix" && r.Value == "baidu.com" {
+			baiduCount++
+		}
+		if r.Value == "volces.com" {
+			t.Fatalf("user proxy override volces.com should not be duplicated into direct group")
+		}
+	}
+	if baiduCount != 1 {
+		t.Fatalf("baidu.com rule count = %d, want 1", baiduCount)
+	}
+
+	if got := EvaluateRouting("v1.volces.com:443"); got != "proxy" {
+		t.Fatalf("EvaluateRouting(v1.volces.com) = %q, want proxy due to user override", got)
+	}
+	for _, host := range []string{
+		"www.douyin.com:443",
+		"v26-web.douyinvod.com:443",
+		"p3-pc.douyinpic.com:443",
+		"sf1-cdn-tos.bytecdntp.com:443",
+		"c.cdnhwc2.com:443",
+	} {
+		if got := EvaluateRouting(host); got != "direct" {
+			t.Fatalf("EvaluateRouting(%s) = %q, want direct", host, got)
+		}
+	}
+}

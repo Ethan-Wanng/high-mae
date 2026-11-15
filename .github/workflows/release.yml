@@ -12,9 +12,9 @@ permissions:
   contents: write
 
 env:
-  WING_VERSION: "1.0.7.1"
+  WING_VERSION: "1.0.7.2"
   FLUTTER_VERSION: "3.29.2"
-  FLUTTER_BUILD_NUMBER: "10071"
+  FLUTTER_BUILD_NUMBER: "10072"
   GOPROXY: "https://proxy.golang.org,direct"
   GONOSUMDB: "github.com/sagernet/*"
 
@@ -218,12 +218,10 @@ jobs:
             ${{ hashFiles('artifacts/*.ipa') != '' && format('- iOS: wing-{0}-ios-unsigned.ipa', env.WING_VERSION) || '- iOS: not included in this release (native iOS build in progress)' }}
 
             Notes:
-            - Latency tests now match Clash Party (mihomo URLTest with unified delay): a HEAD request to https://www.gstatic.com/generate_204 through the node, 5s timeout, timed on the reused connection; test-all runs 50 nodes in parallel.
-            - When a node domain resolves to several IPs, all are probed (TCP connect, or QUIC version negotiation for Hysteria2/TUIC/Naive QUIC) and the first live one is used, so offline IPs in rotating pools no longer cause timeouts or failed connections.
-            - With "Prefer IPv6" enabled but no usable public IPv6, node addresses now fall back to IPv4 instead of timing out; a failed second unified-delay request no longer reports a near-timeout latency.
-            - Node search keeps focus while typing and is no longer interrupted by IME composition (e.g. Chinese input).
-            - Fixes Hysteria2 nodes failing certificate verification: subscriptions are fetched as "mihomo/1.19.15 clash.meta" to get full Clash configs, structured configs win over share links on ties, and hysteria2:// links honor pinSHA256 / insecure=true. Refresh existing subscriptions once.
-            - Includes 1.0.7: node domains resolve through the subscription's declared DoH servers, and mihomo/sing-box subscription variants are merged (refresh existing subscriptions once).
+            - Fixes domestic direct traffic (such as Douyin) lagging or routing through the proxy in TUN + Proxy mode: direct domains and domestic DNS servers now resolve directly via domestic DoH/UDP bound to the physical network adapter instead of tunneling DNS over TCP through the proxy node.
+            - Extends TUN IP-to-domain mapping TTL floor to 30 minutes (including HTTPS/SVCB IPv4/IPv6 hints) so short-TTL CDN records do not expire after 13-19s and fall back to proxy routing; direct connections also reuse TUN destination IPs and in-process direct DNS resolution.
+            - Expands built-in ByteDance / Douyin / Volcano Engine CDN direct rules and automatically merges new built-in direct rules into existing user rule configs on startup.
+            - Includes 1.0.7.1: Clash Party-style URLTest latency checks, live node IP probing, IPv6 fallback to IPv4, IME-safe node search, and Hysteria2 pinSHA256 support.
             ${{ hashFiles('artifacts/*.ipa') != '' && '- The iOS IPA is unsigned and must be signed with an Apple Developer certificate before device distribution.' || '' }}
           files: artifacts/*
           overwrite_files: true

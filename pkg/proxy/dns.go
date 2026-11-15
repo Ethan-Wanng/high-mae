@@ -2,15 +2,18 @@ package proxy
 
 import (
 	"wing/pkg/common"
+	"wing/pkg/routing"
 	"wing/pkg/secure"
 	"wing/pkg/utils"
 
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"runtime"
 	"strings"
 	"sync"
@@ -66,7 +69,10 @@ const (
 	dnsCacheTrimTarget    = maxDnsCacheSize * 9 / 10
 	maxIPDomainMapSize    = 20000
 	ipDomainMapTrimTarget = maxIPDomainMapSize * 9 / 10
+	minDNSCacheTTL        = 60
+	minIPDomainMapTTL     = 1800
 	maxDNSTTL             = 3600
+	directDNSQueryTimeout = 3 * time.Second
 	androidLocalDNSPort   = 1053
 	desktopLocalDNSPort   = 53
 )
@@ -81,14 +87,22 @@ func localDNSListenPort() int {
 	return desktopLocalDNSPort
 }
 
-func dnsEntryExpiry(ttl uint32, now time.Time) time.Time {
-	if ttl == 0 {
-		ttl = 60
+func clampedDNSTTL(ttl uint32, minTTL uint32) uint32 {
+	if ttl < minTTL {
+		ttl = minTTL
 	}
 	if ttl > maxDNSTTL {
 		ttl = maxDNSTTL
 	}
-	return now.Add(time.Duration(ttl) * time.Second)
+	return ttl
+}
+
+func dnsEntryExpiry(ttl uint32, now time.Time) time.Time {
+	return now.Add(time.Duration(clampedDNSTTL(ttl, minDNSCacheTTL)) * time.Second)
+}
+
+func ipDomainEntryExpiry(ttl uint32, now time.Time) time.Time {
+	return now.Add(time.Duration(clampedDNSTTL(ttl, minIPDomainMapTTL)) * time.Second)
 }
 
 func pruneDNSCacheLocked(now time.Time) {
@@ -229,7 +243,14 @@ func MatchDNSRule(domain string) string {
 }
 
 func matchDNSRule(config DNSConfig, domain string) string {
-	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
+	if serverID, ok := matchExplicitDNSRule(config, domain); ok {
+		return serverID
+	}
+	return config.Default
+}
+
+func matchExplicitDNSRule(config DNSConfig, domain string) (string, bool) {
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
 	for _, rule := range config.Rules {
 		value := strings.ToLower(strings.TrimSpace(rule.Value))
 		if value == "" {
@@ -245,10 +266,418 @@ func matchDNSRule(config DNSConfig, domain string) string {
 			match = strings.Contains(domain, value)
 		}
 		if match {
-			return rule.ServerID
+			return rule.ServerID, true
 		}
 	}
-	return config.Default
+	return "", false
+}
+
+var domesticDNSIPs = map[string]struct{}{
+	"223.5.5.5":       {},
+	"223.6.6.6":       {},
+	"119.29.29.29":    {},
+	"182.254.116.116": {},
+	"1.12.12.12":      {},
+	"120.53.53.53":    {},
+	"114.114.114.114": {},
+	"114.114.115.115": {},
+	"180.76.76.76":    {},
+}
+
+func isDomesticDNSServer(server *DNSServer) bool {
+	if server == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(server.ID)) {
+	case "aliyun", "tencent", "114":
+		return true
+	}
+	addr := strings.TrimSpace(server.Address)
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	host = strings.Trim(host, "[]")
+	if _, ok := domesticDNSIPs[host]; ok {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
+		return true
+	}
+	return false
+}
+
+func pickDomesticDNSServer(config DNSConfig) *DNSServer {
+	for _, id := range []string{"aliyun", "tencent", "114"} {
+		if server := dnsServerByID(config, id); server != nil {
+			return server
+		}
+	}
+	for i := range config.Servers {
+		if isDomesticDNSServer(&config.Servers[i]) {
+			s := config.Servers[i]
+			return &s
+		}
+	}
+	return &DNSServer{ID: "aliyun", Name: "Aliyun DNS", Address: "223.5.5.5:53", Type: "udp"}
+}
+
+func selectDNSServer(config DNSConfig, domain string) (*DNSServer, bool) {
+	cleanDomain := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	serverID, explicit := matchExplicitDNSRule(config, cleanDomain)
+	routeIsDirect := cleanDomain != "" && routing.ShouldDirect(cleanDomain)
+
+	if !explicit && routeIsDirect {
+		return pickDomesticDNSServer(config), true
+	}
+
+	var server *DNSServer
+	if explicit {
+		server = dnsServerByID(config, serverID)
+	}
+	if server == nil {
+		server = dnsServerByID(config, config.Default)
+	}
+	if server == nil && routeIsDirect {
+		return pickDomesticDNSServer(config), true
+	}
+	if server == nil && len(config.Servers) > 0 {
+		first := config.Servers[0]
+		server = &first
+	}
+	if server == nil {
+		return nil, routeIsDirect
+	}
+
+	resolveDirect := isDomesticDNSServer(server) || (routeIsDirect && !explicit)
+	return server, resolveDirect
+}
+
+func directDoHEndpoints(server *DNSServer) []string {
+	if server != nil && (strings.EqualFold(server.ID, "tencent") ||
+		strings.HasPrefix(server.Address, "119.29.") ||
+		strings.HasPrefix(server.Address, "1.12.")) {
+		return []string{
+			"https://1.12.12.12/dns-query",
+			"https://223.5.5.5/dns-query",
+		}
+	}
+	return []string{
+		"https://223.5.5.5/dns-query",
+		"https://1.12.12.12/dns-query",
+	}
+}
+
+func dnsCacheKey(domain string, qtype uint16) string {
+	normalized := strings.ToLower(dns.Fqdn(strings.TrimSpace(domain)))
+	return fmt.Sprintf("%s-%d", normalized, qtype)
+}
+
+func queryRawDoHEndpoint(ctx context.Context, client *http.Client, endpoint string, payload []byte, reqID uint16) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/dns-message")
+	req.Header.Set("Accept", "application/dns-message")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("DoH status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return nil, err
+	}
+	reply := new(dns.Msg)
+	if err := reply.Unpack(body); err != nil {
+		return nil, err
+	}
+	reply.Id = reqID
+	return reply.Pack()
+}
+
+func exchangeDNSDoH(ctx context.Context, reqData []byte, endpoints []string) ([]byte, error) {
+	if len(endpoints) == 0 {
+		return nil, fmt.Errorf("no DoH endpoints configured")
+	}
+	reqMsg := new(dns.Msg)
+	if err := reqMsg.Unpack(reqData); err != nil {
+		return nil, err
+	}
+	reqID := reqMsg.Id
+	reqMsg.Id = 0
+	payload, err := reqMsg.Pack()
+	if err != nil {
+		return nil, err
+	}
+
+	secureClient, _ := nodeDoHClients()
+	queryCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type dohResult struct {
+		data []byte
+		err  error
+	}
+	results := make(chan dohResult, len(endpoints))
+	for _, endpoint := range endpoints {
+		endpoint := endpoint
+		utils.SafeGo("direct doh query", func() {
+			data, qErr := queryRawDoHEndpoint(queryCtx, secureClient, endpoint, payload, reqID)
+			results <- dohResult{data: data, err: qErr}
+		})
+	}
+
+	var lastErr error
+	for range endpoints {
+		select {
+		case res := <-results:
+			if res.err == nil && len(res.data) > 0 {
+				return res.data, nil
+			}
+			if res.err != nil {
+				lastErr = res.err
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("direct DoH query failed")
+}
+
+func exchangeDNSUDP(ctx context.Context, reqData []byte, dnsAddr string) ([]byte, error) {
+	if dnsAddr == "" {
+		dnsAddr = "223.5.5.5:53"
+	} else if !strings.Contains(dnsAddr, ":") {
+		dnsAddr += ":53"
+	}
+	dialer := &net.Dialer{Timeout: directDNSQueryTimeout}
+	conn, err := dialer.DialContext(ctx, "udp", dnsAddr)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	} else {
+		_ = conn.SetDeadline(time.Now().Add(directDNSQueryTimeout))
+	}
+	if _, err := conn.Write(reqData); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, 4096)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+	reply := new(dns.Msg)
+	if err := reply.Unpack(buf[:n]); err != nil {
+		return nil, err
+	}
+	return buf[:n], nil
+}
+
+func exchangeDNSDirect(ctx context.Context, reqData []byte, server *DNSServer) ([]byte, error) {
+	endpoints := directDoHEndpoints(server)
+	if common.GetTunModeOn() {
+		// sing-box TUN StrictRoute 在 Windows 会拦截物理网卡 53 端口直连，改走物理网卡 DoH (443)
+		return exchangeDNSDoH(ctx, reqData, endpoints)
+	}
+	dnsAddr := "223.5.5.5:53"
+	if server != nil && server.Address != "" && isDomesticDNSServer(server) {
+		dnsAddr = server.Address
+	}
+	if respData, err := exchangeDNSUDP(ctx, reqData, dnsAddr); err == nil {
+		return respData, nil
+	}
+	return exchangeDNSDoH(ctx, reqData, endpoints)
+}
+
+func queryDNSThroughProxy(ctx context.Context, client common.GenericClient, dnsAddr string, reqData []byte) ([]byte, error) {
+	if client == nil {
+		return nil, fmt.Errorf("no active proxy client")
+	}
+	if dnsAddr == "" {
+		dnsAddr = "8.8.8.8:53"
+	} else if !strings.Contains(dnsAddr, ":") {
+		dnsAddr += ":53"
+	}
+	dest := metadata.ParseSocksaddr(dnsAddr)
+	stream, err := client.CreateProxy(ctx, dest)
+	if err != nil {
+		return nil, err
+	}
+	// DNS 查询不需要 TrackingConn（无 logID），直接使用原始连接避免锁竞争
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = stream.SetDeadline(deadline)
+	} else {
+		_ = stream.SetDeadline(time.Now().Add(5 * time.Second))
+	}
+	defer stream.Close()
+
+	length := uint16(len(reqData))
+	if _, err := stream.Write([]byte{byte(length >> 8), byte(length)}); err != nil {
+		return nil, err
+	}
+	if _, err := stream.Write(reqData); err != nil {
+		return nil, err
+	}
+
+	respLenBuf := make([]byte, 2)
+	if _, err := io.ReadFull(stream, respLenBuf); err != nil {
+		return nil, err
+	}
+	respLen := int(respLenBuf[0])<<8 | int(respLenBuf[1])
+	respData := make([]byte, respLen)
+	if _, err := io.ReadFull(stream, respData); err != nil {
+		return nil, err
+	}
+	return respData, nil
+}
+
+func extractSVCBHintIPs(kv dns.SVCBKeyValue) []net.IP {
+	switch h := kv.(type) {
+	case *dns.SVCBIPv4Hint:
+		return h.Hint
+	case *dns.SVCBIPv6Hint:
+		return h.Hint
+	default:
+		return nil
+	}
+}
+
+func storeRecordIPMappings(domain string, rr dns.RR, now time.Time) {
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	if domain == "" {
+		return
+	}
+	expiry := ipDomainEntryExpiry(rr.Header().Ttl, now)
+	switch v := rr.(type) {
+	case *dns.A:
+		storeIPDomainMapping(v.A.String(), ipDomainEntry{domain: domain, expiresAt: expiry})
+	case *dns.AAAA:
+		storeIPDomainMapping(v.AAAA.String(), ipDomainEntry{domain: domain, expiresAt: expiry})
+	case *dns.HTTPS:
+		for _, kv := range v.Value {
+			for _, ip := range extractSVCBHintIPs(kv) {
+				storeIPDomainMapping(ip.String(), ipDomainEntry{domain: domain, expiresAt: expiry})
+			}
+		}
+	case *dns.SVCB:
+		for _, kv := range v.Value {
+			for _, ip := range extractSVCBHintIPs(kv) {
+				storeIPDomainMapping(ip.String(), ipDomainEntry{domain: domain, expiresAt: expiry})
+			}
+		}
+	}
+}
+
+func cacheDNSResponse(domain string, cacheKey string, respData []byte) *dns.Msg {
+	respMsg := new(dns.Msg)
+	if err := respMsg.Unpack(respData); err != nil {
+		return nil
+	}
+	if respMsg.Rcode != dns.RcodeSuccess || len(respMsg.Answer) == 0 {
+		return respMsg
+	}
+
+	minTTL := uint32(minDNSCacheTTL)
+	first := true
+	now := time.Now()
+	for _, ans := range respMsg.Answer {
+		if first || ans.Header().Ttl < minTTL {
+			minTTL = ans.Header().Ttl
+			first = false
+		}
+		storeRecordIPMappings(domain, ans, now)
+	}
+
+	dnsCacheMu.Lock()
+	pruneDNSCacheLocked(now)
+	dnsCache[cacheKey] = dnsCacheEntry{
+		msg:       respMsg,
+		expiresAt: dnsEntryExpiry(minTTL, now),
+	}
+	dnsCacheMu.Unlock()
+	return respMsg
+}
+
+func extractIPsFromDNSMsg(msg *dns.Msg) []string {
+	if msg == nil {
+		return nil
+	}
+	var ips []string
+	seen := make(map[string]struct{})
+	for _, ans := range msg.Answer {
+		var ipStr string
+		switch rr := ans.(type) {
+		case *dns.A:
+			ipStr = rr.A.String()
+		case *dns.AAAA:
+			ipStr = rr.AAAA.String()
+		default:
+			continue
+		}
+		if _, ok := seen[ipStr]; ok {
+			continue
+		}
+		seen[ipStr] = struct{}{}
+		ips = append(ips, ipStr)
+	}
+	return ips
+}
+
+func resolveDirectHost(ctx context.Context, host string) ([]string, error) {
+	cleanHost := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if cleanHost == "" {
+		return nil, fmt.Errorf("empty host")
+	}
+
+	fqdn := dns.Fqdn(cleanHost)
+	now := time.Now()
+	var lastErr error
+
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		cacheKey := dnsCacheKey(fqdn, qtype)
+		dnsCacheMu.RLock()
+		entry, found := dnsCache[cacheKey]
+		dnsCacheMu.RUnlock()
+		if found && now.Before(entry.expiresAt) {
+			if ips := extractIPsFromDNSMsg(entry.msg); len(ips) > 0 {
+				return ips, nil
+			}
+		}
+
+		reqMsg := new(dns.Msg)
+		reqMsg.SetQuestion(fqdn, qtype)
+		reqData, err := reqMsg.Pack()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		respData, err := exchangeDNSDirect(ctx, reqData, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		respMsg := cacheDNSResponse(cleanHost, cacheKey, respData)
+		if ips := extractIPsFromDNSMsg(respMsg); len(ips) > 0 {
+			return ips, nil
+		}
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no direct DNS records for %s", cleanHost)
 }
 
 func StartLocalDNS() {
@@ -313,7 +742,7 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 	}
 
 	question := msg.Question[0]
-	cacheKey := fmt.Sprintf("%s-%d", question.Name, question.Qtype)
+	cacheKey := dnsCacheKey(question.Name, question.Qtype)
 
 	// 1. Check Cache
 	dnsCacheMu.RLock()
@@ -323,97 +752,42 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 	if found && time.Now().Before(entry.expiresAt) {
 		resp := entry.msg.Copy()
 		resp.Id = msg.Id // Match the request ID
+		if len(resp.Question) > 0 {
+			resp.Question[0].Name = question.Name
+		}
 		if packed, err := resp.Pack(); err == nil {
-			conn.WriteToUDP(packed, clientAddr)
+			_, _ = conn.WriteToUDP(packed, clientAddr)
 			return
 		}
 	}
 
 	domain := question.Name
 	config := GetDNSConfig()
-	serverID := matchDNSRule(config, domain)
-	server := dnsServerByID(config, serverID)
-	if server == nil {
-		server = dnsServerByID(config, config.Default)
-	}
-	if server == nil && len(config.Servers) > 0 {
-		first := config.Servers[0]
-		server = &first
-	}
-
-	if server == nil {
+	server, resolveDirect := selectDNSServer(config, domain)
+	if server == nil && !resolveDirect {
 		return
 	}
 
-	// For now, we only support UDP-over-TCP/SOCKS through our proxy
-	dnsAddr := server.Address
-	if !strings.Contains(dnsAddr, ":") {
-		dnsAddr += ":53"
-	}
-
-	client := common.GetActiveClient()
-	if client == nil {
-		return
-	}
-
-	dest := metadata.ParseSocksaddr(dnsAddr)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	streamRaw, err := client.CreateProxy(ctx, dest)
-	if err != nil {
-		return
+	var (
+		respData []byte
+		err      error
+	)
+	client := common.GetActiveClient()
+	if resolveDirect || client == nil {
+		respData, err = exchangeDNSDirect(ctx, reqData, server)
+	} else {
+		dnsAddr := server.Address
+		respData, err = queryDNSThroughProxy(ctx, client, dnsAddr, reqData)
 	}
-	// 🚀 DNS 查询不需要 TrackingConn（无 logID），直接使用原始连接
-	// 避免每次 DNS Read/Write 都触发无效的锁竞争
-	stream := streamRaw
-	_ = stream.SetDeadline(time.Now().Add(5 * time.Second))
-	defer stream.Close()
-
-	length := uint16(len(reqData))
-	if _, err := stream.Write([]byte{byte(length >> 8), byte(length)}); err != nil {
-		return
-	}
-	if _, err := stream.Write(reqData); err != nil {
-		return
-	}
-
-	respLenBuf := make([]byte, 2)
-	if _, err := io.ReadFull(stream, respLenBuf); err != nil {
-		return
-	}
-	respLen := int(respLenBuf[0])<<8 | int(respLenBuf[1])
-	respData := make([]byte, respLen)
-	if _, err := io.ReadFull(stream, respData); err != nil {
+	if err != nil || len(respData) == 0 {
 		return
 	}
 
 	// 2. Parse Response and Update Cache
-	respMsg := new(dns.Msg)
-	if err := respMsg.Unpack(respData); err == nil && len(respMsg.Answer) > 0 {
-		minTTL := uint32(60) // Default 1 minute
-		first := true
-		now := time.Now()
-		for _, ans := range respMsg.Answer {
-			if first || ans.Header().Ttl < minTTL {
-				minTTL = ans.Header().Ttl
-				first = false
-			}
-			if a, ok := ans.(*dns.A); ok {
-				storeIPDomainMapping(a.A.String(), ipDomainEntry{domain: domain, expiresAt: dnsEntryExpiry(ans.Header().Ttl, now)})
-			} else if aaaa, ok := ans.(*dns.AAAA); ok {
-				storeIPDomainMapping(aaaa.AAAA.String(), ipDomainEntry{domain: domain, expiresAt: dnsEntryExpiry(ans.Header().Ttl, now)})
-			}
-		}
-
-		dnsCacheMu.Lock()
-		pruneDNSCacheLocked(now)
-		dnsCache[cacheKey] = dnsCacheEntry{
-			msg:       respMsg,
-			expiresAt: dnsEntryExpiry(minTTL, now),
-		}
-		dnsCacheMu.Unlock()
-	}
+	cacheDNSResponse(domain, cacheKey, respData)
 
 	_, _ = conn.WriteToUDP(respData, clientAddr)
 }

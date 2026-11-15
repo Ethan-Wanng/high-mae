@@ -5,13 +5,32 @@ import (
 	"reflect"
 	"testing"
 
+	"wing/pkg/common"
+	"wing/pkg/utils"
 	"wing/protocol"
 )
 
 // 192.0.2.0/24 (TEST-NET-1) 不可路由，用来模拟已下线的节点 IP。
 const deadTestIP = "192.0.2.1"
 
+func bypassHostTunIfPresent(t *testing.T) {
+	t.Helper()
+	iface, err := net.InterfaceByName("AnyTLS-TUN")
+	if err != nil || iface.Flags&net.FlagUp == 0 {
+		return
+	}
+	oldTun := common.GetTunModeOn()
+	oldIP := common.RealLocalIPBeforeTun
+	common.SetTunModeOn(true)
+	common.RealLocalIPBeforeTun = utils.GetRealLocalIP()
+	t.Cleanup(func() {
+		common.SetTunModeOn(oldTun)
+		common.RealLocalIPBeforeTun = oldIP
+	})
+}
+
 func TestPickReachableNodeIPPrefersLiveTCPAddress(t *testing.T) {
+	bypassHostTunIfPresent(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -34,6 +53,7 @@ func TestPickReachableNodeIPPrefersLiveTCPAddress(t *testing.T) {
 }
 
 func TestPickReachableNodeIPProbesQUICNodes(t *testing.T) {
+	bypassHostTunIfPresent(t)
 	server, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +78,7 @@ func TestPickReachableNodeIPProbesQUICNodes(t *testing.T) {
 }
 
 func TestPickReachableNodeIPFallsBackToFirstCandidate(t *testing.T) {
+	bypassHostTunIfPresent(t)
 	node := protocol.Node{Type: "anytls", Server: "dead.pick.test", Port: 4430}
 	candidates := []string{deadTestIP, "192.0.2.2"}
 	if got := pickReachableNodeIP(node, [][]string{candidates}); got != deadTestIP {
@@ -66,6 +87,7 @@ func TestPickReachableNodeIPFallsBackToFirstCandidate(t *testing.T) {
 }
 
 func TestPickReachableNodeIPFallsBackFromUnreachablePreferredFamily(t *testing.T) {
+	bypassHostTunIfPresent(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -114,7 +114,7 @@ func raceNodeIPs(candidates []string, port int, quic bool) string {
 }
 
 func probeTCP(ctx context.Context, addr string) error {
-	dialer := &net.Dialer{LocalAddr: tunBypassLocalAddr(false)}
+	dialer := &net.Dialer{LocalAddr: tunBypassLocalAddr(addr, false)}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return err
@@ -125,7 +125,7 @@ func probeTCP(ctx context.Context, addr string) error {
 // probeQUIC 发送一个使用保留版本号的 QUIC Long Header 包（≥1200 字节）。按 RFC 9000 §6.1，
 // 存活的 QUIC 服务端必须回复 Version Negotiation，收到任何回包即视为可达。
 func probeQUIC(ctx context.Context, addr string) error {
-	dialer := &net.Dialer{LocalAddr: tunBypassLocalAddr(true)}
+	dialer := &net.Dialer{LocalAddr: tunBypassLocalAddr(addr, true)}
 	conn, err := dialer.DialContext(ctx, "udp", addr)
 	if err != nil {
 		return err
@@ -148,8 +148,9 @@ func probeQUIC(ctx context.Context, addr string) error {
 	return err
 }
 
-// tunBypassLocalAddr 在 TUN 开启时返回真实网卡地址，避免探测流量绕回隧道。
-func tunBypassLocalAddr(udp bool) net.Addr {
+// tunBypassLocalAddr 在 TUN 开启时返回真实网卡地址，避免探测流量绕回隧道；
+// 对回环目标或地址族与本机网卡 IP 不匹配的目标返回 nil。
+func tunBypassLocalAddr(addr string, udp bool) net.Addr {
 	if !common.GetTunModeOn() {
 		return nil
 	}
@@ -160,10 +161,23 @@ func tunBypassLocalAddr(udp bool) net.Addr {
 	if realIP == "" || realIP == common.TunIP {
 		return nil
 	}
-	if udp {
-		return &net.UDPAddr{IP: net.ParseIP(realIP)}
+	localIP := net.ParseIP(realIP)
+	if localIP == nil {
+		return nil
 	}
-	return &net.TCPAddr{IP: net.ParseIP(realIP)}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if targetIP := net.ParseIP(host); targetIP != nil {
+		if targetIP.IsLoopback() || (localIP.To4() != nil) != (targetIP.To4() != nil) {
+			return nil
+		}
+	}
+	if udp {
+		return &net.UDPAddr{IP: localIP}
+	}
+	return &net.TCPAddr{IP: localIP}
 }
 
 func nodeProbePort(node protocol.Node) int {

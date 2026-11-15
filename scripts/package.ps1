@@ -1,4 +1,4 @@
-# wing installer packaging script
+﻿# wing installer packaging script
 # Usage: .\scripts\package.ps1 [-ISCCPath C:\Path\To\ISCC.exe]
 
 param(
@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$version = if ($env:WING_VERSION) { $env:WING_VERSION } else { "1.0.7.1" }
+$version = if ($env:WING_VERSION) { $env:WING_VERSION } else { "1.0.7.2" }
 $fileVersion = $version
 if ($version -match '^(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)$') {
     $fileVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).$($Matches[4])$($Matches[5])"

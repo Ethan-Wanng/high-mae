@@ -6,6 +6,7 @@ import (
 	"wing/pkg/stats"
 	"wing/pkg/utils"
 
+	"context"
 	"fmt"
 	"github.com/sagernet/sing/common/metadata"
 	"io"
@@ -84,11 +85,58 @@ func (c *TrackingConn) Totals() (uint64, uint64) {
 
 type HTTPProxyHandler struct{}
 
-func dialDirect(targetAddr string) (net.Conn, error) {
+func directTCPDialer() (*net.Dialer, net.IP) {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	if common.GetTunModeOn() && common.RealLocalIPBeforeTun != "" {
-		if ip := net.ParseIP(common.RealLocalIPBeforeTun); ip != nil {
-			dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: 0}
+	if !common.GetTunModeOn() {
+		return dialer, nil
+	}
+	realIP := common.RealLocalIPBeforeTun
+	if realIP == "" {
+		realIP = utils.GetRealLocalIP()
+	}
+	ip := net.ParseIP(realIP)
+	if ip != nil && realIP != common.TunIP {
+		dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: 0}
+		return dialer, ip
+	}
+	return dialer, nil
+}
+
+func dialDirectAddrWithLocalIP(baseDialer *net.Dialer, localIP net.IP, targetIPStr, port string) (net.Conn, error) {
+	targetIP := net.ParseIP(targetIPStr)
+	dialer := baseDialer
+	if localIP != nil && targetIP != nil && (localIP.To4() != nil) != (targetIP.To4() != nil) {
+		copied := *baseDialer
+		copied.LocalAddr = nil
+		dialer = &copied
+	}
+	return dialer.Dial("tcp", net.JoinHostPort(targetIPStr, port))
+}
+
+func dialDirect(targetAddr string) (net.Conn, error) {
+	dialer, localIP := directTCPDialer()
+
+	host, port, err := net.SplitHostPort(targetAddr)
+	if err == nil && net.ParseIP(host) == nil && !strings.EqualFold(host, "localhost") && strings.Contains(host, ".") {
+		ctx, cancel := context.WithTimeout(context.Background(), directDNSQueryTimeout)
+		ips, resolveErr := resolveDirectHost(ctx, host)
+		cancel()
+		if resolveErr == nil && len(ips) > 0 {
+			var lastErr error
+			for _, ip := range ips {
+				conn, dialErr := dialDirectAddrWithLocalIP(dialer, localIP, ip, port)
+				if dialErr == nil {
+					return conn, nil
+				}
+				lastErr = dialErr
+			}
+			if lastErr != nil {
+				return nil, lastErr
+			}
+		}
+	} else if err == nil && localIP != nil {
+		if targetIP := net.ParseIP(host); targetIP != nil {
+			return dialDirectAddrWithLocalIP(dialer, localIP, host, port)
 		}
 	}
 	return dialer.Dial("tcp", targetAddr)
@@ -110,10 +158,13 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
+	directDialAddr := targetAddr
+
 	// 🚀 TUN Mode IP -> Domain Restore
 	if host, port, err := net.SplitHostPort(targetAddr); err == nil && net.ParseIP(host) != nil {
 		if domain, ok := domainForIP(host); ok {
 			domain = strings.TrimSuffix(domain, ".")
+			directDialAddr = net.JoinHostPort(host, port)
 			targetAddr = net.JoinHostPort(domain, port)
 		}
 	} else if err != nil && net.ParseIP(targetAddr) != nil {
@@ -142,7 +193,7 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	} else if routeAction == "direct" {
 		nodeUsed = "Direct"
-		upstream, err = dialDirect(targetAddr)
+		upstream, err = dialDirect(directDialAddr)
 		if err != nil {
 			http.Error(w, "直连失败: "+err.Error(), http.StatusBadGateway)
 			return
@@ -174,7 +225,7 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		if targetClient == nil {
 			nodeUsed = "Direct"
-			upstream, err = dialDirect(targetAddr)
+			upstream, err = dialDirect(directDialAddr)
 			if err != nil {
 				http.Error(w, "直连失败: "+err.Error(), http.StatusBadGateway)
 				return

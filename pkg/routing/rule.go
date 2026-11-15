@@ -259,6 +259,7 @@ func LoadUserRules() {
 		_ = SaveRuleGroups(groups)
 	}
 	groups = removeLegacyBingDirectDefaults(groups)
+	groups = mergeMissingDefaultDirectRules(groups)
 	_ = SaveRuleGroups(groups)
 	LoadCmdRules()
 }
@@ -402,6 +403,61 @@ func isLegacyBingDirectDefaultRule(rule CustomRule) bool {
 	value := strings.ToLower(strings.TrimSpace(rule.Value))
 	return (ruleType == "domain" && value == "cn.bing.com") ||
 		(ruleType == "domain_suffix" && value == "bing.com")
+}
+
+type ruleIdentity struct {
+	ruleType string
+	value    string
+}
+
+func mergeMissingDefaultDirectRules(groups []RuleGroup) []RuleGroup {
+	groups = normalizeRuleGroups(cloneRuleGroups(groups))
+	defaultGroups := DefaultRuleGroups()
+	if len(defaultGroups) == 0 {
+		return groups
+	}
+
+	existing := make(map[ruleIdentity]struct{})
+	directIdx := -1
+	for i := range groups {
+		if groups[i].ID == "direct" {
+			directIdx = i
+		} else if directIdx < 0 && normalizeRuleAction(groups[i].Action) == "direct" {
+			directIdx = i
+		}
+		for _, rule := range groups[i].Rules {
+			value := strings.ToLower(strings.TrimSpace(rule.Value))
+			if value == "" {
+				continue
+			}
+			existing[ruleIdentity{
+				ruleType: normalizeRuleType(rule.Type),
+				value:    value,
+			}] = struct{}{}
+		}
+	}
+
+	if directIdx < 0 {
+		groups = append(groups, RuleGroup{ID: "direct", Name: "直连组", Action: "direct"})
+		directIdx = len(groups) - 1
+	}
+
+	for _, rule := range defaultGroups[0].Rules {
+		value := strings.ToLower(strings.TrimSpace(rule.Value))
+		if value == "" {
+			continue
+		}
+		key := ruleIdentity{
+			ruleType: normalizeRuleType(rule.Type),
+			value:    value,
+		}
+		if _, ok := existing[key]; ok {
+			continue
+		}
+		existing[key] = struct{}{}
+		groups[directIdx].Rules = append(groups[directIdx].Rules, rule)
+	}
+	return groups
 }
 
 func normalizeRuleGroups(groups []RuleGroup) []RuleGroup {

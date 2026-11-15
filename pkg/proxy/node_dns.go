@@ -268,7 +268,8 @@ func newNodeDoHClient(insecure bool) *http.Client {
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: insecure},
 		ForceAttemptHTTP2:   true, // 部分 DoH 入口只接受 HTTP/2，HTTP/1.1 会返回 505
 		TLSHandshakeTimeout: nodeDoHTimeout,
-		MaxIdleConns:        4,
+		MaxIdleConns:        16,
+		MaxIdleConnsPerHost: 8,
 		IdleConnTimeout:     90 * time.Second,
 	}
 	return &http.Client{Transport: transport, Timeout: nodeDoHTimeout}
