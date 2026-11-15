@@ -1667,6 +1667,30 @@ async function openAppUpdate() {
     if (!appUpdateInfo?.available) {
         await checkAppUpdate({ silent: true });
     }
+    if (appUpdateInfo?.canSelfUpdate) {
+        const button = document.getElementById('appUpdateButton');
+        if (button) button.disabled = true;
+        showToast('正在后台下载更新包，请稍候...', 'info', 6000);
+        try {
+            const res = await fetch('/api/app_update/install', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: appUpdateInfo.installerUrl || '' })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.ok) {
+                showToast('更新包已下载，正在启动安装程序...', 'success', 4000);
+                return;
+            }
+            if (data.msg) {
+                showToast(`${data.msg}，将打开下载页`, 'warning', 3200);
+            }
+        } catch(e) {
+            showToast('后台下载失败，将打开下载页', 'warning', 3200);
+        } finally {
+            if (button) button.disabled = false;
+        }
+    }
     const target = appUpdateInfo?.downloadUrl || appUpdateInfo?.pageUrl || '';
     if (!target) {
         showToast('暂未找到可下载的新版本', 'warning');

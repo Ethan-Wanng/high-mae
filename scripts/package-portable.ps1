@@ -1,4 +1,4 @@
-# wing single-file installer packaging script.
+﻿# wing single-file installer packaging script.
 # Builds a Go installer stub with the compiled app payload embedded in the exe.
 
 $ErrorActionPreference = "Stop"
@@ -45,7 +45,7 @@ Compress-Archive -Path (Join-Path $binDir "*") -DestinationPath $stubPayload -Co
 Write-Host "📦 正在生成单文件安装器..." -ForegroundColor Cyan
 Push-Location $repoRoot
 try {
-    go build -ldflags "-s -w -H windowsgui" -o $installerExe .\installer\stub
+    go build -ldflags "-H windowsgui" -o $installerExe .\installer\stub
     if ($LASTEXITCODE -ne 0) {
         throw "Go 安装器构建失败，退出码: $LASTEXITCODE"
     }

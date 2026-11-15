@@ -5,8 +5,8 @@ $ErrorActionPreference = "Stop"
 
 # 核心插件标签
 $tags = "with_quic,with_utls,with_gvisor,with_naive_outbound,with_purego"
-# 链接器参数: -s -w 去除调试信息, -H windowsgui 隐藏控制台窗口
-$ldflags = "-s -w -H windowsgui"
+# 链接器参数: -H windowsgui 隐藏控制台窗口（保留符号表以降低 Windows Defender 误报）
+$ldflags = "-H windowsgui"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $goCache = Join-Path $repoRoot ".gocache"
 $legacyGoModCache = Join-Path $repoRoot "gomodcache2"
@@ -194,9 +194,33 @@ function Build-FlutterUI {
     Write-Host "✅ Flutter 控制面板已输出到 build\bin\flutter_ui" -ForegroundColor Green
 }
 
+function Update-WindowsResource {
+    $rcFile = Join-Path $repoRoot "wing_windows_amd64.rc"
+    $sysoFile = Join-Path $repoRoot "rsrc_windows_amd64.syso"
+    if (-not (Test-Path $rcFile)) {
+        return
+    }
+    $windres = Get-Command windres.exe, windres -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $windres) {
+        return
+    }
+    Write-Host "🔧 正在更新 Windows 版本与图标资源..." -ForegroundColor Cyan
+    Push-Location $repoRoot
+    try {
+        & $windres.Source -i $rcFile -O coff -o $sysoFile
+        if ($LASTEXITCODE -ne 0) {
+            throw "windres 编译资源失败，退出码: $LASTEXITCODE"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 function Build-GoBackend {
     Download-CronetDllModule
     Copy-CronetDll
+    Update-WindowsResource
     Write-Host "🚀 正在构建 Go 后端与系统托盘..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path (Split-Path -Parent $backendExe) -Force | Out-Null
     Stop-BuildOutputProcesses @((Split-Path -Parent $backendExe))

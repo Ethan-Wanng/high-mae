@@ -3,8 +3,10 @@ package webui
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -180,6 +185,7 @@ func buildWebUIMux() *http.ServeMux {
 	api("/api/restart_admin", restartAdminHandler)
 	api("/api/app_update", appUpdateHandler)
 	api("/api/app_update/open", appUpdateOpenHandler)
+	api("/api/app_update/install", appUpdateInstallHandler)
 
 	return mux
 }
@@ -192,25 +198,33 @@ type appUpdateInfo struct {
 	Name           string `json:"name,omitempty"`
 	PageURL        string `json:"pageUrl,omitempty"`
 	DownloadURL    string `json:"downloadUrl,omitempty"`
+	InstallerURL   string `json:"installerUrl,omitempty"`
+	ArchiveURL     string `json:"archiveUrl,omitempty"`
+	SHA256         string `json:"sha256,omitempty"`
+	CanSelfUpdate  bool   `json:"canSelfUpdate,omitempty"`
 	Message        string `json:"msg,omitempty"`
 	Error          string `json:"error,omitempty"`
 	CheckedAt      string `json:"checkedAt,omitempty"`
 }
 
+type githubReleaseAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+	Digest             string `json:"digest"`
+}
+
 type githubReleaseInfo struct {
-	TagName string `json:"tag_name"`
-	Name    string `json:"name"`
-	HTMLURL string `json:"html_url"`
-	Assets  []struct {
-		Name               string `json:"name"`
-		BrowserDownloadURL string `json:"browser_download_url"`
-	} `json:"assets"`
+	TagName string               `json:"tag_name"`
+	Name    string               `json:"name"`
+	HTMLURL string               `json:"html_url"`
+	Assets  []githubReleaseAsset `json:"assets"`
 }
 
 var (
-	appUpdateMu        sync.Mutex
-	appUpdateCache     appUpdateInfo
-	appUpdateCacheTime time.Time
+	appUpdateMu         sync.Mutex
+	appUpdateCache      appUpdateInfo
+	appUpdateCacheTime  time.Time
+	appUpdateInstalling atomic.Bool
 )
 
 const (
@@ -3132,9 +3146,18 @@ func fetchAppUpdateInfo() appUpdateInfo {
 	info.LatestVersion = latestVersion
 	info.Name = release.Name
 	info.PageURL = release.HTMLURL
-	info.DownloadURL = selectUpdateDownloadURL(release)
+	downloadURL, installerURL, archiveURL, sha256Hex := selectUpdateAssets(release)
+	info.DownloadURL = downloadURL
+	info.InstallerURL = installerURL
+	info.ArchiveURL = archiveURL
+	info.SHA256 = sha256Hex
+	info.CanSelfUpdate = runtime.GOOS == "windows" && installerURL != ""
 	if overrideURL := strings.TrimSpace(os.Getenv("WING_UPDATE_DOWNLOAD_URL")); overrideURL != "" {
 		info.DownloadURL = overrideURL
+		if runtime.GOOS == "windows" && isExeURL(overrideURL) {
+			info.InstallerURL = overrideURL
+			info.CanSelfUpdate = true
+		}
 	}
 	info.Available = compareVersionLabel(latestVersion, common.AppVersion) > 0
 	if !info.Available {
@@ -3153,7 +3176,7 @@ func appUpdateOpenHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		URL string `json:"url"`
 	}
-	_ = json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req)
+	_ = decodeLimitedJSON(w, r, &req, smallJSONBodyLimit)
 	target := strings.TrimSpace(req.URL)
 	if target == "" {
 		info := cachedAppUpdateInfo()
@@ -3170,13 +3193,307 @@ func appUpdateOpenHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }
 
-func selectUpdateDownloadURL(release githubReleaseInfo) string {
-	if len(release.Assets) == 0 {
-		return release.HTMLURL
+const minUpdateInstallerBytes int64 = 1 << 20
+
+func appUpdateInstallHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if runtime.GOOS != "windows" {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "当前平台不支持应用内直接安装更新"})
+		return
+	}
+	if !appUpdateInstalling.CompareAndSwap(false, true) {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "更新包正在下载或安装中，请稍候"})
+		return
+	}
+	defer appUpdateInstalling.Store(false)
+
+	var req struct {
+		URL string `json:"url"`
+	}
+	_ = decodeLimitedJSON(w, r, &req, smallJSONBodyLimit)
+
+	info := cachedAppUpdateInfo()
+	target := strings.TrimSpace(req.URL)
+	expectedSHA256 := ""
+	if target == "" {
+		target = strings.TrimSpace(info.InstallerURL)
+		if target == "" && isExeURL(info.DownloadURL) {
+			target = strings.TrimSpace(info.DownloadURL)
+		}
+		expectedSHA256 = strings.TrimSpace(info.SHA256)
+	} else if strings.EqualFold(target, strings.TrimSpace(info.InstallerURL)) {
+		expectedSHA256 = strings.TrimSpace(info.SHA256)
 	}
 
-	osName := runtime.GOOS
-	archName := runtime.GOARCH
+	if !isAllowedUpdateURL(target) || !isExeURL(target) {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "更新安装包链接无效"})
+		return
+	}
+
+	installerPath, err := downloadUpdateInstaller(target, expectedSHA256)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "下载更新包失败: " + err.Error()})
+		return
+	}
+	if err := launchUpdateInstaller(installerPath); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "msg": "启动安装程序失败: " + err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":   true,
+		"path": installerPath,
+	})
+}
+
+func isExeURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(parsed.Path), ".exe")
+}
+
+func sanitizeUpdateFileName(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err == nil {
+		base := filepath.Base(path.Base(parsed.Path))
+		if base != "" && base != "." && base != ".." && strings.HasSuffix(strings.ToLower(base), ".exe") {
+			return base
+		}
+	}
+	return "wing-setup.exe"
+}
+
+func newUpdateHTTPClient(useLocalProxy bool, timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if useLocalProxy {
+		proxyAddr := strings.TrimSpace(common.LocalHttpPort)
+		if proxyAddr == "" {
+			proxyAddr = "10808"
+		}
+		if proxyURL, err := url.Parse("http://127.0.0.1:" + proxyAddr); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("too many redirects")
+			}
+			if !isAllowedUpdateURL(req.URL.String()) {
+				return fmt.Errorf("blocked redirect to untrusted host: %s", req.URL.Hostname())
+			}
+			return nil
+		},
+	}
+}
+
+func downloadUpdateInstaller(target, expectedSHA256 string) (string, error) {
+	updateDir := filepath.Join(os.TempDir(), "wing-updates")
+	if err := os.MkdirAll(updateDir, 0o755); err != nil {
+		return "", err
+	}
+	destPath := filepath.Join(updateDir, sanitizeUpdateFileName(target))
+	partPath := destPath + ".part"
+	_ = os.Remove(partPath)
+
+	clients := make([]*http.Client, 0, 2)
+	if common.GetActiveClient() != nil {
+		clients = append(clients, newUpdateHTTPClient(true, 2*time.Minute))
+	}
+	clients = append(clients, newUpdateHTTPClient(false, 2*time.Minute))
+
+	var lastErr error
+	for _, client := range clients {
+		req, err := http.NewRequest(http.MethodGet, target, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("User-Agent", "wing/"+common.AppVersion)
+		req.Header.Set("Accept", "application/octet-stream")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		writeErr := func() error {
+			defer resp.Body.Close()
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				return fmt.Errorf("HTTP %s", resp.Status)
+			}
+			out, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o700)
+			if err != nil {
+				return err
+			}
+			_, copyErr := io.Copy(out, io.LimitReader(resp.Body, 512<<20))
+			closeErr := out.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			return closeErr
+		}()
+		if writeErr != nil {
+			_ = os.Remove(partPath)
+			lastErr = writeErr
+			continue
+		}
+
+		if err := verifyDownloadedInstaller(partPath, expectedSHA256); err != nil {
+			_ = os.Remove(partPath)
+			return "", err
+		}
+
+		_ = os.Remove(destPath)
+		if err := os.Rename(partPath, destPath); err != nil {
+			_ = os.Remove(partPath)
+			return "", err
+		}
+		return destPath, nil
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("unknown download error")
+	}
+	return "", lastErr
+}
+
+func verifyDownloadedInstaller(filePath, expectedSHA256 string) error {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return err
+	}
+	if info.Size() < minUpdateInstallerBytes {
+		return fmt.Errorf("安装包体积异常 (%d bytes)", info.Size())
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var magic [2]byte
+	if _, err := io.ReadFull(f, magic[:]); err != nil {
+		return fmt.Errorf("读取安装包头失败: %w", err)
+	}
+	if magic[0] != 'M' || magic[1] != 'Z' {
+		return errors.New("下载文件不是有效的 Windows 可执行安装程序")
+	}
+
+	want := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(expectedSHA256), "sha256:"))
+	if want == "" {
+		return nil
+	}
+
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		return fmt.Errorf("校验安装包哈希失败: %w", err)
+	}
+	actual := hex.EncodeToString(hasher.Sum(nil))
+	if actual != want {
+		return fmt.Errorf("安装包 SHA-256 校验不匹配: got %s, want %s", actual, want)
+	}
+	return nil
+}
+
+func launchUpdateInstaller(installerPath string) error {
+	cmd := exec.Command(installerPath, "/SILENT", "/CLOSEAPPLICATIONS")
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() {
+		_ = cmd.Wait()
+	}()
+	return nil
+}
+
+func selectUpdateDownloadURL(release githubReleaseInfo) string {
+	downloadURL, _, _, _ := selectUpdateAssets(release)
+	return downloadURL
+}
+
+func selectUpdateAssets(release githubReleaseInfo) (downloadURL, installerURL, archiveURL, sha256Hex string) {
+	return selectUpdateAssetsForPlatform(release, runtime.GOOS, runtime.GOARCH)
+}
+
+func selectUpdateAssetsForPlatform(release githubReleaseInfo, osName, archName string) (downloadURL, installerURL, archiveURL, sha256Hex string) {
+	if len(release.Assets) == 0 {
+		return release.HTMLURL, "", "", ""
+	}
+
+	if osName == "windows" {
+		bestExeScore := -1
+		bestZipScore := -1
+		for _, asset := range release.Assets {
+			name := strings.ToLower(asset.Name)
+			if asset.BrowserDownloadURL == "" {
+				continue
+			}
+			isWindowsAsset := strings.Contains(name, "windows") || strings.Contains(name, "win")
+			if !isWindowsAsset {
+				continue
+			}
+			score := 0
+			if strings.Contains(name, "windows") {
+				score += 20
+			} else if strings.Contains(name, "win") {
+				score += 14
+			}
+			if archMatchesAssetName(archName, name) {
+				score += 10
+			}
+			if strings.Contains(name, "setup") || strings.Contains(name, "installer") {
+				score += 4
+			}
+			if strings.HasSuffix(name, ".exe") {
+				exeScore := score + 4
+				if exeScore > bestExeScore {
+					bestExeScore = exeScore
+					installerURL = asset.BrowserDownloadURL
+					sha256Hex = parseSHA256Digest(asset.Digest)
+				}
+			} else if strings.HasSuffix(name, ".zip") {
+				zipScore := score + 2
+				if zipScore > bestZipScore {
+					bestZipScore = zipScore
+					archiveURL = asset.BrowserDownloadURL
+				}
+			}
+		}
+		downloadURL = firstNonEmptyString(archiveURL, installerURL, selectScoredReleaseAssetURL(release, osName, archName))
+		return downloadURL, installerURL, archiveURL, sha256Hex
+	}
+
+	return selectScoredReleaseAssetURL(release, osName, archName), "", "", ""
+}
+
+func parseSHA256Digest(digest string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(digest))
+	if !strings.HasPrefix(trimmed, "sha256:") {
+		return ""
+	}
+	hexPart := strings.TrimSpace(strings.TrimPrefix(trimmed, "sha256:"))
+	if len(hexPart) != 64 {
+		return ""
+	}
+	if _, err := hex.DecodeString(hexPart); err != nil {
+		return ""
+	}
+	return hexPart
+}
+
+func selectScoredReleaseAssetURL(release githubReleaseInfo, osName, archName string) string {
 	bestScore := -1
 	bestURL := ""
 	for _, asset := range release.Assets {
@@ -3304,6 +3621,7 @@ func isAllowedUpdateURL(raw string) bool {
 	host := strings.ToLower(parsed.Hostname())
 	return host == "github.com" ||
 		host == "objects.githubusercontent.com" ||
+		host == "release-assets.githubusercontent.com" ||
 		host == "github-releases.githubusercontent.com"
 }
 

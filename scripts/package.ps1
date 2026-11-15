@@ -17,6 +17,7 @@ if ($version -match '^(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)$') {
 }
 $issFile = Join-Path $repoRoot "installer\wing.iss"
 $setupExe = Join-Path $repoRoot "dist\wing-$version-windows-x64-setup.exe"
+$setupZip = Join-Path $repoRoot "dist\wing-$version-windows-x64-setup.zip"
 $cronetDllSha256 = "8ef1f8bbde77f954af1ae47bee1819ac8dc2354bb0e1d4baba3dad9e58d7a6f7"
 
 function Assert-CronetDllHash {
@@ -166,4 +167,6 @@ if (-not (Test-Path $setupExe)) {
     throw "安装包生成失败: 未找到 $setupExe"
 }
 
+Compress-Archive -LiteralPath $setupExe -DestinationPath $setupZip -CompressionLevel Optimal -Force
 Write-Host "✅ 安装包已生成: $setupExe" -ForegroundColor Green
+Write-Host "✅ 安装压缩包已生成: $setupZip" -ForegroundColor Green

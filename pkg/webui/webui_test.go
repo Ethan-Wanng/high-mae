@@ -1,10 +1,14 @@
 package webui
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -728,6 +732,7 @@ func TestStateChangingHandlersRejectGet(t *testing.T) {
 		{name: "delete aggregate group", path: "/api/delete_aggregate_group?file=group_1.yml", handler: deleteAggregateGroupHandler},
 		{name: "set aggregate group nodes", path: "/api/aggregate_group_set_nodes", handler: aggGroupSetNodesHandler},
 		{name: "test all", path: "/api/test_all", handler: testAllHandler},
+		{name: "app update install", path: "/api/app_update/install", handler: appUpdateInstallHandler},
 	}
 
 	for _, tt := range tests {
@@ -914,5 +919,82 @@ func TestPresetSiteTargetsDoNotIncludeReuters(t *testing.T) {
 		if target.ID == "preset_reuters" || target.URL == "https://www.reuters.com/" {
 			t.Fatalf("Reuters should not be a preset target: %+v", target)
 		}
+	}
+}
+
+func TestSelectUpdateAssetsPrefersZipForBrowserAndExeForSelfUpdateOnWindows(t *testing.T) {
+	validDigestHex := strings.Repeat("a", 64)
+	release := githubReleaseInfo{
+		TagName: "v1.0.7.3",
+		HTMLURL: "https://github.com/Ethan-Wanng/high-mae/releases/tag/v1.0.7.3",
+		Assets: []githubReleaseAsset{
+			{
+				Name:               "wing-1.0.7.3-linux-x64.run",
+				BrowserDownloadURL: "https://github.com/Ethan-Wanng/high-mae/releases/download/v1.0.7.3/wing-1.0.7.3-linux-x64.run",
+			},
+			{
+				Name:               "wing-1.0.7.3-windows-x64-setup.exe",
+				BrowserDownloadURL: "https://github.com/Ethan-Wanng/high-mae/releases/download/v1.0.7.3/wing-1.0.7.3-windows-x64-setup.exe",
+				Digest:             "sha256:" + validDigestHex,
+			},
+			{
+				Name:               "wing-1.0.7.3-windows-x64-setup.zip",
+				BrowserDownloadURL: "https://github.com/Ethan-Wanng/high-mae/releases/download/v1.0.7.3/wing-1.0.7.3-windows-x64-setup.zip",
+			},
+		},
+	}
+
+	downloadURL, installerURL, archiveURL, sha256Hex := selectUpdateAssetsForPlatform(release, "windows", "amd64")
+	if archiveURL != "https://github.com/Ethan-Wanng/high-mae/releases/download/v1.0.7.3/wing-1.0.7.3-windows-x64-setup.zip" {
+		t.Fatalf("archiveURL = %q, want zip asset URL", archiveURL)
+	}
+	if downloadURL != archiveURL {
+		t.Fatalf("downloadURL = %q, want archiveURL %q so browser download prefers zip", downloadURL, archiveURL)
+	}
+	if installerURL != "https://github.com/Ethan-Wanng/high-mae/releases/download/v1.0.7.3/wing-1.0.7.3-windows-x64-setup.exe" {
+		t.Fatalf("installerURL = %q, want exe asset URL", installerURL)
+	}
+	if sha256Hex != validDigestHex {
+		t.Fatalf("sha256Hex = %q, want %q", sha256Hex, validDigestHex)
+	}
+}
+
+func TestVerifyDownloadedInstallerChecksPEMagicAndSHA256(t *testing.T) {
+	dir := t.TempDir()
+
+	tooSmall := filepath.Join(dir, "small.exe")
+	if err := os.WriteFile(tooSmall, []byte("MZsmall"), 0o600); err != nil {
+		t.Fatalf("write small.exe: %v", err)
+	}
+	if err := verifyDownloadedInstaller(tooSmall, ""); err == nil {
+		t.Fatal("expected undersized installer to fail verification")
+	}
+
+	nonPE := filepath.Join(dir, "nonpe.exe")
+	if err := os.WriteFile(nonPE, bytes.Repeat([]byte("A"), int(minUpdateInstallerBytes)), 0o600); err != nil {
+		t.Fatalf("write nonpe.exe: %v", err)
+	}
+	if err := verifyDownloadedInstaller(nonPE, ""); err == nil {
+		t.Fatal("expected non-MZ file to fail PE header verification")
+	}
+
+	validPE := filepath.Join(dir, "valid.exe")
+	payload := make([]byte, minUpdateInstallerBytes)
+	payload[0] = 'M'
+	payload[1] = 'Z'
+	if err := os.WriteFile(validPE, payload, 0o600); err != nil {
+		t.Fatalf("write valid.exe: %v", err)
+	}
+	sum := sha256.Sum256(payload)
+	wantHash := hex.EncodeToString(sum[:])
+
+	if err := verifyDownloadedInstaller(validPE, wantHash); err != nil {
+		t.Fatalf("expected valid PE with matching SHA-256 to pass, got: %v", err)
+	}
+	if err := verifyDownloadedInstaller(validPE, "sha256:"+wantHash); err != nil {
+		t.Fatalf("expected valid PE with prefixed SHA-256 to pass, got: %v", err)
+	}
+	if err := verifyDownloadedInstaller(validPE, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("expected mismatched SHA-256 to fail verification")
 	}
 }

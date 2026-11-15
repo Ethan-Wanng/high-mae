@@ -19,6 +19,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
+AppCopyright=Copyright (C) 2026 {#MyAppPublisher}. All rights reserved.
 DefaultDirName={localappdata}\Programs\wing
 DefaultGroupName=wing
 AllowNoIcons=yes
@@ -33,11 +34,14 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\icon.ico
+UninstallDisplayName={#MyAppName}
 VersionInfoVersion={#MyAppFileVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=wing Windows installer
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppFileVersion}
+VersionInfoCopyright=Copyright (C) 2026 {#MyAppPublisher}. All rights reserved.
+VersionInfoOriginalFileName=wing-{#MyAppVersion}-windows-x64-setup.exe
 CloseApplications=force
 RestartApplications=no
 
@@ -59,31 +63,15 @@ Name: "{autodesktop}\wing"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app
 Filename: "{app}\{#MyAppExeName}"; Description: "启动 wing"; Flags: nowait postinstall skipifsilent
 
 [Code]
-function PowerShellString(Value: String): String;
-begin
-  StringChangeEx(Value, '''', '''''', True);
-  Result := '''' + Value + '''';
-end;
-
 procedure StopInstalledWingProcesses;
 var
   ResultCode: Integer;
-  InstallRoot: String;
-  Script: String;
 begin
-  InstallRoot := ExpandConstant('{app}');
-  Script :=
-    '$root = [System.IO.Path]::GetFullPath(' + PowerShellString(InstallRoot) + ').TrimEnd(''\'') + ''\''; ' +
-    'Get-Process -Name ''wing'',''wing_ui'' -ErrorAction SilentlyContinue | Where-Object { ' +
-    '$processPath = $null; try { $processPath = $_.Path } catch { $processPath = $null }; ' +
-    'if ($processPath) { $fullProcessPath = [System.IO.Path]::GetFullPath($processPath); ' +
-    '$fullProcessPath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) } else { $false } ' +
-    '} | ForEach-Object { $targetId = $_.Id; ' +
-    'Stop-Process -Id $targetId -Force -ErrorAction SilentlyContinue; ' +
-    'try { Wait-Process -Id $targetId -Timeout 10 -ErrorAction SilentlyContinue } catch {} }';
-
-  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command ' + AddQuotes(Script),
+  Exec(ExpandConstant('{sys}\taskkill.exe'),
+    '/F /IM wing_ui.exe /T',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'),
+    '/F /IM wing.exe /T',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
