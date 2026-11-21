@@ -3,6 +3,7 @@ package com.highmae.wing_ui
 import android.content.Context
 import android.os.Build
 import android.os.Process as AndroidProcess
+import android.provider.Settings
 import android.util.Log
 import java.io.File
 import java.net.HttpURLConnection
@@ -15,6 +16,7 @@ object WingBackendManager {
     private const val PREFS = "wing_native"
     private const val TOKEN_KEY = "mobile_api_token"
     private const val VPN_DESIRED_KEY = "vpn_desired_running"
+    private const val VPN_DESIRED_BOOT_COUNT_KEY = "vpn_desired_boot_count"
     private const val PID_FILE_NAME = "wing_backend.pid"
 
     @Volatile
@@ -40,14 +42,58 @@ object WingBackendManager {
         return created
     }
 
+    private fun currentBootCount(context: Context): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return -1
+        }
+        return try {
+            Settings.Global.getInt(
+                context.applicationContext.contentResolver,
+                Settings.Global.BOOT_COUNT,
+                -1
+            )
+        } catch (_: Exception) {
+            -1
+        }
+    }
+
     fun isVpnDesired(context: Context): Boolean {
         val preferences = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return preferences.getBoolean(VPN_DESIRED_KEY, false)
     }
 
+    fun isVpnDesiredForCurrentBoot(context: Context): Boolean {
+        val appContext = context.applicationContext
+        val preferences = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (!preferences.getBoolean(VPN_DESIRED_KEY, false)) {
+            return false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val savedBootCount = preferences.getInt(VPN_DESIRED_BOOT_COUNT_KEY, -1)
+            val bootCount = currentBootCount(appContext)
+            if (savedBootCount >= 0 && bootCount >= 0 && savedBootCount != bootCount) {
+                setVpnDesired(appContext, false)
+                return false
+            }
+        }
+        return true
+    }
+
     fun setVpnDesired(context: Context, desired: Boolean) {
-        val preferences = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        preferences.edit().putBoolean(VPN_DESIRED_KEY, desired).apply()
+        val appContext = context.applicationContext
+        val preferences = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val editor = preferences.edit().putBoolean(VPN_DESIRED_KEY, desired)
+        if (desired) {
+            val bootCount = currentBootCount(appContext)
+            if (bootCount >= 0) {
+                editor.putInt(VPN_DESIRED_BOOT_COUNT_KEY, bootCount)
+            } else {
+                editor.remove(VPN_DESIRED_BOOT_COUNT_KEY)
+            }
+        } else {
+            editor.remove(VPN_DESIRED_BOOT_COUNT_KEY)
+        }
+        editor.apply()
     }
 
     fun isProcessAlive(process: Process?): Boolean {
@@ -118,7 +164,9 @@ object WingBackendManager {
                 if (!backend.exists()) {
                     error = "当前 APK 不包含 $abi 的代理核心"
                 } else {
-                    backend.setExecutable(true, true)
+                    if (!backend.canExecute()) {
+                        backend.setExecutable(true, true)
+                    }
                     val process = ProcessBuilder(backend.absolutePath)
                         .directory(appContext.filesDir)
                         .redirectErrorStream(true)

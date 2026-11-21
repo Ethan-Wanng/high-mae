@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 part 'android_editors.dart';
+part 'android_auto_select.dart';
 
 const _nativeChannel = MethodChannel('com.highmae.wing/vpn');
 const _apiBase = 'http://127.0.0.1:10809';
@@ -88,7 +89,10 @@ abstract class WingApi {
   Future<Map<String, dynamic>> updateSupplier(String fileName);
   Future<Map<String, dynamic>> deleteSupplier(String fileName);
   Future<Map<String, dynamic>> setGlobalMode(bool global);
-  Future<Map<String, dynamic>> testSites();
+  Future<Map<String, dynamic>> testSites({String? targetId});
+  Future<Map<String, dynamic>?> getAutoSelectConfig();
+  Future<void> saveAutoSelectConfig(Map<String, dynamic> config);
+  Future<List<Map<String, dynamic>>> getSiteTargets();
 }
 
 class LocalWingApi implements WingApi {
@@ -99,7 +103,7 @@ class LocalWingApi implements WingApi {
       HttpClient()
         ..connectionTimeout = const Duration(seconds: 4)
         ..idleTimeout = const Duration(seconds: 15)
-        ..maxConnectionsPerHost = 4;
+        ..maxConnectionsPerHost = 6;
 
   void close() => _client.close(force: true);
 
@@ -328,13 +332,43 @@ class LocalWingApi implements WingApi {
   );
 
   @override
-  Future<Map<String, dynamic>> testSites() async => _map(
-    await _request(
-      '/api/site_test',
-      method: 'POST',
-      timeout: const Duration(minutes: 2),
-    ),
-  );
+  Future<Map<String, dynamic>> testSites({String? targetId}) async {
+    final query =
+        targetId == null || targetId.isEmpty
+            ? ''
+            : '?id=${Uri.encodeQueryComponent(targetId)}';
+    return _map(
+      await _request(
+        '/api/site_test$query',
+        method: 'POST',
+        timeout: const Duration(minutes: 2),
+      ),
+    );
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getAutoSelectConfig() async {
+    final data = _map(await _request('/api/auto_select_config'));
+    final cfg = data['config'];
+    if (cfg is Map) {
+      return Map<String, dynamic>.from(cfg);
+    }
+    return null;
+  }
+
+  @override
+  Future<void> saveAutoSelectConfig(Map<String, dynamic> config) async {
+    final data = _map(
+      await _request('/api/auto_select_config', method: 'POST', body: config),
+    );
+    if (data['ok'] != true) {
+      throw WingApiException(data['msg']?.toString() ?? '自动选择配置保存失败');
+    }
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getSiteTargets() async =>
+      _list(await _request('/api/site_targets'));
 }
 
 class WingApiException implements Exception {
@@ -571,38 +605,56 @@ class _WingAndroidHomeState extends State<WingAndroidHome>
     }
   }
 
+  Future<bool?> _readVpnStatus() async {
+    try {
+      return await _nativeChannel.invokeMethod<bool>('getVpnStatus');
+    } on MissingPluginException catch (_) {
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _refreshStatus({bool refreshStats = false}) async {
     if (_refreshing) return;
     _refreshing = true;
     try {
+      final vpnFuture = _readVpnStatus();
       final includeStats = refreshStats || _tab == 0 || _stats.isEmpty;
-      final values = await Future.wait<Object?>([
-        widget.api.getStatus(),
-        _nativeChannel.invokeMethod<bool>('getVpnStatus'),
-        if (includeStats) widget.api.getStats(),
-      ]);
+      Map<String, dynamic>? nextStatus;
+      Map<String, dynamic>? nextStats;
+      String? nextError;
+      try {
+        final values = await Future.wait<Object?>([
+          widget.api.getStatus(),
+          if (includeStats) widget.api.getStats(),
+        ]);
+        nextStatus = Map<String, dynamic>.from(values[0] as Map);
+        if (includeStats) {
+          nextStats = Map<String, dynamic>.from(values[1] as Map);
+        }
+      } catch (error) {
+        nextError = error.toString();
+      }
+      final nextVpn = await vpnFuture;
       if (!mounted) return;
       void apply() {
-        _status = Map<String, dynamic>.from(values[0] as Map);
-        _vpnRunning = values[1] == true;
-        if (includeStats) {
-          _stats = Map<String, dynamic>.from(values[2] as Map);
+        if (nextVpn != null) {
+          _vpnRunning = nextVpn;
         }
-        _error = null;
+        if (nextStatus != null) {
+          _status = nextStatus;
+        }
+        if (nextStats != null) {
+          _stats = nextStats;
+        }
+        _error = nextError;
       }
 
       if (_tab == 0) {
         setState(apply);
       } else {
         apply();
-      }
-    } catch (error) {
-      if (mounted) {
-        if (_tab == 0) {
-          setState(() => _error = error.toString());
-        } else {
-          _error = error.toString();
-        }
       }
     } finally {
       _refreshing = false;
@@ -946,6 +998,8 @@ class _OverviewPage extends StatelessWidget {
   }
 }
 
+enum _NodesViewMode { list, auto }
+
 class _NodesPage extends StatefulWidget {
   const _NodesPage({required this.api, required this.onChanged});
   final WingApi api;
@@ -956,18 +1010,28 @@ class _NodesPage extends StatefulWidget {
 }
 
 class _NodesPageState extends State<_NodesPage> {
+  _NodesViewMode _viewMode = _NodesViewMode.list;
   List<Map<String, dynamic>> _nodes = const [];
   List<Map<String, dynamic>> _filteredNodes = const [];
+  List<Map<String, dynamic>> _allNodes = const [];
   List<Map<String, dynamic>> _suppliers = const [];
+  List<Map<String, dynamic>> _siteTargets = const [];
+  AutoSelectConfig _autoConfig = AutoSelectConfig.defaults();
   final _search = TextEditingController();
   bool _loading = true;
+  bool _autoLoading = false;
+  bool _autoRunning = false;
   bool _switchingSupplier = false;
   bool _testingAll = false;
   String? _selectedSupplierFile;
   String? _switchingNodeKey;
   final Set<String> _testing = {};
   String? _error;
+  String? _autoStatusText;
+  double? _autoProgress;
   int _loadGeneration = 0;
+  int _autoSelectRunSeq = 0;
+  Timer? _autoReselectTimer;
 
   @override
   void initState() {
@@ -1004,6 +1068,14 @@ class _NodesPageState extends State<_NodesPage> {
   }
 
   Future<void> _initialize() async {
+    await Future.wait([
+      _loadSuppliersMetadata(),
+      _loadAutoSelectMetadata(),
+    ]);
+    await _load();
+  }
+
+  Future<void> _loadSuppliersMetadata() async {
     try {
       final rawSuppliers = await widget.api.getSuppliers();
       if (!mounted) return;
@@ -1024,7 +1096,41 @@ class _NodesPageState extends State<_NodesPage> {
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
     }
-    await _load();
+  }
+
+  Future<void> _loadAutoSelectMetadata() async {
+    try {
+      final results = await Future.wait<Object?>([
+        widget.api.getAutoSelectConfig(),
+        widget.api.getSiteTargets(),
+      ]);
+      if (!mounted) return;
+      final configMap = results[0] as Map<String, dynamic>?;
+      final targets = List<Map<String, dynamic>>.from(results[1] as List);
+      setState(() {
+        _autoConfig = AutoSelectConfig.fromJson(configMap);
+        _siteTargets = targets;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _loadAllNodes() async {
+    if (mounted) {
+      setState(() => _autoLoading = true);
+    }
+    try {
+      final nodes = await widget.api.getNodes();
+      if (!mounted) return;
+      setState(() => _allNodes = nodes);
+    } catch (error) {
+      if (mounted && _viewMode == _NodesViewMode.auto) {
+        _snack(context, error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _autoLoading = false);
+      }
+    }
   }
 
   Future<void> _load() async {
@@ -1054,8 +1160,44 @@ class _NodesPageState extends State<_NodesPage> {
     }
   }
 
+  Future<void> _refreshAutoView() async {
+    await Future.wait([
+      _loadSuppliersMetadata(),
+      _loadAutoSelectMetadata(),
+      _loadAllNodes(),
+    ]);
+  }
+
+  void _setViewMode(_NodesViewMode mode) {
+    if (_viewMode == mode) return;
+    setState(() => _viewMode = mode);
+    if (mode == _NodesViewMode.auto) {
+      unawaited(_refreshAutoView());
+    }
+  }
+
   String _nodeKey(Map<String, dynamic> node) =>
       '${node['fileName'] ?? ''}:${node['subIndex'] ?? node['index']}:${node['name'] ?? ''}';
+
+  void _applyNodeLatency(String key, int latency) {
+    var changed = false;
+    final listIdx = _nodes.indexWhere((item) => _nodeKey(item) == key);
+    if (listIdx >= 0) {
+      _nodes[listIdx] = {..._nodes[listIdx], 'latency': latency};
+      _rebuildFilteredNodes();
+      changed = true;
+    }
+    final allIdx = _allNodes.indexWhere((item) => _nodeKey(item) == key);
+    if (allIdx >= 0) {
+      final nextAll = [..._allNodes];
+      nextAll[allIdx] = {...nextAll[allIdx], 'latency': latency};
+      _allNodes = nextAll;
+      changed = true;
+    }
+    if (changed && mounted) {
+      setState(() {});
+    }
+  }
 
   Future<void> _selectSupplier(String fileName) async {
     if (_switchingSupplier || fileName == _selectedSupplierFile) return;
@@ -1088,10 +1230,23 @@ class _NodesPageState extends State<_NodesPage> {
       if (response['ok'] != true) {
         throw WingApiException(response['msg']?.toString() ?? '节点切换失败');
       }
-      await _load();
+      await Future.wait([
+        _load(),
+        if (_viewMode == _NodesViewMode.auto) _loadAllNodes(),
+      ]);
       await widget.onChanged();
     } finally {
       if (mounted) setState(() => _switchingNodeKey = null);
+    }
+  }
+
+  Future<void> _switchFromAutoSelect(Map<String, dynamic> node) async {
+    try {
+      await _switch(node);
+    } catch (error) {
+      if (mounted) {
+        _snack(context, error.toString());
+      }
     }
   }
 
@@ -1100,12 +1255,8 @@ class _NodesPageState extends State<_NodesPage> {
     setState(() => _testing.add(key));
     try {
       final latency = await widget.api.testNode(node);
-      final position = _nodes.indexWhere((item) => _nodeKey(item) == key);
-      if (mounted && position >= 0) {
-        setState(() {
-          _nodes[position] = {..._nodes[position], 'latency': latency};
-          _rebuildFilteredNodes();
-        });
+      if (mounted) {
+        _applyNodeLatency(key, latency);
       }
     } finally {
       if (mounted) setState(() => _testing.remove(key));
@@ -1117,12 +1268,280 @@ class _NodesPageState extends State<_NodesPage> {
     try {
       await widget.api.testAllNodes();
       await _load();
+      if (_viewMode == _NodesViewMode.auto) {
+        await _loadAllNodes();
+      }
     } catch (error) {
       if (mounted) {
         _snack(context, error.toString());
       }
     } finally {
       if (mounted) setState(() => _testingAll = false);
+    }
+  }
+
+  void _stopAutoSelect() {
+    _autoReselectTimer?.cancel();
+    _autoReselectTimer = null;
+    _autoSelectRunSeq++;
+    if (mounted) {
+      setState(() {
+        _autoRunning = false;
+        _autoProgress = null;
+        _autoStatusText = '已停止';
+      });
+    }
+  }
+
+  void _scheduleAutoSelectRun() {
+    _autoReselectTimer?.cancel();
+    _autoReselectTimer = Timer(const Duration(milliseconds: 450), () {
+      if (mounted && _autoConfig.enabled) {
+        unawaited(_runAutoSelect());
+      }
+    });
+  }
+
+  Future<void> _handleAutoConfigChanged(
+    AutoSelectConfig next, {
+    bool reselect = false,
+  }) async {
+    setState(() => _autoConfig = next);
+    try {
+      await widget.api.saveAutoSelectConfig(next.toJson());
+    } catch (error) {
+      if (mounted) {
+        _snack(context, error.toString());
+      }
+    }
+    if (!mounted) return;
+    if (reselect && next.enabled) {
+      _scheduleAutoSelectRun();
+    } else if (!next.enabled) {
+      _autoReselectTimer?.cancel();
+      _autoReselectTimer = null;
+      if (_autoRunning) {
+        _stopAutoSelect();
+      }
+    }
+  }
+
+  Future<void> _handleToggleAutoEnabled(bool enabled) async {
+    final next = _autoConfig.copyWith(enabled: enabled);
+    await _handleAutoConfigChanged(next);
+    if (enabled && mounted) {
+      unawaited(_runAutoSelect(force: true));
+    }
+  }
+
+  Future<bool> _passesSiteRules(
+    Map<String, dynamic> candidate,
+    int runSeq,
+  ) async {
+    final mode = _autoConfig.siteCheck.mode;
+    if (mode == 'none') return true;
+    final ids =
+        _autoConfig.siteCheck.ids.isNotEmpty
+            ? _autoConfig.siteCheck.ids
+            : _siteTargets
+                .map((item) => item['id']?.toString() ?? '')
+                .where((id) => id.isNotEmpty)
+                .toList(growable: false);
+    if (ids.isEmpty) return true;
+    var passed = 0;
+    for (final id in ids) {
+      if (!mounted || runSeq != _autoSelectRunSeq) return false;
+      try {
+        final response = await widget.api.testSites(targetId: id);
+        final results = response['results'] as List? ?? const [];
+        final firstResult =
+            results.isNotEmpty && results.first is Map
+                ? Map<String, dynamic>.from(results.first as Map)
+                : const <String, dynamic>{};
+        final ok = response['ok'] == true && firstResult['ok'] == true;
+        if (ok) {
+          passed++;
+          if (mode == 'any') return true;
+        } else if (mode == 'all') {
+          return false;
+        }
+      } catch (_) {
+        if (mode == 'all') return false;
+      }
+    }
+    return mode == 'all' ? passed == ids.length : passed > 0;
+  }
+
+  Future<void> _runAutoSelect({bool force = false}) async {
+    _autoReselectTimer?.cancel();
+    _autoReselectTimer = null;
+    final runSeq = ++_autoSelectRunSeq;
+
+    bool isCancelled() => !mounted || runSeq != _autoSelectRunSeq;
+
+    setState(() {
+      _autoRunning = true;
+      _autoProgress = null;
+      _autoStatusText = '正在读取节点...';
+    });
+
+    try {
+      final fetchedSuppliers = _dedupeSuppliers(
+        await widget.api.getSuppliers(),
+      );
+      if (isCancelled()) return;
+      final fetchedAllNodes = await widget.api.getNodes();
+      if (isCancelled()) return;
+
+      setState(() {
+        _suppliers = fetchedSuppliers;
+        _allNodes = fetchedAllNodes;
+      });
+
+      var candidates = filterAutoSelectCandidates(
+        fetchedAllNodes,
+        _autoConfig,
+        fetchedSuppliers,
+        ignoreTimeout: _autoConfig.ignoreTimeout,
+      );
+      if (candidates.isEmpty && force && _autoConfig.ignoreTimeout) {
+        candidates = filterAutoSelectCandidates(
+          fetchedAllNodes,
+          _autoConfig,
+          fetchedSuppliers,
+          ignoreTimeout: false,
+        );
+      }
+      if (candidates.isEmpty) {
+        setState(() => _autoStatusText = '没有符合规则的候选节点');
+        if (mounted) _snack(context, '没有符合规则的候选节点');
+        return;
+      }
+
+      final latencies = <String, int>{};
+      final queue = List<Map<String, dynamic>>.from(candidates);
+      final total = queue.length;
+      var completed = 0;
+
+      setState(() {
+        _autoProgress = 0;
+        _autoStatusText = '测速中 0/$total';
+      });
+
+      Future<void> worker() async {
+        while (queue.isNotEmpty) {
+          if (isCancelled()) return;
+          final node = queue.removeAt(0);
+          final key = _nodeKey(node);
+          int latency;
+          try {
+            latency = await widget.api.testNode(node);
+          } catch (_) {
+            latency = -1;
+          }
+          if (isCancelled()) return;
+          latencies[key] = latency;
+          completed++;
+          _applyNodeLatency(key, latency);
+          if (!isCancelled()) {
+            setState(() {
+              _autoProgress = completed / total;
+              _autoStatusText = '测速中 $completed/$total';
+            });
+          }
+        }
+      }
+
+      final workerCount = total < 3 ? total : 3;
+      await Future.wait(List.generate(workerCount, (_) => worker()));
+      if (isCancelled()) return;
+
+      final ranked =
+          candidates
+              .where((node) => (latencies[_nodeKey(node)] ?? -1) > 0)
+              .toList(growable: true)
+            ..sort(
+              (a, b) => (latencies[_nodeKey(a)] ?? 999999).compareTo(
+                latencies[_nodeKey(b)] ?? 999999,
+              ),
+            );
+
+      if (ranked.isEmpty) {
+        setState(() => _autoStatusText = '未找到可用节点');
+        if (mounted) _snack(context, '自动选择未找到可用节点');
+        return;
+      }
+
+      Map<String, dynamic>? best;
+      if (_autoConfig.siteCheck.mode == 'none') {
+        best = ranked.first;
+      } else {
+        Map<String, dynamic>? original;
+        for (final node in fetchedAllNodes) {
+          if (node['active'] == true) {
+            original = node;
+            break;
+          }
+        }
+        for (final candidate in ranked) {
+          if (isCancelled()) return;
+          setState(() {
+            _autoProgress = null;
+            _autoStatusText = '检测网站 · ${candidate['name'] ?? ''}';
+          });
+          if (candidate['active'] != true) {
+            try {
+              final resp = await widget.api.switchNode(candidate);
+              if (resp['ok'] != true) continue;
+            } catch (_) {
+              continue;
+            }
+          }
+          if (await _passesSiteRules(candidate, runSeq)) {
+            best = candidate;
+            break;
+          }
+        }
+        if (best == null) {
+          if (original != null && !isCancelled()) {
+            try {
+              await widget.api.switchNode(original);
+            } catch (_) {}
+          }
+          if (!isCancelled()) {
+            setState(() => _autoStatusText = '没有节点满足网站可用性规则');
+            if (mounted) _snack(context, '没有节点满足网站可用性规则');
+          }
+          return;
+        }
+      }
+
+      if (isCancelled()) return;
+      if (best['active'] != true) {
+        final response = await widget.api.switchNode(best);
+        if (response['ok'] != true) {
+          throw WingApiException(response['msg']?.toString() ?? '节点切换失败');
+        }
+      }
+
+      await Future.wait([_load(), _loadAllNodes(), widget.onChanged()]);
+      if (isCancelled()) return;
+      final bestLatency = latencies[_nodeKey(best)] ?? best['latency'];
+      final message = '已选择 ${best['name'] ?? ''} · $bestLatency ms';
+      setState(() => _autoStatusText = message);
+      if (mounted) _snack(context, message);
+    } catch (error) {
+      if (!isCancelled()) {
+        setState(() => _autoStatusText = error.toString());
+        if (mounted) _snack(context, error.toString());
+      }
+    } finally {
+      if (mounted && runSeq == _autoSelectRunSeq) {
+        setState(() {
+          _autoRunning = false;
+          _autoProgress = null;
+        });
+      }
     }
   }
 
@@ -1136,168 +1555,237 @@ class _NodesPageState extends State<_NodesPage> {
             )
             ? _selectedSupplierFile
             : null;
+    final autoCandidates =
+        _viewMode == _NodesViewMode.auto
+            ? filterAutoSelectCandidates(
+              _allNodes,
+              _autoConfig,
+              _suppliers,
+              ignoreTimeout: _autoConfig.ignoreTimeout,
+            )
+            : const <Map<String, dynamic>>[];
+
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-          child: DropdownButtonFormField<String>(
-            key: ValueKey(dropdownValue),
-            value: dropdownValue,
-            isExpanded: true,
-            decoration: const InputDecoration(
-              labelText: '选择订阅',
-              prefixIcon: Icon(Icons.cloud_queue_rounded),
+          child: SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<_NodesViewMode>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(
+                  value: _NodesViewMode.list,
+                  label: Text('节点列表'),
+                ),
+                ButtonSegment(
+                  value: _NodesViewMode.auto,
+                  label: Text('自动选择'),
+                ),
+              ],
+              selected: {_viewMode},
+              onSelectionChanged: (values) => _setViewMode(values.first),
             ),
-            items: _suppliers
-                .map((supplier) {
-                  final file = supplier['fileName']?.toString() ?? '';
-                  return DropdownMenuItem(
-                    value: file,
-                    child: Text(
-                      supplier['name']?.toString() ?? file,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  );
-                })
-                .toList(growable: false),
-            onChanged:
-                _switchingSupplier
-                    ? null
-                    : (file) {
-                      if (file != null) _selectSupplier(file);
-                    },
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: TextField(
-            controller: _search,
-            onChanged: (_) => setState(_rebuildFilteredNodes),
-            decoration: InputDecoration(
-              hintText: '搜索节点或订阅组',
-              prefixIcon: const Icon(Icons.search_rounded),
-              suffixIcon: IconButton(
-                tooltip: '全部测速',
-                onPressed: _testingAll ? null : _testAll,
-                icon:
-                    _testingAll
-                        ? const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                        : const Icon(Icons.speed_rounded),
+        if (_viewMode == _NodesViewMode.auto)
+          Expanded(
+            child: _AutoSelectPane(
+              config: _autoConfig,
+              loading: _autoLoading,
+              running: _autoRunning,
+              statusText: _autoStatusText,
+              progress: _autoProgress,
+              candidates: autoCandidates,
+              allNodes: _allNodes,
+              suppliers: _suppliers,
+              siteTargets: _siteTargets,
+              switchingNodeKey: _switchingNodeKey,
+              onRefresh: _refreshAutoView,
+              onToggleEnabled: _handleToggleAutoEnabled,
+              onRunNow: () => unawaited(_runAutoSelect(force: true)),
+              onStop: _stopAutoSelect,
+              onConfigChanged: _handleAutoConfigChanged,
+              onSwitchNode: _switchFromAutoSelect,
+            ),
+          )
+        else ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: DropdownButtonFormField<String>(
+              key: ValueKey(dropdownValue),
+              value: dropdownValue,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: '选择订阅',
+                prefixIcon: Icon(Icons.cloud_queue_rounded),
+              ),
+              items: _suppliers
+                  .map((supplier) {
+                    final file = supplier['fileName']?.toString() ?? '';
+                    return DropdownMenuItem(
+                      value: file,
+                      child: Text(
+                        supplier['name']?.toString() ?? file,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  })
+                  .toList(growable: false),
+              onChanged:
+                  _switchingSupplier
+                      ? null
+                      : (file) {
+                        if (file != null) _selectSupplier(file);
+                      },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: TextField(
+              controller: _search,
+              onChanged: (_) => setState(_rebuildFilteredNodes),
+              decoration: InputDecoration(
+                hintText: '搜索节点或订阅组',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: IconButton(
+                  tooltip: '全部测速',
+                  onPressed: _testingAll ? null : _testAll,
+                  icon:
+                      _testingAll
+                          ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : const Icon(Icons.speed_rounded),
+                ),
               ),
             ),
           ),
-        ),
-        Expanded(
-          child: RefreshIndicator(
-            onRefresh: _load,
-            child:
-                _loading && _nodes.isEmpty
-                    ? const Center(child: CircularProgressIndicator())
-                    : _error != null
-                    ? _ScrollableMessage(
-                      icon: Icons.cloud_off,
-                      message: _error!,
-                      action: _load,
-                    )
-                    : filtered.isEmpty
-                    ? const _ScrollableMessage(
-                      icon: Icons.hub_outlined,
-                      message: '暂无节点，请先导入订阅',
-                    )
-                    : ListView.builder(
-                      key: PageStorageKey<String>(
-                        'nodes:${dropdownValue ?? 'all'}',
-                      ),
-                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 28),
-                      cacheExtent: 82,
-                      addAutomaticKeepAlives: false,
-                      addRepaintBoundaries: true,
-                      addSemanticIndexes: false,
-                      itemCount: filtered.length,
-                      itemExtent: 82,
-                      itemBuilder: (context, index) {
-                        final node = filtered[index];
-                        final active = node['active'] == true;
-                        final latency = (node['latency'] as num?)?.toInt() ?? 0;
-                        final nodeKey = _nodeKey(node);
-                        final nodeType = node['type']?.toString() ?? '';
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Card(
-                            key: ValueKey(nodeKey),
-                            color: active ? const Color(0xFF173D37) : null,
-                            child: ListTile(
-                              onTap: () async {
-                                try {
-                                  await _switch(node);
-                                } catch (error) {
-                                  if (context.mounted) {
-                                    _snack(context, error.toString());
-                                  }
-                                }
-                              },
-                              leading: CircleAvatar(
-                                backgroundColor:
-                                    active
-                                        ? const Color(0xFF31D6B8)
-                                        : const Color(0xFF25313C),
-                                child: Text(
-                                  nodeType.isEmpty
-                                      ? '?'
-                                      : nodeType.substring(0, 1).toUpperCase(),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _load,
+              child:
+                  _loading && _nodes.isEmpty
+                      ? const Center(child: CircularProgressIndicator())
+                      : _error != null
+                      ? _ScrollableMessage(
+                        icon: Icons.cloud_off,
+                        message: _error!,
+                        action: _load,
+                      )
+                      : filtered.isEmpty
+                      ? const _ScrollableMessage(
+                        icon: Icons.hub_outlined,
+                        message: '暂无节点，请先导入订阅',
+                      )
+                      : ListView.builder(
+                        key: PageStorageKey<String>(
+                          'nodes:${dropdownValue ?? 'all'}',
+                        ),
+                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 28),
+                        cacheExtent: 300,
+                        addAutomaticKeepAlives: false,
+                        addRepaintBoundaries: true,
+                        addSemanticIndexes: false,
+                        itemCount: filtered.length,
+                        itemExtent: 102,
+                        itemBuilder: (context, index) {
+                          final node = filtered[index];
+                          final active = node['active'] == true;
+                          final latency = (node['latency'] as num?)?.toInt() ?? 0;
+                          final nodeKey = _nodeKey(node);
+                          final nodeType = node['type']?.toString() ?? '';
+                          return Padding(
+                            key: ValueKey('$nodeKey:$index'),
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Card(
+                              color: active ? const Color(0xFF173D37) : null,
+                              child: ListTile(
+                                visualDensity: VisualDensity.compact,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 2,
                                 ),
-                              ),
-                              title: Text(
-                                node['name']?.toString() ?? '未命名',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: Text(
-                                '${node['group'] ?? '未分组'} · ${node['type'] ?? 'unknown'}',
-                              ),
-                              trailing:
-                                  _switchingNodeKey == nodeKey ||
-                                          _testing.contains(nodeKey)
-                                      ? const SizedBox.square(
-                                        dimension: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                      : TextButton(
-                                        onPressed: () async {
-                                          try {
-                                            await _test(node);
-                                          } catch (error) {
-                                            if (context.mounted) {
-                                              _snack(context, error.toString());
+                                onTap: () async {
+                                  try {
+                                    await _switch(node);
+                                  } catch (error) {
+                                    if (context.mounted) {
+                                      _snack(context, error.toString());
+                                    }
+                                  }
+                                },
+                                leading: CircleAvatar(
+                                  backgroundColor:
+                                      active
+                                          ? const Color(0xFF31D6B8)
+                                          : const Color(0xFF25313C),
+                                  child: Text(
+                                    nodeType.isEmpty
+                                        ? '?'
+                                        : nodeType
+                                            .substring(0, 1)
+                                            .toUpperCase(),
+                                  ),
+                                ),
+                                title: Text(
+                                  node['name']?.toString() ?? '未命名',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: Text(
+                                  '${node['group'] ?? '未分组'} · ${node['type'] ?? 'unknown'}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing:
+                                    _switchingNodeKey == nodeKey ||
+                                            _testing.contains(nodeKey)
+                                        ? const SizedBox.square(
+                                          dimension: 24,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                        : TextButton(
+                                          onPressed: () async {
+                                            try {
+                                              await _test(node);
+                                            } catch (error) {
+                                              if (context.mounted) {
+                                                _snack(
+                                                  context,
+                                                  error.toString(),
+                                                );
+                                              }
                                             }
-                                          }
-                                        },
-                                        child: Text(
-                                          latency == 0
-                                              ? '测速'
-                                              : latency < 0
-                                              ? '超时'
-                                              : '$latency ms',
+                                          },
+                                          child: Text(
+                                            latency == 0
+                                                ? '测速'
+                                                : latency < 0
+                                                ? '超时'
+                                                : '$latency ms',
+                                          ),
                                         ),
-                                      ),
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
+                          );
+                        },
+                      ),
+            ),
           ),
-        ),
+        ],
       ],
     );
   }
 
   @override
   void dispose() {
+    _autoReselectTimer?.cancel();
+    _autoReselectTimer = null;
+    _autoSelectRunSeq++;
     _search.dispose();
     super.dispose();
   }

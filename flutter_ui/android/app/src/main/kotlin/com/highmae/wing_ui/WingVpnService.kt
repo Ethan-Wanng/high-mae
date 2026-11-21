@@ -45,6 +45,10 @@ class WingVpnService : VpnService() {
             private set
 
         @Volatile
+        var hasActiveTunnel = false
+            private set
+
+        @Volatile
         var lastError: String? = null
             private set
 
@@ -64,7 +68,7 @@ class WingVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
-            if (WingBackendManager.isVpnDesired(this) && VpnService.prepare(this) == null) {
+            if (WingBackendManager.isVpnDesiredForCurrentBoot(this) && VpnService.prepare(this) == null) {
                 enterForeground(isRunning)
                 startVpn()
                 return START_STICKY
@@ -185,6 +189,7 @@ class WingVpnService : VpnService() {
                 } catch (_: Exception) {
                 }
                 vpnInterface = established
+                hasActiveTunnel = true
             }
 
             registerUnderlyingNetworkCallback()
@@ -213,15 +218,29 @@ class WingVpnService : VpnService() {
     }
 
     private fun reconnectBackend() {
-        val gen: Int
-        val currentInterface: ParcelFileDescriptor
+        var gen = 0
+        var currentInterface: ParcelFileDescriptor? = null
         synchronized(vpnLock) {
-            currentInterface = vpnInterface ?: return
             if (isStarting) return
-            isRunning = false
-            isStarting = true
-            lastError = null
-            gen = vpnGeneration.get()
+            val active = vpnInterface
+            if (active != null) {
+                isRunning = false
+                isStarting = true
+                lastError = null
+                gen = vpnGeneration.get()
+                currentInterface = active
+            }
+        }
+        val iface = currentInterface
+        if (iface == null) {
+            if (WingBackendManager.isVpnDesiredForCurrentBoot(this) && VpnService.prepare(this) == null) {
+                startVpn()
+            } else {
+                WingBackendManager.setVpnDesired(this, false)
+                leaveForeground()
+                stopSelf()
+            }
+            return
         }
 
         notifyState(false)
@@ -242,7 +261,7 @@ class WingVpnService : VpnService() {
                 }
 
                 val fd = synchronized(vpnLock) {
-                    if (gen == vpnGeneration.get()) currentInterface.fileDescriptor else null
+                    if (gen == vpnGeneration.get()) iface.fileDescriptor else null
                 } ?: return@thread
 
                 sendFdToGoBackend(fd, gen, failServiceOnError = false)
@@ -368,25 +387,41 @@ class WingVpnService : VpnService() {
         }
 
         thread(name = "wing-vpn-watchdog-$gen", isDaemon = true) {
-            while (gen == vpnGeneration.get() && WingBackendManager.isVpnDesired(applicationContext)) {
+            while (gen == vpnGeneration.get() && WingBackendManager.isVpnDesiredForCurrentBoot(applicationContext)) {
                 try {
                     Thread.sleep(5000)
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                     return@thread
                 }
-                if (gen != vpnGeneration.get() || !WingBackendManager.isVpnDesired(applicationContext)) {
+                if (gen != vpnGeneration.get() || !WingBackendManager.isVpnDesiredForCurrentBoot(applicationContext)) {
                     return@thread
                 }
                 if (isStarting) continue
 
                 if (WingBackendManager.isBackendHealthy(1500)) {
+                    if (!isRunning && hasActiveTunnel) {
+                        val fd = synchronized(vpnLock) {
+                            if (gen == vpnGeneration.get() && !isStarting && !isRunning && hasActiveTunnel) {
+                                val activeFd = vpnInterface?.fileDescriptor
+                                if (activeFd != null) {
+                                    isStarting = true
+                                }
+                                activeFd
+                            } else {
+                                null
+                            }
+                        }
+                        if (fd != null) {
+                            sendFdToGoBackend(fd, gen, failServiceOnError = false)
+                        }
+                    }
                     continue
                 }
 
                 // Require 3 consecutive health check failures before restarting core.
                 var unhealthyCount = 1
-                while (unhealthyCount < 3 && gen == vpnGeneration.get() && WingBackendManager.isVpnDesired(applicationContext)) {
+                while (unhealthyCount < 3 && gen == vpnGeneration.get() && WingBackendManager.isVpnDesiredForCurrentBoot(applicationContext)) {
                     try {
                         Thread.sleep(1000)
                     } catch (_: InterruptedException) {
@@ -399,7 +434,7 @@ class WingVpnService : VpnService() {
                     }
                     unhealthyCount++
                 }
-                if (unhealthyCount < 3 || gen != vpnGeneration.get() || !WingBackendManager.isVpnDesired(applicationContext)) {
+                if (unhealthyCount < 3 || gen != vpnGeneration.get() || !WingBackendManager.isVpnDesiredForCurrentBoot(applicationContext)) {
                     continue
                 }
 
@@ -567,39 +602,54 @@ class WingVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        val stopGen: Int
         val wasActive: Boolean
         val toClose: ParcelFileDescriptor?
         synchronized(vpnLock) {
-            vpnGeneration.incrementAndGet()
+            stopGen = vpnGeneration.incrementAndGet()
             netChangeSequence.incrementAndGet()
             watchdogGeneration = 0
-            wasActive = isRunning || isStarting
+            wasActive = isRunning || isStarting || hasActiveTunnel
             isStarting = false
             isRunning = false
+            hasActiveTunnel = false
             toClose = vpnInterface
             vpnInterface = null
         }
 
         unregisterUnderlyingNetworkCallback()
+        leaveForeground()
 
         if (wasActive) {
-            sendControlCommandToGoBackend(CMD_STOP)
+            thread(name = "wing-vpn-stop-ipc", isDaemon = true) {
+                try {
+                    if (stopGen == vpnGeneration.get()) {
+                        sendControlCommandToGoBackend(CMD_STOP, timeoutMs = 1500)
+                    }
+                } finally {
+                    try {
+                        toClose?.close()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error closing VPN interface: ${e.message}")
+                    }
+                }
+            }
+        } else {
+            try {
+                toClose?.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing VPN interface: ${e.message}")
+            }
         }
-        try {
-            toClose?.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error closing VPN interface: ${e.message}")
-        }
-        leaveForeground()
         Log.i(TAG, "VPN stopped")
     }
 
-    private fun sendControlCommandToGoBackend(cmd: Int) {
+    private fun sendControlCommandToGoBackend(cmd: Int, timeoutMs: Int = 3000) {
         var socket: LocalSocket? = null
         try {
             socket = LocalSocket()
             socket.connect(LocalSocketAddress(ABSTRACT_SOCKET_NAME, LocalSocketAddress.Namespace.ABSTRACT))
-            socket.soTimeout = 3000
+            socket.soTimeout = timeoutMs
             val output = socket.outputStream
             output.write(cmd)
             output.flush()

@@ -1,6 +1,9 @@
+//go:build !android
+
 package proxy
 
 import (
+	"context"
 	"net/netip"
 	"sync/atomic"
 	"testing"
@@ -10,6 +13,7 @@ import (
 	box "github.com/sagernet/sing-box"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
+	sbrule "github.com/sagernet/sing-box/route/rule"
 	N "github.com/sagernet/sing/common/network"
 )
 
@@ -121,8 +125,9 @@ func TestBuildTunBoxOptionsUsesInternalTunAndLocalSocks(t *testing.T) {
 	icmpRule := opts.Route.Rules[1].DefaultOptions
 	if len(icmpRule.Inbound) != 1 || icmpRule.Inbound[0] != tunInboundTag ||
 		len(icmpRule.Network) != 1 || icmpRule.Network[0] != N.NetworkICMP ||
-		icmpRule.Action != C.RuleActionTypeReject {
-		t.Fatalf("ICMP rule = %+v, want TUN ICMP reject", icmpRule)
+		icmpRule.Action != C.RuleActionTypeReject ||
+		icmpRule.RejectOptions.Method != C.RuleActionRejectMethodDefault {
+		t.Fatalf("ICMP rule = %+v, want TUN ICMP reject with default method", icmpRule)
 	}
 	proxyRule := opts.Route.Rules[2].DefaultOptions
 	if len(proxyRule.Inbound) != 1 || proxyRule.Inbound[0] != tunInboundTag ||
@@ -130,6 +135,25 @@ func TestBuildTunBoxOptionsUsesInternalTunAndLocalSocks(t *testing.T) {
 		proxyRule.Action != C.RuleActionTypeRoute ||
 		proxyRule.RouteOptions.Outbound != tunLocalSocksTag {
 		t.Fatalf("proxy rule = %+v, want TUN route to local SOCKS", proxyRule)
+	}
+}
+
+func TestBuildTunBoxOptionsRejectActionDoesNotPanic(t *testing.T) {
+	opts, err := buildTunBoxOptions("203.0.113.8")
+	if err != nil {
+		t.Fatalf("buildTunBoxOptions() error = %v", err)
+	}
+	icmpRule := opts.Route.Rules[1].DefaultOptions
+	action, err := sbrule.NewRuleAction(context.Background(), nil, icmpRule.RuleAction)
+	if err != nil {
+		t.Fatalf("NewRuleAction() error = %v", err)
+	}
+	reject, ok := action.(*sbrule.RuleActionReject)
+	if !ok {
+		t.Fatalf("action type = %T, want *rule.RuleActionReject", action)
+	}
+	if rejectErr := reject.Error(context.Background()); rejectErr == nil {
+		t.Fatalf("reject.Error() = nil, want non-nil reject error")
 	}
 }
 

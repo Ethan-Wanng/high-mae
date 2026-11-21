@@ -380,6 +380,9 @@ func buildTunBoxOptions(nodeIP string) (option.Options, error) {
 						},
 						RuleAction: option.RuleAction{
 							Action: C.RuleActionTypeReject,
+							RejectOptions: option.RejectActionOptions{
+								Method: C.RuleActionRejectMethodDefault,
+							},
 						},
 					},
 				},

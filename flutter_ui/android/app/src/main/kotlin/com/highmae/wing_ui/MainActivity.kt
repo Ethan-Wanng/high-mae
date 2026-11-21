@@ -66,7 +66,10 @@ class MainActivity : FlutterActivity() {
                     stopVpnAndWait(result)
                 }
                 "getVpnStatus" -> {
-                    result.success(WingVpnService.isRunning)
+                    result.success(
+                        WingVpnService.isRunning ||
+                            (WingVpnService.hasActiveTunnel && WingVpnService.isStarting)
+                    )
                 }
                 "startBackend" -> {
                     startBackend(result)
@@ -141,7 +144,7 @@ class MainActivity : FlutterActivity() {
 
     private fun stopVpnAndWait(result: MethodChannel.Result) {
         WingBackendManager.setVpnDesired(applicationContext, false)
-        if (!WingVpnService.isRunning && !WingVpnService.isStarting) {
+        if (!WingVpnService.isRunning && !WingVpnService.isStarting && !WingVpnService.hasActiveTunnel) {
             result.success(true)
             return
         }
@@ -155,7 +158,7 @@ class MainActivity : FlutterActivity() {
         }
         thread(name = "wing-vpn-stop", isDaemon = true) {
             for (attempt in 0 until 50) {
-                if (!WingVpnService.isRunning && !WingVpnService.isStarting) {
+                if (!WingVpnService.isRunning && !WingVpnService.isStarting && !WingVpnService.hasActiveTunnel) {
                     runOnUiThread { result.success(true) }
                     return@thread
                 }
@@ -163,7 +166,7 @@ class MainActivity : FlutterActivity() {
             }
             stopService(Intent(this, WingVpnService::class.java))
             runOnUiThread {
-                if (!WingVpnService.isRunning && !WingVpnService.isStarting) {
+                if (!WingVpnService.isRunning && !WingVpnService.isStarting && !WingVpnService.hasActiveTunnel) {
                     result.success(true)
                 } else {
                     result.error("VPN_STOP_TIMEOUT", "VPN 隧道断开超时，请重试", null)
@@ -172,18 +175,25 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun reconnectVpnBackend() {
-        if (!WingVpnService.isRunning && !WingBackendManager.isVpnDesired(applicationContext)) return
+    private fun reconnectVpnBackend(): Boolean {
+        if (!WingVpnService.hasActiveTunnel &&
+            !WingVpnService.isRunning &&
+            !WingBackendManager.isVpnDesiredForCurrentBoot(applicationContext)
+        ) {
+            return false
+        }
         val intent = Intent(this, WingVpnService::class.java).apply {
             action = WingVpnService.ACTION_RECONNECT
         }
-        try {
+        return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(intent)
             } else {
                 startService(intent)
             }
+            true
         } catch (_: Exception) {
+            false
         }
     }
 
@@ -230,8 +240,21 @@ class MainActivity : FlutterActivity() {
                 "error" to launch.error,
                 "abi" to launch.abi
             )
-            if (launch.ready && launch.restarted) {
-                reconnectVpnBackend()
+            val needsReconnect = launch.ready &&
+                (launch.restarted ||
+                    (!WingVpnService.isRunning &&
+                        !WingVpnService.isStarting &&
+                        WingBackendManager.isVpnDesiredForCurrentBoot(applicationContext)))
+            if (needsReconnect && reconnectVpnBackend()) {
+                for (attempt in 0 until 25) {
+                    if (WingVpnService.isRunning ||
+                        !WingVpnService.lastError.isNullOrBlank() ||
+                        (attempt >= 3 && !WingVpnService.isStarting && !WingVpnService.hasActiveTunnel)
+                    ) {
+                        break
+                    }
+                    Thread.sleep(100)
+                }
             }
             runOnUiThread { result.success(payload) }
         }

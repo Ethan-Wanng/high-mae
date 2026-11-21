@@ -204,6 +204,217 @@ void main() {
     expect(find.text('rule-499.example.com'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  test('AutoSelectConfig normalizes and filters protocol and keyword rules', () {
+    final defaults = AutoSelectConfig.defaults();
+    expect(defaults.enabled, isFalse);
+    expect(defaults.scope, 'subscription');
+    expect(defaults.rules.length, 1);
+    expect(defaults.rules.first.type, 'exclude_keyword');
+
+    final normalized = AutoSelectConfig.fromJson({
+      'enabled': true,
+      'scope': 'subscription',
+      'subscriptionFile': 'sub%20a.yml',
+      'rules': [
+        {'id': 'r1', 'type': 'include_protocol', 'value': 'vless, ss'},
+        {'id': 'r2', 'type': 'exclude_protocol', 'value': 'hy2'},
+      ],
+    });
+    expect(normalized.subscriptionFiles, ['sub a.yml']);
+    expect(normalized.rules.length, 2);
+
+    final suppliers = [
+      {'name': '主订阅', 'fileName': 'sub a.yml', 'active': true},
+      {'name': '其他订阅', 'fileName': 'other.yml', 'active': false},
+    ];
+    final allNodes = [
+      {
+        'index': 0,
+        'name': '美国 VLESS',
+        'group': '主订阅',
+        'fileName': 'sub a.yml',
+        'subIndex': 0,
+        'type': 'vless',
+        'latency': 80,
+      },
+      {
+        'index': 1,
+        'name': '日本 VLESS 超时',
+        'group': '主订阅',
+        'fileName': 'sub a.yml',
+        'subIndex': 1,
+        'type': 'vless',
+        'latency': -1,
+      },
+      {
+        'index': 2,
+        'name': '日本 HY2',
+        'group': '主订阅',
+        'fileName': 'sub a.yml',
+        'subIndex': 2,
+        'type': 'hysteria2',
+        'latency': 40,
+      },
+      {
+        'index': 3,
+        'name': '其他订阅 VLESS',
+        'group': '其他订阅',
+        'fileName': 'other.yml',
+        'subIndex': 0,
+        'type': 'vless',
+        'latency': 30,
+      },
+    ];
+
+    final candidates = filterAutoSelectCandidates(allNodes, normalized, suppliers);
+    expect(candidates.map((e) => e['name']).toList(), ['美国 VLESS']);
+
+    final ssOnlyConfig = AutoSelectConfig(
+      enabled: true,
+      scope: 'all',
+      rules: const [
+        AutoSelectRule(id: 'ss', type: 'include_protocol', value: 'ss', values: ['ss']),
+      ],
+    );
+    final ssCandidates = filterAutoSelectCandidates(allNodes, ssOnlyConfig, suppliers);
+    expect(ssCandidates, isEmpty);
+
+    final excludedKey = autoSelectNodeKey(allNodes.first);
+    final excludedCandidates = filterAutoSelectCandidates(
+      allNodes,
+      normalized.copyWith(excludedNodeKeys: [excludedKey]),
+      suppliers,
+    );
+    expect(excludedCandidates, isEmpty);
+  });
+
+  testWidgets('auto-select adds rules and picks fastest matching node with site check', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('com.highmae.wing/vpn'),
+          (call) async => call.method == 'getVpnStatus' ? false : true,
+        );
+
+    final api = _FakeWingApi(
+      customNodes: [
+        {
+          'index': 0,
+          'name': '香港 01',
+          'group': '测试订阅',
+          'fileName': 'test.yml',
+          'subIndex': 0,
+          'type': 'vless',
+          'latency': 25,
+          'active': true,
+        },
+        {
+          'index': 1,
+          'name': '日本 VMess',
+          'group': '测试订阅',
+          'fileName': 'test.yml',
+          'subIndex': 1,
+          'type': 'vmess',
+          'latency': 35,
+          'active': false,
+        },
+        {
+          'index': 2,
+          'name': '新加坡 VLESS',
+          'group': '测试订阅',
+          'fileName': 'test.yml',
+          'subIndex': 2,
+          'type': 'vless',
+          'latency': 50,
+          'active': false,
+        },
+        {
+          'index': 3,
+          'name': '美国 VLESS',
+          'group': '测试订阅',
+          'fileName': 'test.yml',
+          'subIndex': 3,
+          'type': 'vless',
+          'latency': 110,
+          'active': false,
+        },
+      ],
+      customLatencies: {0: 25, 1: 35, 2: 50, 3: 110},
+      failingSiteNodeIndices: {2},
+    );
+
+    await tester.pumpWidget(WingAndroidApp(api: api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('节点'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('自动选择'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('不使用包含'), findsOneWidget);
+    await tester.tap(find.text('添加规则'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('只使用协议').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilterChip, 'vless'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '添加'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('只使用协议'), findsOneWidget);
+    expect(find.text('候选节点 (2)'), findsOneWidget);
+
+    await tester.tap(find.text('立即选择'));
+    await tester.pumpAndSettle();
+    expect(api.switchedNode, 2);
+
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    final siteDropdown = find.widgetWithText(
+      DropdownButtonFormField<String>,
+      '不要求',
+    );
+    await tester.ensureVisible(siteDropdown);
+    await tester.pumpAndSettle();
+    await tester.tap(siteDropdown);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('任一可用').last);
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('立即选择'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('立即选择'));
+    await tester.pumpAndSettle();
+
+    expect(api.switchedNode, 3);
+    expect(api.savedAutoSelectConfig, isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('VPN status stays connected even when API status request fails', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('com.highmae.wing/vpn'),
+          (call) async => call.method == 'getVpnStatus' ? true : true,
+        );
+
+    final api = _FakeWingApi(failStatus: true);
+    await tester.pumpWidget(WingAndroidApp(api: api));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已连接'), findsOneWidget);
+    expect(find.bySemanticsLabel('断开 VPN'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _FakeWingApi implements WingApi {
@@ -211,21 +422,33 @@ class _FakeWingApi implements WingApi {
     this.nodeCount = 120,
     this.duplicateSuppliers = false,
     this.routingRulesCount = 0,
+    this.failStatus = false,
+    this.customNodes,
+    this.customLatencies = const {},
+    this.failingSiteNodeIndices = const {},
   });
 
   final int nodeCount;
   final bool duplicateSuppliers;
   final int routingRulesCount;
+  final bool failStatus;
+  final List<Map<String, dynamic>>? customNodes;
+  final Map<int, int> customLatencies;
+  final Set<int> failingSiteNodeIndices;
   int? switchedNode;
   String activeFile = 'test.yml';
   String? lastRequestedFile;
   int switchSupplierCalls = 0;
   int statusCalls = 0;
   int statsCalls = 0;
+  Map<String, dynamic>? savedAutoSelectConfig;
 
   @override
   Future<Map<String, dynamic>> getStatus() async {
     statusCalls++;
+    if (failStatus) {
+      throw const WingApiException('内置代理核心未响应');
+    }
     return {
       'mode': 'Rule',
       'activeNodeName': '测试节点',
@@ -266,6 +489,18 @@ class _FakeWingApi implements WingApi {
   @override
   Future<List<Map<String, dynamic>>> getNodes({String? fileName}) async {
     lastRequestedFile = fileName;
+    if (customNodes != null) {
+      return customNodes!
+          .where((n) => fileName == null || n['fileName'] == fileName)
+          .map((n) {
+            final idx = (n['index'] as num).toInt();
+            return {
+              ...n,
+              'active': switchedNode == null ? n['active'] == true : switchedNode == idx,
+            };
+          })
+          .toList(growable: false);
+    }
     final selectedFile = fileName ?? activeFile;
     final backup = selectedFile == 'backup.yml';
     return List.generate(
@@ -357,17 +592,52 @@ class _FakeWingApi implements WingApi {
   }
 
   @override
-  Future<Map<String, dynamic>> testSites() async => {
-    'ok': true,
-    'results': <Object>[],
-  };
+  Future<Map<String, dynamic>> testSites({String? targetId}) async {
+    final activeIdx = switchedNode ?? 0;
+    final ok = !failingSiteNodeIndices.contains(activeIdx);
+    return {
+      'ok': true,
+      'results': [
+        {
+          'id': targetId ?? 'preset_chatgpt',
+          'name': 'ChatGPT',
+          'ok': ok,
+          'latencyMs': ok ? 120 : 0,
+        },
+      ],
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getAutoSelectConfig() async =>
+      savedAutoSelectConfig == null
+          ? null
+          : Map<String, dynamic>.from(savedAutoSelectConfig!);
+
+  @override
+  Future<void> saveAutoSelectConfig(Map<String, dynamic> config) async {
+    savedAutoSelectConfig = Map<String, dynamic>.from(config);
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getSiteTargets() async => [
+    {
+      'id': 'preset_chatgpt',
+      'name': 'ChatGPT',
+      'category': 'AI',
+      'url': 'https://chatgpt.com/',
+      'preset': true,
+    },
+  ];
 
   @override
   Future<void> testAllNodes() async {}
 
   @override
-  Future<int> testNode(Map<String, dynamic> node) async =>
-      500 - (node['index'] as num).toInt();
+  Future<int> testNode(Map<String, dynamic> node) async {
+    final idx = (node['index'] as num).toInt();
+    return customLatencies[idx] ?? (500 - idx);
+  }
 
   @override
   Future<Map<String, dynamic>> updateSupplier(String fileName) async => {
