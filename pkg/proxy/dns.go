@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -54,11 +55,19 @@ type ipDomainEntry struct {
 	expiresAt time.Time
 }
 
+type dnsInflightCall struct {
+	done chan struct{}
+	msg  *dns.Msg
+	err  error
+}
+
 var (
 	GlobalDNSConfig DNSConfig
 	dnsConfigMu     sync.RWMutex
 	dnsCache        = make(map[string]dnsCacheEntry)
 	dnsCacheMu      sync.RWMutex
+	dnsInflightMu   sync.Mutex
+	dnsInflight     = make(map[string]*dnsInflightCall)
 	IPToDomainMap   sync.Map
 	ipDomainMapSize atomic.Int64
 )
@@ -76,6 +85,27 @@ const (
 	androidLocalDNSPort   = 1053
 	desktopLocalDNSPort   = 53
 )
+
+func maxDNSCacheEntries() int {
+	if runtime.GOOS == "android" {
+		return 2000
+	}
+	return maxDnsCacheSize
+}
+
+func maxIPDomainMapEntries() int64 {
+	if runtime.GOOS == "android" {
+		return 4000
+	}
+	return maxIPDomainMapSize
+}
+
+func maxConcurrentDNSRequests() int {
+	if runtime.GOOS == "android" {
+		return 64
+	}
+	return 256
+}
 
 func localDNSListenPort() int {
 	if runtime.GOOS == "android" {
@@ -111,10 +141,12 @@ func pruneDNSCacheLocked(now time.Time) {
 			delete(dnsCache, k)
 		}
 	}
-	if len(dnsCache) < maxDnsCacheSize {
+	maxSize := maxDNSCacheEntries()
+	if len(dnsCache) < maxSize {
 		return
 	}
-	remove := len(dnsCache) - dnsCacheTrimTarget
+	trimTarget := maxSize * 9 / 10
+	remove := len(dnsCache) - trimTarget
 	for k := range dnsCache {
 		delete(dnsCache, k)
 		remove--
@@ -130,7 +162,7 @@ func storeIPDomainMapping(ip string, entry ipDomainEntry) {
 	} else {
 		ipDomainMapSize.Add(1)
 	}
-	if ipDomainMapSize.Load() >= maxIPDomainMapSize {
+	if ipDomainMapSize.Load() >= maxIPDomainMapEntries() {
 		pruneIPDomainMap(time.Now())
 	}
 }
@@ -149,15 +181,23 @@ func pruneIPDomainMap(now time.Time) {
 		}
 		return true
 	})
-	if ipDomainMapSize.Load() < maxIPDomainMapSize {
+	maxSize := maxIPDomainMapEntries()
+	if ipDomainMapSize.Load() < maxSize {
 		return
 	}
-	remove := ipDomainMapSize.Load() - ipDomainMapTrimTarget
+	trimTarget := maxSize * 9 / 10
+	remove := ipDomainMapSize.Load() - trimTarget
 	IPToDomainMap.Range(func(key, _ any) bool {
 		deleteIPDomainMapping(key)
 		remove--
 		return remove > 0
 	})
+}
+
+func ResetDNSState() {
+	dnsCacheMu.Lock()
+	clear(dnsCache)
+	dnsCacheMu.Unlock()
 }
 
 func LoadDNSConfig() {
@@ -487,7 +527,7 @@ func exchangeDNSUDP(ctx context.Context, reqData []byte, dnsAddr string) ([]byte
 
 func exchangeDNSDirect(ctx context.Context, reqData []byte, server *DNSServer) ([]byte, error) {
 	endpoints := directDoHEndpoints(server)
-	if common.GetTunModeOn() {
+	if common.GetTunModeOn() && runtime.GOOS != "android" {
 		// sing-box TUN StrictRoute 在 Windows 会拦截物理网卡 53 端口直连，改走物理网卡 DoH (443)
 		return exchangeDNSDoH(ctx, reqData, endpoints)
 	}
@@ -701,31 +741,122 @@ func StartLocalDNS() {
 
 	log.Printf("DNS server listening on %s", addr.String())
 
+	stopCleanup := make(chan struct{})
+	defer close(stopCleanup)
+
 	// Start cache cleanup goroutine
 	utils.SafeGo("dns cache cleanup", func() {
 		ticker := time.NewTicker(1 * time.Minute)
-		for range ticker.C {
-			now := time.Now()
-			dnsCacheMu.Lock()
-			pruneDNSCacheLocked(now)
-			dnsCacheMu.Unlock()
-			pruneIPDomainMap(now)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				now := time.Now()
+				dnsCacheMu.Lock()
+				pruneDNSCacheLocked(now)
+				dnsCacheMu.Unlock()
+				pruneIPDomainMap(now)
+			case <-stopCleanup:
+				return
+			}
 		}
 	})
 
+	sem := make(chan struct{}, maxConcurrentDNSRequests())
 	buf := make([]byte, 2048)
 	for {
 		n, clientAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
 			continue
 		}
 		reqData := make([]byte, n)
 		copy(reqData, buf[:n])
 
-		utils.SafeGo("dns request", func() {
-			handleDNSRequest(conn, clientAddr, reqData)
-		})
+		select {
+		case sem <- struct{}{}:
+			utils.SafeGo("dns request", func() {
+				defer func() { <-sem }()
+				handleDNSRequest(conn, clientAddr, reqData)
+			})
+		default:
+		}
 	}
+}
+
+func packDNSReply(src *dns.Msg, reqID uint16, qName string) ([]byte, bool) {
+	if src == nil {
+		return nil, false
+	}
+	resp := src.Copy()
+	resp.Id = reqID
+	if len(resp.Question) > 0 && qName != "" {
+		resp.Question[0].Name = qName
+	}
+	packed, err := resp.Pack()
+	if err != nil {
+		return nil, false
+	}
+	return packed, true
+}
+
+func resolveDNSWithDedupe(cacheKey, domain string, reqData []byte, queryFn func(context.Context, string, []byte) ([]byte, error)) (*dns.Msg, error) {
+	dnsInflightMu.Lock()
+	if call, ok := dnsInflight[cacheKey]; ok {
+		dnsInflightMu.Unlock()
+		<-call.done
+		return call.msg, call.err
+	}
+	call := &dnsInflightCall{done: make(chan struct{})}
+	dnsInflight[cacheKey] = call
+	dnsInflightMu.Unlock()
+
+	var (
+		respMsg *dns.Msg
+		err     error
+	)
+	defer func() {
+		call.msg = respMsg
+		call.err = err
+		dnsInflightMu.Lock()
+		delete(dnsInflight, cacheKey)
+		dnsInflightMu.Unlock()
+		close(call.done)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	respData, err := queryFn(ctx, domain, reqData)
+	if err != nil || len(respData) == 0 {
+		if err == nil {
+			err = errors.New("empty DNS response")
+		}
+		return nil, err
+	}
+	respMsg = cacheDNSResponse(domain, cacheKey, respData)
+	if respMsg == nil {
+		err = errors.New("invalid DNS response")
+		return nil, err
+	}
+	return respMsg, nil
+}
+
+func queryDNSUpstream(ctx context.Context, domain string, reqData []byte) ([]byte, error) {
+	config := GetDNSConfig()
+	server, resolveDirect := selectDNSServer(config, domain)
+	if server == nil && !resolveDirect {
+		return nil, errors.New("no DNS server configured")
+	}
+
+	client := common.GetActiveClient()
+	if resolveDirect || client == nil {
+		return exchangeDNSDirect(ctx, reqData, server)
+	}
+	return queryDNSThroughProxy(ctx, client, server.Address, reqData)
 }
 
 func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte) {
@@ -736,7 +867,6 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 	if err := msg.Unpack(reqData); err != nil {
 		return
 	}
-
 	if len(msg.Question) == 0 {
 		return
 	}
@@ -750,44 +880,18 @@ func handleDNSRequest(conn *net.UDPConn, clientAddr *net.UDPAddr, reqData []byte
 	dnsCacheMu.RUnlock()
 
 	if found && time.Now().Before(entry.expiresAt) {
-		resp := entry.msg.Copy()
-		resp.Id = msg.Id // Match the request ID
-		if len(resp.Question) > 0 {
-			resp.Question[0].Name = question.Name
-		}
-		if packed, err := resp.Pack(); err == nil {
+		if packed, ok := packDNSReply(entry.msg, msg.Id, question.Name); ok {
 			_, _ = conn.WriteToUDP(packed, clientAddr)
 			return
 		}
 	}
 
-	domain := question.Name
-	config := GetDNSConfig()
-	server, resolveDirect := selectDNSServer(config, domain)
-	if server == nil && !resolveDirect {
+	// 2. Deduplicated Upstream Resolution + Cache Update
+	respMsg, err := resolveDNSWithDedupe(cacheKey, question.Name, reqData, queryDNSUpstream)
+	if err != nil || respMsg == nil {
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	var (
-		respData []byte
-		err      error
-	)
-	client := common.GetActiveClient()
-	if resolveDirect || client == nil {
-		respData, err = exchangeDNSDirect(ctx, reqData, server)
-	} else {
-		dnsAddr := server.Address
-		respData, err = queryDNSThroughProxy(ctx, client, dnsAddr, reqData)
+	if packed, ok := packDNSReply(respMsg, msg.Id, question.Name); ok {
+		_, _ = conn.WriteToUDP(packed, clientAddr)
 	}
-	if err != nil || len(respData) == 0 {
-		return
-	}
-
-	// 2. Parse Response and Update Cache
-	cacheDNSResponse(domain, cacheKey, respData)
-
-	_, _ = conn.WriteToUDP(respData, clientAddr)
 }

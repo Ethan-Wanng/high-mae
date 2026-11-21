@@ -1,7 +1,7 @@
 package proxy
 
 import (
-	"bufio"
+	"context"
 	"encoding/binary"
 	"io"
 	"log"
@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 	"wing/pkg/common"
+	"wing/pkg/stats"
 	"wing/pkg/utils"
 )
 
@@ -133,42 +135,37 @@ func handleSOCKS5(conn net.Conn) {
 		return
 	}
 
-	// 模拟 HTTP CONNECT 请求转发给本地 HTTPProxyHandler 处理
-	// 这样可以复用所有路由规则和统计逻辑
-	proxyConn, err := net.DialTimeout("tcp", "127.0.0.1:"+common.LocalHttpPort, 5*time.Second)
-	if err != nil {
-		_, _ = conn.Write([]byte{5, 1, 0, 1, 0, 0, 0, 0, 0, 0})
-		return
-	}
-	defer proxyConn.Close()
-	_ = proxyConn.SetDeadline(time.Now().Add(10 * time.Second))
+	atomic.AddInt32(&stats.ActiveConnections, 1)
+	defer atomic.AddInt32(&stats.ActiveConnections, -1)
 
-	connectReq, err := http.NewRequest(http.MethodConnect, "http://"+targetAddr, nil)
-	if err != nil {
-		return
+	dialCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	remoteAddr := ""
+	if conn.RemoteAddr() != nil {
+		remoteAddr = conn.RemoteAddr().String()
 	}
-	connectReq.Host = targetAddr
-	if err := connectReq.Write(proxyConn); err != nil {
+	upstream, resolvedTarget, nodeUsed, errStatus, err := dialProxyUpstream(dialCtx, targetAddr, remoteAddr)
+	cancel()
+	if err != nil {
+		if errStatus == http.StatusForbidden {
+			if !common.PrivacyMode {
+				logID := stats.AddConnLog(resolvedTarget, "Blocked")
+				stats.UpdateConnLog(logID, 0, 0, true)
+			}
+			_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+			return
+		}
+		_, _ = conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
 
-	// Parse the complete response and retain any tunnel bytes read with it.
-	reader := bufio.NewReader(proxyConn)
-	response, err := http.ReadResponse(reader, connectReq)
-	if err != nil || response.StatusCode != http.StatusOK {
-		_, _ = conn.Write([]byte{5, 1, 0, 1, 0, 0, 0, 0, 0, 0})
-		return
-	}
-	if _, err := conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
+	tc, finishTracking := startTrackingConn(upstream, resolvedTarget, nodeUsed)
+	defer finishTracking()
+
+	if _, err := conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}); err != nil {
 		return
 	}
 	_ = conn.SetDeadline(time.Time{})
-	_ = proxyConn.SetDeadline(time.Time{})
+	_ = upstream.SetDeadline(time.Time{})
 
-	// 双向复制
-	go func() {
-		_, _ = io.Copy(proxyConn, conn)
-		_ = proxyConn.Close()
-	}()
-	_, _ = io.Copy(conn, reader)
+	relayTrackedConn(conn, conn, tc)
 }

@@ -86,7 +86,10 @@ func (c *TrackingConn) Totals() (uint64, uint64) {
 type HTTPProxyHandler struct{}
 
 func directTCPDialer() (*net.Dialer, net.IP) {
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	dialer := &net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 15 * time.Second,
+	}
 	if !common.GetTunModeOn() {
 		return dialer, nil
 	}
@@ -105,7 +108,7 @@ func directTCPDialer() (*net.Dialer, net.IP) {
 func dialDirectAddrWithLocalIP(baseDialer *net.Dialer, localIP net.IP, targetIPStr, port string) (net.Conn, error) {
 	targetIP := net.ParseIP(targetIPStr)
 	dialer := baseDialer
-	if localIP != nil && targetIP != nil && (localIP.To4() != nil) != (targetIP.To4() != nil) {
+	if localIP != nil && targetIP != nil && (targetIP.IsLoopback() || (localIP.To4() != nil) != (targetIP.To4() != nil)) {
 		copied := *baseDialer
 		copied.LocalAddr = nil
 		dialer = &copied
@@ -142,23 +145,9 @@ func dialDirect(targetAddr string) (net.Conn, error) {
 	return dialer.Dial("tcp", targetAddr)
 }
 
-func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	atomic.AddInt32(&stats.ActiveConnections, 1)
-	defer atomic.AddInt32(&stats.ActiveConnections, -1)
-
-	client := common.GetActiveClient()
-	_, nodeName := common.ActiveNodeSnapshot()
-
-	targetAddr := req.Host
-	if !strings.Contains(targetAddr, ":") {
-		if req.Method == http.MethodConnect {
-			targetAddr += ":443"
-		} else {
-			targetAddr += ":80"
-		}
-	}
-
-	directDialAddr := targetAddr
+func restoreTargetAddr(rawTargetAddr string) (targetAddr string, directDialAddr string) {
+	targetAddr = rawTargetAddr
+	directDialAddr = rawTargetAddr
 
 	// 🚀 TUN Mode IP -> Domain Restore
 	if host, port, err := net.SplitHostPort(targetAddr); err == nil && net.ParseIP(host) != nil {
@@ -172,14 +161,18 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			targetAddr = strings.TrimSuffix(domain, ".")
 		}
 	}
+	return targetAddr, directDialAddr
+}
 
-	var upstream net.Conn
-	var err error
-	var nodeUsed string
+func dialProxyUpstream(ctx context.Context, rawTargetAddr, remoteAddr string) (upstream net.Conn, targetAddr string, nodeUsed string, errStatus int, err error) {
+	client := common.GetActiveClient()
+	_, nodeName := common.ActiveNodeSnapshot()
+
+	targetAddr, directDialAddr := restoreTargetAddr(rawTargetAddr)
 	routeAction := routing.EvaluateRouting(targetAddr)
 
 	// 🚀 新增命令行进程路由规则匹配
-	cmdline, _ := utils.GetProcessCommandLineFromRemoteAddr(req.RemoteAddr)
+	cmdline, _ := utils.GetProcessCommandLineFromRemoteAddr(remoteAddr)
 	if cmdline != "" {
 		if action, matched := routing.EvaluateCmdRouting(cmdline); matched {
 			routeAction = action
@@ -187,69 +180,61 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if routeAction == "reject" {
-		http.Error(w, "已根据规则拦截", http.StatusForbidden)
-		logID := stats.AddConnLog(targetAddr, "Blocked")
-		stats.UpdateConnLog(logID, 0, 0, true)
-		return
-	} else if routeAction == "direct" {
-		nodeUsed = "Direct"
+		return nil, targetAddr, "Blocked", http.StatusForbidden, fmt.Errorf("已根据规则拦截")
+	}
+	if routeAction == "direct" {
 		upstream, err = dialDirect(directDialAddr)
 		if err != nil {
-			http.Error(w, "直连失败: "+err.Error(), http.StatusBadGateway)
-			return
+			return nil, targetAddr, "Direct", http.StatusBadGateway, fmt.Errorf("直连失败: %w", err)
 		}
-	} else {
-		var targetClient common.GenericClient
-		if routeAction == "proxy" || routeAction == "" {
-			nodeUsed = nodeName
-			if nodeUsed == "" {
-				nodeUsed = "Proxy"
-			}
-			targetClient = client
-		} else {
-			if node, found := GetNodeForRoute(routeAction); found {
-				nodeUsed = node.Name
-				targetClient, err = GetNodeClient(node)
-				if err != nil {
-					http.Error(w, "规则代理节点初始化失败: "+err.Error(), http.StatusServiceUnavailable)
-					return
-				}
-			} else {
-				nodeUsed = nodeName
-				if nodeUsed == "" {
-					nodeUsed = "Proxy"
-				}
-				targetClient = client
-			}
-		}
-
-		if targetClient == nil {
-			nodeUsed = "Direct"
-			upstream, err = dialDirect(directDialAddr)
-			if err != nil {
-				http.Error(w, "直连失败: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-		} else {
-			dest := metadata.ParseSocksaddr(targetAddr)
-			upstream, err = targetClient.CreateProxy(req.Context(), dest)
-			if err != nil {
-				http.Error(w, "代理连接失败: "+err.Error(), http.StatusServiceUnavailable)
-				return
-			}
-		}
+		return upstream, targetAddr, "Direct", 0, nil
 	}
 
+	var targetClient common.GenericClient
+	if routeAction == "proxy" || routeAction == "" {
+		nodeUsed = nodeName
+		if nodeUsed == "" {
+			nodeUsed = "Proxy"
+		}
+		targetClient = client
+	} else if node, found := GetNodeForRoute(routeAction); found {
+		nodeUsed = node.Name
+		targetClient, err = GetNodeClient(node)
+		if err != nil {
+			return nil, targetAddr, nodeUsed, http.StatusServiceUnavailable, fmt.Errorf("规则代理节点初始化失败: %w", err)
+		}
+	} else {
+		nodeUsed = nodeName
+		if nodeUsed == "" {
+			nodeUsed = "Proxy"
+		}
+		targetClient = client
+	}
+
+	if targetClient == nil {
+		upstream, err = dialDirect(directDialAddr)
+		if err != nil {
+			return nil, targetAddr, "Direct", http.StatusBadGateway, fmt.Errorf("直连失败: %w", err)
+		}
+		return upstream, targetAddr, "Direct", 0, nil
+	}
+
+	dest := metadata.ParseSocksaddr(targetAddr)
+	upstream, err = targetClient.CreateProxy(ctx, dest)
+	if err != nil {
+		return nil, targetAddr, nodeUsed, http.StatusServiceUnavailable, fmt.Errorf("代理连接失败: %w", err)
+	}
+	return upstream, targetAddr, nodeUsed, 0, nil
+}
+
+func startTrackingConn(upstream net.Conn, targetAddr, nodeUsed string) (*TrackingConn, func()) {
 	var logID int64
 	if !common.PrivacyMode {
 		logID = stats.AddConnLog(targetAddr, nodeUsed)
 	}
-	// 代理节点流量监控包装
 	tc := &TrackingConn{Conn: upstream, logID: logID, node: nodeUsed}
-	upstream = tc
-
-	defer func() {
-		tc.Conn.Close()
+	finish := func() {
+		_ = tc.Conn.Close()
 		in, out := tc.Totals()
 		finalIn := in - tc.lastStatIn
 		finalOut := out - tc.lastStatOut
@@ -257,16 +242,11 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if !common.PrivacyMode {
 			stats.UpdateConnLog(logID, in, out, true)
 		}
-	}()
+	}
+	return tc, finish
+}
 
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		return
-	}
-	clientConn, bufrw, err := hijacker.Hijack()
-	if err != nil {
-		return
-	}
+func relayTrackedConn(clientConn net.Conn, clientReader io.Reader, upstream io.ReadWriteCloser) {
 	var closeOnce sync.Once
 	closeBoth := func() {
 		closeOnce.Do(func() {
@@ -276,35 +256,92 @@ func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	defer closeBoth()
 
-	if req.Method == http.MethodConnect {
-		clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-	} else {
-		path := req.URL.Path
-		if path == "" {
-			path = "/"
-		}
-		if req.URL.RawQuery != "" {
-			path += "?" + req.URL.RawQuery
-		}
-		fmt.Fprintf(upstream, "%s %s HTTP/1.1\r\n", req.Method, path)
-		req.Header.Write(upstream)
-		fmt.Fprintf(upstream, "\r\n")
-	}
-
 	uploadDone := make(chan struct{})
 	utils.SafeGo("proxy upload copy", func() {
 		defer close(uploadDone)
 		defer closeBoth()
 		buf := bufferPool.Get().([]byte)
 		defer bufferPool.Put(buf)
-		io.CopyBuffer(upstream, bufrw, buf)
+		_, _ = io.CopyBuffer(upstream, clientReader, buf)
 	})
 
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)
-	io.CopyBuffer(clientConn, upstream, buf)
+	_, _ = io.CopyBuffer(clientConn, upstream, buf)
 	closeBoth()
 	<-uploadDone
+}
+
+func (h *HTTPProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	atomic.AddInt32(&stats.ActiveConnections, 1)
+	defer atomic.AddInt32(&stats.ActiveConnections, -1)
+
+	targetAddr := req.Host
+	if !strings.Contains(targetAddr, ":") {
+		if req.Method == http.MethodConnect {
+			targetAddr += ":443"
+		} else {
+			targetAddr += ":80"
+		}
+	}
+
+	upstream, resolvedTarget, nodeUsed, errStatus, err := dialProxyUpstream(req.Context(), targetAddr, req.RemoteAddr)
+	if err != nil {
+		if errStatus == http.StatusForbidden {
+			http.Error(w, "已根据规则拦截", http.StatusForbidden)
+			if !common.PrivacyMode {
+				logID := stats.AddConnLog(resolvedTarget, "Blocked")
+				stats.UpdateConnLog(logID, 0, 0, true)
+			}
+			return
+		}
+		if errStatus == 0 {
+			errStatus = http.StatusBadGateway
+		}
+		http.Error(w, err.Error(), errStatus)
+		return
+	}
+
+	tc, finishTracking := startTrackingConn(upstream, resolvedTarget, nodeUsed)
+	defer finishTracking()
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		return
+	}
+	clientConn, bufrw, err := hijacker.Hijack()
+	if err != nil {
+		return
+	}
+
+	if req.Method == http.MethodConnect {
+		if _, err := clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+			_ = clientConn.Close()
+			return
+		}
+	} else {
+		reqPath := req.URL.Path
+		if reqPath == "" {
+			reqPath = "/"
+		}
+		if req.URL.RawQuery != "" {
+			reqPath += "?" + req.URL.RawQuery
+		}
+		if _, err := fmt.Fprintf(tc, "%s %s HTTP/1.1\r\n", req.Method, reqPath); err != nil {
+			_ = clientConn.Close()
+			return
+		}
+		if err := req.Header.Write(tc); err != nil {
+			_ = clientConn.Close()
+			return
+		}
+		if _, err := fmt.Fprintf(tc, "\r\n"); err != nil {
+			_ = clientConn.Close()
+			return
+		}
+	}
+
+	relayTrackedConn(clientConn, bufrw, tc)
 }
 
 func domainForIP(ip string) (string, bool) {
@@ -314,7 +351,7 @@ func domainForIP(ip string) (string, bool) {
 	}
 	entry, ok := value.(ipDomainEntry)
 	if !ok || time.Now().After(entry.expiresAt) {
-		IPToDomainMap.Delete(ip)
+		deleteIPDomainMapping(ip)
 		return "", false
 	}
 	return entry.domain, true

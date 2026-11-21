@@ -126,30 +126,119 @@ void main() {
     expect(find.bySemanticsLabel('连接 VPN'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('pausing lifecycle stops background polling until resumed', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('com.highmae.wing/vpn'),
+          (call) async => call.method == 'getVpnStatus' ? false : true,
+        );
+
+    final api = _FakeWingApi();
+    await tester.pumpWidget(WingAndroidApp(api: api));
+    await tester.pumpAndSettle();
+
+    final callsBeforePause = api.statusCalls;
+    final statsBeforePause = api.statsCalls;
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+
+    expect(api.statusCalls, callsBeforePause);
+    expect(api.statsCalls, statsBeforePause);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(api.statusCalls, greaterThan(callsBeforePause));
+    expect(api.statsCalls, greaterThan(statsBeforePause));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('nodes page handles empty or duplicate supplier metadata safely', (
+    tester,
+  ) async {
+    final api = _FakeWingApi(nodeCount: 0, duplicateSuppliers: true);
+    await tester.pumpWidget(WingAndroidApp(api: api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('节点'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('暂无节点，请先导入订阅'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('routing editor renders large rule groups lazily and searches', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('com.highmae.wing/vpn'),
+          (call) async => call.method == 'getVpnStatus' ? false : true,
+        );
+
+    final api = _FakeWingApi(routingRulesCount: 500);
+    await tester.pumpWidget(WingAndroidApp(api: api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('工具'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('路由规则'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('直连'), findsOneWidget);
+    expect(find.textContaining('500 条规则'), findsOneWidget);
+    expect(find.text('rule-499.example.com'), findsNothing);
+
+    await tester.tap(find.text('直连'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), '499');
+    await tester.pumpAndSettle();
+
+    expect(find.text('rule-499.example.com'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _FakeWingApi implements WingApi {
-  _FakeWingApi({this.nodeCount = 120});
+  _FakeWingApi({
+    this.nodeCount = 120,
+    this.duplicateSuppliers = false,
+    this.routingRulesCount = 0,
+  });
 
   final int nodeCount;
+  final bool duplicateSuppliers;
+  final int routingRulesCount;
   int? switchedNode;
   String activeFile = 'test.yml';
   String? lastRequestedFile;
   int switchSupplierCalls = 0;
+  int statusCalls = 0;
+  int statsCalls = 0;
 
   @override
-  Future<Map<String, dynamic>> getStatus() async => {
-    'mode': 'Rule',
-    'activeNodeName': '测试节点',
-    'speedIn': '1.0 KB/s',
-    'speedOut': '512 B/s',
-  };
+  Future<Map<String, dynamic>> getStatus() async {
+    statusCalls++;
+    return {
+      'mode': 'Rule',
+      'activeNodeName': '测试节点',
+      'speedIn': '1.0 KB/s',
+      'speedOut': '512 B/s',
+    };
+  }
 
   @override
-  Future<Map<String, dynamic>> getStats() async => {
-    'totalIn': 2048,
-    'totalOut': 1024,
-  };
+  Future<Map<String, dynamic>> getStats() async {
+    statsCalls++;
+    return {'totalIn': 2048, 'totalOut': 1024};
+  }
 
   @override
   Future<Map<String, dynamic>> getDns() async => {
@@ -160,7 +249,18 @@ class _FakeWingApi implements WingApi {
 
   @override
   Future<List<Map<String, dynamic>>> getRules() async => [
-    {'id': 'direct', 'name': '直连', 'action': 'direct', 'rules': <Object>[]},
+    {
+      'id': 'direct',
+      'name': '直连',
+      'action': 'direct',
+      'rules': List.generate(
+        routingRulesCount,
+        (index) => {
+          'type': 'domain_suffix',
+          'value': 'rule-$index.example.com',
+        },
+      ),
+    },
   ];
 
   @override
@@ -184,18 +284,24 @@ class _FakeWingApi implements WingApi {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getSuppliers() async => [
-    {
-      'name': '测试订阅',
-      'fileName': 'test.yml',
-      'active': activeFile == 'test.yml',
-    },
-    {
-      'name': '备用订阅',
-      'fileName': 'backup.yml',
-      'active': activeFile == 'backup.yml',
-    },
-  ];
+  Future<List<Map<String, dynamic>>> getSuppliers() async =>
+      duplicateSuppliers
+          ? [
+            {'name': '无效分组', 'fileName': 'dup.yml', 'active': false},
+            {'name': '无效分组', 'fileName': 'dup.yml', 'active': false},
+          ]
+          : [
+            {
+              'name': '测试订阅',
+              'fileName': 'test.yml',
+              'active': activeFile == 'test.yml',
+            },
+            {
+              'name': '备用订阅',
+              'fileName': 'backup.yml',
+              'active': activeFile == 'backup.yml',
+            },
+          ];
 
   @override
   Future<Map<String, dynamic>> deleteSupplier(String fileName) async => {

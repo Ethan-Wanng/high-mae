@@ -1,16 +1,17 @@
 package com.highmae.wing_ui
 
-import android.app.Activity
 import android.Manifest
+import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.net.VpnService
 import android.os.Build
-import android.util.Log
+import android.os.PowerManager
+import android.provider.Settings
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -18,15 +19,26 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
 
-    companion object {
-        private const val TAG = "WingMainActivity"
-        private const val PREFS = "wing_native"
-        private const val TOKEN_KEY = "mobile_api_token"
+    private class SafeMethodResult(private val delegate: MethodChannel.Result) : MethodChannel.Result {
+        private val replied = AtomicBoolean(false)
 
-        @Volatile
-        private var backendProcess: Process? = null
+        override fun success(result: Any?) {
+            if (replied.compareAndSet(false, true)) {
+                delegate.success(result)
+            }
+        }
 
-        private val backendLock = Any()
+        override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+            if (replied.compareAndSet(false, true)) {
+                delegate.error(errorCode, errorMessage, errorDetails)
+            }
+        }
+
+        override fun notImplemented() {
+            if (replied.compareAndSet(false, true)) {
+                delegate.notImplemented()
+            }
+        }
     }
 
     private val CHANNEL = "com.highmae.wing/vpn"
@@ -37,11 +49,13 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, rawResult ->
+            val result = SafeMethodResult(rawResult)
             when (call.method) {
                 "startVpn" -> {
                     val intent = VpnService.prepare(this)
                     if (intent != null) {
+                        pendingVpnResult?.success(false)
                         pendingVpnResult = result
                         startActivityForResult(intent, VPN_REQUEST_CODE)
                     } else {
@@ -56,6 +70,36 @@ class MainActivity : FlutterActivity() {
                 }
                 "startBackend" -> {
                     startBackend(result)
+                }
+                "isIgnoringBatteryOptimizations" -> {
+                    val ignoring = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                        pm?.isIgnoringBatteryOptimizations(packageName) ?: true
+                    } else {
+                        true
+                    }
+                    result.success(ignoring)
+                }
+                "openBatteryOptimizationSettings" -> {
+                    var opened = false
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        try {
+                            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                            opened = true
+                        } catch (_: Exception) {
+                        }
+                    }
+                    if (!opened) {
+                        try {
+                            val appIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.fromParts("package", packageName, null)
+                            }
+                            startActivity(appIntent)
+                            opened = true
+                        } catch (_: Exception) {
+                        }
+                    }
+                    result.success(opened)
                 }
                 "shareText" -> {
                     val text = call.argument<String>("text")?.trim().orEmpty()
@@ -96,6 +140,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun stopVpnAndWait(result: MethodChannel.Result) {
+        WingBackendManager.setVpnDesired(applicationContext, false)
         if (!WingVpnService.isRunning && !WingVpnService.isStarting) {
             result.success(true)
             return
@@ -103,7 +148,11 @@ class MainActivity : FlutterActivity() {
         val intent = Intent(this, WingVpnService::class.java).apply {
             action = WingVpnService.ACTION_STOP
         }
-        startService(intent)
+        try {
+            startService(intent)
+        } catch (_: Exception) {
+            stopService(Intent(this, WingVpnService::class.java))
+        }
         thread(name = "wing-vpn-stop", isDaemon = true) {
             for (attempt in 0 until 50) {
                 if (!WingVpnService.isRunning && !WingVpnService.isStarting) {
@@ -112,7 +161,6 @@ class MainActivity : FlutterActivity() {
                 }
                 Thread.sleep(100)
             }
-            // Fall back to the framework stop path if the explicit command was not handled.
             stopService(Intent(this, WingVpnService::class.java))
             runOnUiThread {
                 if (!WingVpnService.isRunning && !WingVpnService.isStarting) {
@@ -125,11 +173,18 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun reconnectVpnBackend() {
-        if (!WingVpnService.isRunning) return
+        if (!WingVpnService.isRunning && !WingBackendManager.isVpnDesired(applicationContext)) return
         val intent = Intent(this, WingVpnService::class.java).apply {
             action = WingVpnService.ACTION_RECONNECT
         }
-        startService(intent)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (_: Exception) {
+        }
     }
 
     private fun startVpnAndWait(result: MethodChannel.Result) {
@@ -167,105 +222,39 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startBackend(result: MethodChannel.Result) {
-        val token = getOrCreateMobileApiToken()
         thread(name = "wing-backend-launch", isDaemon = true) {
-            var error: String? = null
-            var restarted = false
-            try {
-                synchronized(backendLock) {
-                    if (!isBackendReady(token)) {
-                        backendProcess?.let { existing ->
-                            if (existing.isAlive) {
-                                existing.destroy()
-                                Thread.sleep(250)
-                                if (existing.isAlive) existing.destroyForcibly()
-                            }
-                        }
-                        val backend = File(applicationInfo.nativeLibraryDir, "libwing_backend.so")
-                        if (!backend.exists()) {
-                            error = "当前 APK 不包含 ${Build.SUPPORTED_ABIS.firstOrNull() ?: "此设备"} 的代理核心"
-                        } else {
-                            backend.setExecutable(true, true)
-                            val process = ProcessBuilder(backend.absolutePath)
-                                .directory(filesDir)
-                                .redirectErrorStream(true)
-                                .apply {
-                                    environment()["WING_DB_PATH"] = File(filesDir, "wing.db").absolutePath
-                                    environment()["WING_MOBILE_API_TOKEN"] = token
-                                }
-                                .start()
-                            restarted = true
-                            backendProcess = process
-                            thread(name = "wing-backend-log", isDaemon = true) {
-                                process.inputStream.bufferedReader().useLines { lines ->
-                                    lines.forEach { Log.i(TAG, "backend: $it") }
-                                }
-                            }
-
-                            for (attempt in 0 until 80) {
-                                if (isBackendReady(token)) break
-                                if (!process.isAlive) {
-                                    error = "代理核心已退出（exit ${process.exitValue()}）"
-                                    break
-                                }
-                                Thread.sleep(100)
-                            }
-                            if (!isBackendReady(token) && error == null) {
-                                error = "代理核心启动超时"
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start backend", e)
-                error = e.message ?: e.javaClass.simpleName
-            }
-
+            val launch = WingBackendManager.ensureBackendRunning(applicationContext)
             val payload = mapOf(
-                "ready" to (error == null && isBackendReady(token)),
-                "token" to token,
-                "error" to error,
-                "abi" to (Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown")
+                "ready" to launch.ready,
+                "token" to launch.token,
+                "error" to launch.error,
+                "abi" to launch.abi
             )
-            if (error == null && restarted) reconnectVpnBackend()
+            if (launch.ready && launch.restarted) {
+                reconnectVpnBackend()
+            }
             runOnUiThread { result.success(payload) }
-        }
-    }
-
-    private fun getOrCreateMobileApiToken(): String {
-        val preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
-        val existing = preferences.getString(TOKEN_KEY, null)
-        if (!existing.isNullOrBlank()) return existing
-        val created = UUID.randomUUID().toString() + UUID.randomUUID().toString()
-        preferences.edit().putString(TOKEN_KEY, created).apply()
-        return created
-    }
-
-    private fun isBackendReady(token: String): Boolean {
-        var connection: HttpURLConnection? = null
-        return try {
-            connection = URL("http://127.0.0.1:10809/api/status").openConnection() as HttpURLConnection
-            connection.connectTimeout = 250
-            connection.readTimeout = 250
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("X-Wing-Mobile-Token", token)
-            connection.responseCode in 200..299
-        } catch (_: Exception) {
-            false
-        } finally {
-            connection?.disconnect()
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == VPN_REQUEST_CODE) {
-            if (resultCode == Activity.RESULT_OK) {
-                pendingVpnResult?.let { startVpnAndWait(it) }
-            } else {
-                pendingVpnResult?.success(false)
-            }
+            val pending = pendingVpnResult
             pendingVpnResult = null
+            if (pending != null) {
+                if (resultCode == Activity.RESULT_OK) {
+                    startVpnAndWait(pending)
+                } else {
+                    pending.success(false)
+                }
+            }
         }
+    }
+
+    override fun onDestroy() {
+        pendingVpnResult?.success(false)
+        pendingVpnResult = null
+        super.onDestroy()
     }
 }

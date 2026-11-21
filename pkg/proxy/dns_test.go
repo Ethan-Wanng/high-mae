@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -194,5 +196,102 @@ func TestIPDomainMapMinTTLFloorAndHTTPSHints(t *testing.T) {
 	}
 	if time.Until(cached.expiresAt) < 45*time.Second {
 		t.Fatalf("dnsCache TTL %v too short", time.Until(cached.expiresAt))
+	}
+}
+
+func TestDomainForIPDecrementsMapSizeOnExpiry(t *testing.T) {
+	oldMap := IPToDomainMap
+	oldSize := ipDomainMapSize.Load()
+	IPToDomainMap = sync.Map{}
+	ipDomainMapSize.Store(0)
+	t.Cleanup(func() {
+		IPToDomainMap = oldMap
+		ipDomainMapSize.Store(oldSize)
+	})
+
+	storeIPDomainMapping("203.0.113.55", ipDomainEntry{
+		domain:    "expired.example",
+		expiresAt: time.Now().Add(-time.Second),
+	})
+	if got := ipDomainMapSize.Load(); got != 1 {
+		t.Fatalf("ipDomainMapSize after store = %d, want 1", got)
+	}
+
+	if domain, ok := domainForIP("203.0.113.55"); ok || domain != "" {
+		t.Fatalf("domainForIP(expired) = (%q, %v), want (\"\", false)", domain, ok)
+	}
+	if got := ipDomainMapSize.Load(); got != 0 {
+		t.Fatalf("ipDomainMapSize after expired lookup = %d, want 0", got)
+	}
+}
+
+func TestResolveDNSWithDedupeCoalescesConcurrentQueries(t *testing.T) {
+	dnsCacheMu.Lock()
+	oldCache := dnsCache
+	dnsCache = make(map[string]dnsCacheEntry)
+	dnsCacheMu.Unlock()
+	t.Cleanup(func() {
+		dnsCacheMu.Lock()
+		dnsCache = oldCache
+		dnsCacheMu.Unlock()
+	})
+
+	var upstreamCalls atomic.Int32
+	gate := make(chan struct{})
+	queryFn := func(ctx context.Context, domain string, reqData []byte) ([]byte, error) {
+		upstreamCalls.Add(1)
+		<-gate
+		reply := new(dns.Msg)
+		reply.SetQuestion("dedupe.example.", dns.TypeA)
+		reply.Response = true
+		reply.Answer = []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "dedupe.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 120},
+				A:   net.ParseIP("198.51.100.10").To4(),
+			},
+		}
+		return reply.Pack()
+	}
+
+	cacheKey := dnsCacheKey("dedupe.example", dns.TypeA)
+	const workers = 6
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(id uint16) {
+			defer wg.Done()
+			msg, err := resolveDNSWithDedupe(cacheKey, "dedupe.example", nil, queryFn)
+			if err != nil {
+				errs <- err
+				return
+			}
+			packed, ok := packDNSReply(msg, id, "dedupe.example.")
+			if !ok {
+				errs <- fmt.Errorf("packDNSReply failed for id=%d", id)
+				return
+			}
+			decoded := new(dns.Msg)
+			if err := decoded.Unpack(packed); err != nil {
+				errs <- err
+				return
+			}
+			if decoded.Id != id {
+				errs <- fmt.Errorf("decoded ID = %d, want %d", decoded.Id, id)
+			}
+		}(uint16(100 + i))
+	}
+
+	// Allow all goroutines to join the in-flight call before completing upstream query.
+	time.Sleep(40 * time.Millisecond)
+	close(gate)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Fatal(err)
+	}
+	if calls := upstreamCalls.Load(); calls != 1 {
+		t.Fatalf("upstream calls = %d, want 1 coalesced query", calls)
 	}
 }

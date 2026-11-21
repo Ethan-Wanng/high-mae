@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"wing/pkg/common"
@@ -27,6 +28,7 @@ const (
 	nodeDoHTimeout  = 4 * time.Second
 	nodeDoHMinCache = 60 * time.Second
 	nodeDoHMaxCache = 10 * time.Minute
+	maxNodeDoHCache = 256
 )
 
 type nodeDoHCacheEntry struct {
@@ -45,6 +47,7 @@ var (
 	nodeDoHInflight = make(map[string]*nodeDoHCall)
 
 	nodeDoHClientsOnce sync.Once
+	nodeDoHClientsInit atomic.Bool
 	nodeDoHSecure      *http.Client
 	nodeDoHInsecure    *http.Client
 )
@@ -105,11 +108,48 @@ func lookupNodeDoH(host string, servers []string, strategy string) []string {
 	call.ips = ips
 	delete(nodeDoHInflight, key)
 	if len(ips) > 0 {
-		nodeDoHCache[key] = nodeDoHCacheEntry{ips: ips, expires: time.Now().Add(clampDuration(ttl, nodeDoHMinCache, nodeDoHMaxCache))}
+		now := time.Now()
+		if len(nodeDoHCache) >= maxNodeDoHCache {
+			pruneNodeDoHCacheLocked(now)
+		}
+		nodeDoHCache[key] = nodeDoHCacheEntry{ips: ips, expires: now.Add(clampDuration(ttl, nodeDoHMinCache, nodeDoHMaxCache))}
 	}
 	nodeDoHMu.Unlock()
 	close(call.done)
 	return ips
+}
+
+func pruneNodeDoHCacheLocked(now time.Time) {
+	for k, entry := range nodeDoHCache {
+		if now.After(entry.expires) {
+			delete(nodeDoHCache, k)
+		}
+	}
+	if len(nodeDoHCache) < maxNodeDoHCache {
+		return
+	}
+	remove := len(nodeDoHCache) - maxNodeDoHCache + 1
+	for k := range nodeDoHCache {
+		delete(nodeDoHCache, k)
+		remove--
+		if remove <= 0 {
+			break
+		}
+	}
+}
+
+func ResetNodeDoHState() {
+	nodeDoHMu.Lock()
+	clear(nodeDoHCache)
+	nodeDoHMu.Unlock()
+	if nodeDoHClientsInit.Load() {
+		if nodeDoHSecure != nil {
+			nodeDoHSecure.CloseIdleConnections()
+		}
+		if nodeDoHInsecure != nil {
+			nodeDoHInsecure.CloseIdleConnections()
+		}
+	}
 }
 
 func queryNodeDoHServers(host string, servers []string, strategy string) ([]string, time.Duration) {
@@ -245,6 +285,7 @@ func nodeDoHClients() (*http.Client, *http.Client) {
 	nodeDoHClientsOnce.Do(func() {
 		nodeDoHSecure = newNodeDoHClient(false)
 		nodeDoHInsecure = newNodeDoHClient(true)
+		nodeDoHClientsInit.Store(true)
 	})
 	return nodeDoHSecure, nodeDoHInsecure
 }

@@ -35,7 +35,22 @@ class AndroidBackendState {
 }
 
 class AndroidBackendLauncher {
-  static Future<AndroidBackendState> start() async {
+  static Future<AndroidBackendState>? _inFlight;
+
+  static Future<AndroidBackendState> start() {
+    final existing = _inFlight;
+    if (existing != null) return existing;
+    late final Future<AndroidBackendState> tracked;
+    tracked = _startOnce().whenComplete(() {
+      if (identical(_inFlight, tracked)) {
+        _inFlight = null;
+      }
+    });
+    _inFlight = tracked;
+    return tracked;
+  }
+
+  static Future<AndroidBackendState> _startOnce() async {
     try {
       final value = await _nativeChannel.invokeMethod<Object?>('startBackend');
       return AndroidBackendState.fromPlatform(value);
@@ -80,6 +95,13 @@ class LocalWingApi implements WingApi {
   LocalWingApi(this.token);
 
   final String token;
+  final HttpClient _client =
+      HttpClient()
+        ..connectionTimeout = const Duration(seconds: 4)
+        ..idleTimeout = const Duration(seconds: 15)
+        ..maxConnectionsPerHost = 4;
+
+  void close() => _client.close(force: true);
 
   Future<Object?> _request(
     String path, {
@@ -118,16 +140,15 @@ class LocalWingApi implements WingApi {
     required Object? body,
     required Duration timeout,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+    final uri = Uri.parse('$_apiBase$path');
+    final request = await _client.openUrl(method, uri);
+    request.headers.set('X-Wing-Mobile-Token', token);
+    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+    if (body != null) {
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode(body));
+    }
     try {
-      final uri = Uri.parse('$_apiBase$path');
-      final request = await client.openUrl(method, uri);
-      request.headers.set('X-Wing-Mobile-Token', token);
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      if (body != null) {
-        request.headers.contentType = ContentType.json;
-        request.write(jsonEncode(body));
-      }
       final response = await request.close().timeout(timeout);
       final text = await utf8.decoder.bind(response).join();
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -139,8 +160,6 @@ class LocalWingApi implements WingApi {
       return jsonDecode(text);
     } on TimeoutException {
       throw const WingApiException('操作超时，请检查当前网络或节点');
-    } finally {
-      client.close(force: true);
     }
   }
 
@@ -501,24 +520,55 @@ class WingAndroidHome extends StatefulWidget {
   State<WingAndroidHome> createState() => _WingAndroidHomeState();
 }
 
-class _WingAndroidHomeState extends State<WingAndroidHome> {
+class _WingAndroidHomeState extends State<WingAndroidHome>
+    with WidgetsBindingObserver {
   int _tab = 0;
   Map<String, dynamic> _status = const {};
   Map<String, dynamic> _stats = const {};
   bool _vpnRunning = false;
   bool _busy = false;
   bool _refreshing = false;
+  bool _foreground = true;
   String? _error;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _foreground =
+        lifecycle == null ||
+        lifecycle == AppLifecycleState.resumed ||
+        lifecycle == AppLifecycleState.inactive;
     _refreshStatus();
-    _timer = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) => _refreshStatus(),
-    );
+    _syncPollingTimer();
+  }
+
+  void _syncPollingTimer() {
+    final shouldPoll = _foreground && _tab == 0;
+    if (shouldPoll) {
+      if (_timer == null || !_timer!.isActive) {
+        _timer = Timer.periodic(
+          const Duration(seconds: 2),
+          (_) => _refreshStatus(),
+        );
+      }
+    } else {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final active = state == AppLifecycleState.resumed;
+    if (_foreground == active) return;
+    _foreground = active;
+    _syncPollingTimer();
+    if (active && mounted) {
+      unawaited(_refreshStatus(refreshStats: _tab == 0));
+    }
   }
 
   Future<void> _refreshStatus({bool refreshStats = false}) async {
@@ -631,8 +681,12 @@ class _WingAndroidHomeState extends State<WingAndroidHome> {
           onToggleVpn: _toggleVpn,
           onRefresh: () => _refreshStatus(refreshStats: true),
           onModeChanged: (global) async {
-            await widget.api.setGlobalMode(global);
-            await _refreshStatus();
+            try {
+              await widget.api.setGlobalMode(global);
+              await _refreshStatus();
+            } catch (error) {
+              _message(error.toString());
+            }
           },
         );
       case 1:
@@ -661,6 +715,7 @@ class _WingAndroidHomeState extends State<WingAndroidHome> {
         selectedIndex: _tab,
         onDestinationSelected: (value) {
           setState(() => _tab = value);
+          _syncPollingTimer();
           if (value == 0) {
             unawaited(_refreshStatus(refreshStats: true));
           }
@@ -693,7 +748,13 @@ class _WingAndroidHomeState extends State<WingAndroidHome> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _timer = null;
+    final api = widget.api;
+    if (api is LocalWingApi) {
+      api.close();
+    }
     super.dispose();
   }
 }
@@ -896,6 +957,7 @@ class _NodesPage extends StatefulWidget {
 
 class _NodesPageState extends State<_NodesPage> {
   List<Map<String, dynamic>> _nodes = const [];
+  List<Map<String, dynamic>> _filteredNodes = const [];
   List<Map<String, dynamic>> _suppliers = const [];
   final _search = TextEditingController();
   bool _loading = true;
@@ -913,17 +975,51 @@ class _NodesPageState extends State<_NodesPage> {
     _initialize();
   }
 
+  List<Map<String, dynamic>> _dedupeSuppliers(
+    List<Map<String, dynamic>> suppliers,
+  ) {
+    final seen = <String>{};
+    final unique = <Map<String, dynamic>>[];
+    for (final item in suppliers) {
+      final file = item['fileName']?.toString() ?? '';
+      if (file.isEmpty || seen.add(file)) {
+        unique.add(item);
+      }
+    }
+    return unique;
+  }
+
+  void _rebuildFilteredNodes() {
+    final query = _search.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      _filteredNodes = _nodes;
+      return;
+    }
+    _filteredNodes = _nodes
+        .where((node) {
+          return node['name'].toString().toLowerCase().contains(query) ||
+              node['group'].toString().toLowerCase().contains(query);
+        })
+        .toList(growable: false);
+  }
+
   Future<void> _initialize() async {
     try {
-      final suppliers = await widget.api.getSuppliers();
+      final rawSuppliers = await widget.api.getSuppliers();
       if (!mounted) return;
+      final suppliers = _dedupeSuppliers(rawSuppliers);
       final active = suppliers.where((item) => item['active'] == true);
+      final hasSelected = suppliers.any(
+        (item) => item['fileName']?.toString() == _selectedSupplierFile,
+      );
       setState(() {
         _suppliers = suppliers;
-        _selectedSupplierFile =
-            active.isNotEmpty
-                ? active.first['fileName']?.toString()
-                : suppliers.firstOrNull?['fileName']?.toString();
+        if (!hasSelected) {
+          _selectedSupplierFile =
+              active.isNotEmpty
+                  ? active.first['fileName']?.toString()
+                  : suppliers.firstOrNull?['fileName']?.toString();
+        }
       });
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
@@ -942,7 +1038,10 @@ class _NodesPageState extends State<_NodesPage> {
     try {
       final nodes = await widget.api.getNodes(fileName: _selectedSupplierFile);
       if (mounted && generation == _loadGeneration) {
-        setState(() => _nodes = nodes);
+        setState(() {
+          _nodes = nodes;
+          _rebuildFilteredNodes();
+        });
       }
     } catch (error) {
       if (mounted && generation == _loadGeneration) {
@@ -965,6 +1064,7 @@ class _NodesPageState extends State<_NodesPage> {
       _switchingSupplier = true;
       _selectedSupplierFile = fileName;
       _nodes = const [];
+      _filteredNodes = const [];
       _testing.clear();
       _switchingNodeKey = null;
       _error = null;
@@ -1002,9 +1102,10 @@ class _NodesPageState extends State<_NodesPage> {
       final latency = await widget.api.testNode(node);
       final position = _nodes.indexWhere((item) => _nodeKey(item) == key);
       if (mounted && position >= 0) {
-        setState(
-          () => _nodes[position] = {..._nodes[position], 'latency': latency},
-        );
+        setState(() {
+          _nodes[position] = {..._nodes[position], 'latency': latency};
+          _rebuildFilteredNodes();
+        });
       }
     } finally {
       if (mounted) setState(() => _testing.remove(key));
@@ -1027,21 +1128,21 @@ class _NodesPageState extends State<_NodesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final query = _search.text.trim().toLowerCase();
-    final filtered = _nodes
-        .where((node) {
-          return query.isEmpty ||
-              node['name'].toString().toLowerCase().contains(query) ||
-              node['group'].toString().toLowerCase().contains(query);
-        })
-        .toList(growable: false);
+    final filtered = _filteredNodes;
+    final dropdownValue =
+        _suppliers.any(
+              (supplier) =>
+                  supplier['fileName']?.toString() == _selectedSupplierFile,
+            )
+            ? _selectedSupplierFile
+            : null;
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
           child: DropdownButtonFormField<String>(
-            key: ValueKey(_selectedSupplierFile),
-            value: _selectedSupplierFile,
+            key: ValueKey(dropdownValue),
+            value: dropdownValue,
             isExpanded: true,
             decoration: const InputDecoration(
               labelText: '选择订阅',
@@ -1071,7 +1172,7 @@ class _NodesPageState extends State<_NodesPage> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: TextField(
             controller: _search,
-            onChanged: (_) => setState(() {}),
+            onChanged: (_) => setState(_rebuildFilteredNodes),
             decoration: InputDecoration(
               hintText: '搜索节点或订阅组',
               prefixIcon: const Icon(Icons.search_rounded),
@@ -1108,12 +1209,12 @@ class _NodesPageState extends State<_NodesPage> {
                     )
                     : ListView.builder(
                       key: PageStorageKey<String>(
-                        'nodes:${_selectedSupplierFile ?? 'all'}',
+                        'nodes:${dropdownValue ?? 'all'}',
                       ),
                       padding: const EdgeInsets.fromLTRB(12, 6, 12, 28),
                       cacheExtent: 82,
                       addAutomaticKeepAlives: false,
-                      addRepaintBoundaries: false,
+                      addRepaintBoundaries: true,
                       addSemanticIndexes: false,
                       itemCount: filtered.length,
                       itemExtent: 82,
@@ -1241,33 +1342,10 @@ class _SubscriptionsPageState extends State<_SubscriptionsPage> {
   }
 
   Future<void> _add() async {
-    final controller = TextEditingController();
     final input = await showDialog<String>(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('导入订阅'),
-            content: TextField(
-              controller: controller,
-              autofocus: true,
-              minLines: 2,
-              maxLines: 5,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(hintText: '粘贴订阅链接或节点链接'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, controller.text.trim()),
-                child: const Text('导入'),
-              ),
-            ],
-          ),
+      builder: (_) => const _ImportSubscriptionDialog(),
     );
-    controller.dispose();
     if (input == null || input.isEmpty) return;
     try {
       final response = await widget.api.importSubscription(input);
@@ -1342,59 +1420,16 @@ class _SubscriptionsPageState extends State<_SubscriptionsPage> {
       return;
     }
     if (!mounted) return;
-    final url = TextEditingController(text: originalUrl);
-    final interval = TextEditingController(
-      text: '${supplier['updateIntervalMinutes'] ?? 360}',
-    );
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder:
-          (context) => AlertDialog(
-            title: Text('编辑 ${supplier['name'] ?? '订阅'}'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: url,
-                  autofocus: true,
-                  minLines: 2,
-                  maxLines: 4,
-                  keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(labelText: '订阅 URL'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: interval,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: '自动更新间隔（分钟）'),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  final minutes = int.tryParse(interval.text.trim());
-                  if (url.text.trim().isEmpty ||
-                      minutes == null ||
-                      minutes <= 0) {
-                    return;
-                  }
-                  Navigator.pop(context, {
-                    'url': url.text.trim(),
-                    'minutes': minutes,
-                  });
-                },
-                child: const Text('保存'),
-              ),
-            ],
+          (_) => _EditSubscriptionDialog(
+            title: '编辑 ${supplier['name'] ?? '订阅'}',
+            initialUrl: originalUrl,
+            initialIntervalMinutes:
+                '${supplier['updateIntervalMinutes'] ?? 360}',
           ),
     );
-    url.dispose();
-    interval.dispose();
     if (result == null || !mounted) return;
     try {
       final response = await widget.api.editSupplier(
@@ -1611,6 +1646,132 @@ class _SubscriptionsPageState extends State<_SubscriptionsPage> {
   }
 }
 
+class _ImportSubscriptionDialog extends StatefulWidget {
+  const _ImportSubscriptionDialog();
+
+  @override
+  State<_ImportSubscriptionDialog> createState() =>
+      _ImportSubscriptionDialogState();
+}
+
+class _ImportSubscriptionDialogState extends State<_ImportSubscriptionDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('导入订阅'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        minLines: 2,
+        maxLines: 5,
+        keyboardType: TextInputType.url,
+        decoration: const InputDecoration(hintText: '粘贴订阅链接或节点链接'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text.trim()),
+          child: const Text('导入'),
+        ),
+      ],
+    );
+  }
+}
+
+class _EditSubscriptionDialog extends StatefulWidget {
+  const _EditSubscriptionDialog({
+    required this.title,
+    required this.initialUrl,
+    required this.initialIntervalMinutes,
+  });
+
+  final String title;
+  final String initialUrl;
+  final String initialIntervalMinutes;
+
+  @override
+  State<_EditSubscriptionDialog> createState() =>
+      _EditSubscriptionDialogState();
+}
+
+class _EditSubscriptionDialogState extends State<_EditSubscriptionDialog> {
+  late final TextEditingController _url;
+  late final TextEditingController _interval;
+
+  @override
+  void initState() {
+    super.initState();
+    _url = TextEditingController(text: widget.initialUrl);
+    _interval = TextEditingController(text: widget.initialIntervalMinutes);
+  }
+
+  @override
+  void dispose() {
+    _url.dispose();
+    _interval.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _url,
+            autofocus: true,
+            minLines: 2,
+            maxLines: 4,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(labelText: '订阅 URL'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _interval,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: '自动更新间隔（分钟）'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final minutes = int.tryParse(_interval.text.trim());
+            if (_url.text.trim().isEmpty || minutes == null || minutes <= 0) {
+              return;
+            }
+            Navigator.pop(context, {'url': _url.text.trim(), 'minutes': minutes});
+          },
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}
+
 class _ToolsPage extends StatefulWidget {
   const _ToolsPage({required this.api, required this.abi});
   final WingApi api;
@@ -1625,11 +1786,35 @@ class _ToolsPageState extends State<_ToolsPage> {
   List<Map<String, dynamic>> _rules = const [];
   List<Map<String, dynamic>> _siteResults = const [];
   bool _testing = false;
+  bool _ignoringBattery = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _checkBatteryOptimization();
+  }
+
+  Future<void> _checkBatteryOptimization() async {
+    try {
+      final ignoring = await _nativeChannel.invokeMethod<bool>(
+        'isIgnoringBatteryOptimizations',
+      );
+      if (mounted && ignoring != null) {
+        setState(() => _ignoringBattery = ignoring);
+      }
+    } on MissingPluginException catch (_) {
+    } catch (_) {}
+  }
+
+  Future<void> _openBatteryOptimization() async {
+    try {
+      await _nativeChannel.invokeMethod<bool>(
+        'openBatteryOptimizationSettings',
+      );
+      await _checkBatteryOptimization();
+    } on MissingPluginException catch (_) {
+    } catch (_) {}
   }
 
   Future<void> _load() async {
@@ -1780,8 +1965,18 @@ class _ToolsPageState extends State<_ToolsPage> {
         const SizedBox(height: 10),
         Card(
           child: ListTile(
+            onTap: _openBatteryOptimization,
+            leading: const Icon(Icons.battery_saver_rounded),
+            title: const Text('后台保活'),
+            subtitle: Text(_ignoringBattery ? '已关闭电池优化' : '未关闭电池优化'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Card(
+          child: ListTile(
             leading: const _WingMark(size: 42),
-            title: const Text('wing 1.0.7.2'),
+            title: const Text('wing 1.0.7.3'),
             subtitle: Text(
               'Android 原生客户端 · 内置代理核心\n架构：${widget.abi ?? 'unknown'} · MIT License',
             ),

@@ -1867,8 +1867,12 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var wg sync.WaitGroup
-	// 与 Clash Party 默认的延迟测试并发数一致。
-	sem := make(chan struct{}, 50)
+	// 与 Clash Party 默认的延迟测试并发数一致；Android 端限制并发避免同时创建过多内核实例导致 OOM。
+	concurrency := 50
+	if runtime.GOOS == "android" {
+		concurrency = 8
+	}
+	sem := make(chan struct{}, concurrency)
 
 	for _, gNode := range nodesToTest {
 		wg.Add(1)
@@ -1892,6 +1896,9 @@ func testAllHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	wg.Wait()
+	if runtime.GOOS == "android" {
+		debug.FreeOSMemory()
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -3023,15 +3030,10 @@ func aggGroupRemoveNodeHandler(w http.ResponseWriter, r *http.Request) {
 var startTime = time.Now()
 
 func getStatsHandler(w http.ResponseWriter, r *http.Request) {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
+	summary := r.URL.Query().Get("summary") == "1"
 	speedIn, speedOut := stats.GetCurrentSpeeds()
 
 	payload := map[string]interface{}{
-		"memAlloc":         m.Alloc,
-		"memSys":           m.Sys,
-		"heapInuse":        m.HeapInuse,
-		"heapReleased":     m.HeapReleased,
 		"goroutines":       runtime.NumGoroutine(),
 		"speedIn":          speedIn,
 		"speedOut":         speedOut,
@@ -3043,7 +3045,13 @@ func getStatsHandler(w http.ResponseWriter, r *http.Request) {
 		"totalIn":          atomic.LoadUint64(&common.GlobalProxyIn),
 		"totalOut":         atomic.LoadUint64(&common.GlobalProxyOut),
 	}
-	if r.URL.Query().Get("summary") != "1" {
+	if !summary {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		payload["memAlloc"] = m.Alloc
+		payload["memSys"] = m.Sys
+		payload["heapInuse"] = m.HeapInuse
+		payload["heapReleased"] = m.HeapReleased
 		payload["logs"] = stats.GetRecentConnLogs(200)
 		payload["trafficSessions"] = stats.GetTrafficSessions()
 	}

@@ -20,6 +20,7 @@ import (
 const (
 	nodeIPProbeTimeout = 1500 * time.Millisecond
 	nodeIPChoiceTTL    = 2 * time.Minute
+	maxNodeIPChoices   = 256
 )
 
 type nodeIPChoice struct {
@@ -65,13 +66,42 @@ func pickReachableNodeIP(node protocol.Node, groups [][]string) string {
 			continue
 		}
 		if winner := raceNodeIPs(group, port, quic); winner != "" {
+			now := time.Now()
 			nodeIPChoiceMu.Lock()
-			nodeIPChoices[key] = nodeIPChoice{ip: winner, expires: time.Now().Add(nodeIPChoiceTTL)}
+			if len(nodeIPChoices) >= maxNodeIPChoices {
+				pruneNodeIPChoicesLocked(now)
+			}
+			nodeIPChoices[key] = nodeIPChoice{ip: winner, expires: now.Add(nodeIPChoiceTTL)}
 			nodeIPChoiceMu.Unlock()
 			return winner
 		}
 	}
 	return fallback
+}
+
+func pruneNodeIPChoicesLocked(now time.Time) {
+	for k, choice := range nodeIPChoices {
+		if now.After(choice.expires) {
+			delete(nodeIPChoices, k)
+		}
+	}
+	if len(nodeIPChoices) < maxNodeIPChoices {
+		return
+	}
+	remove := len(nodeIPChoices) - maxNodeIPChoices + 1
+	for k := range nodeIPChoices {
+		delete(nodeIPChoices, k)
+		remove--
+		if remove <= 0 {
+			break
+		}
+	}
+}
+
+func ResetNodeIPChoices() {
+	nodeIPChoiceMu.Lock()
+	clear(nodeIPChoices)
+	nodeIPChoiceMu.Unlock()
 }
 
 func groupsContain(groups [][]string, target string) bool {

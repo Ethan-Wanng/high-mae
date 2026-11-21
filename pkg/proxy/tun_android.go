@@ -4,12 +4,14 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/netip"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -26,22 +28,27 @@ import (
 	"github.com/sagernet/sing/service"
 
 	"wing/pkg/common"
+	"wing/pkg/stats"
 	"wing/pkg/utils"
 )
 
 const (
-	tunInboundTag    = "wing-tun"
-	tunLocalSocksTag = "wing-local-socks"
-	tunLocalDNSTag   = "wing-local-dns"
-	tunMTU           = 1500
-	tunStack         = "gvisor"
-	tunUDPTimeout    = 30 * time.Second
+	tunInboundTag               = "wing-tun"
+	tunLocalSocksTag            = "wing-local-socks"
+	tunLocalDNSTag              = "wing-local-dns"
+	tunMTU                      = 1400
+	tunStack                    = "gvisor"
+	tunUDPTimeout               = 30 * time.Second
+	androidVpnCmdStop           = 0
+	androidVpnCmdStart          = 1
+	androidVpnCmdNetworkChanged = 2
 )
 
 var (
-	androidTunMu  sync.Mutex
-	androidTunBox *box.Box
-	androidTunFd  int = -1
+	androidTunMu        sync.Mutex
+	androidTunBox       *box.Box
+	androidTunFd        int = -1
+	androidNetResetting atomic.Bool
 )
 
 func StartAndroidTunListener() {
@@ -57,10 +64,21 @@ func StartAndroidTunListener() {
 		for {
 			conn, err := l.Accept()
 			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
 				log.Printf("[Android TUN] Accept error: %v", err)
-				return
+				time.Sleep(100 * time.Millisecond)
+				continue
 			}
-			go handleVpnSocket(conn.(*net.UnixConn))
+			utils.SafeGo("android vpn socket", func() {
+				unixConn, ok := conn.(*net.UnixConn)
+				if !ok {
+					_ = conn.Close()
+					return
+				}
+				handleVpnSocket(unixConn)
+			})
 		}
 	})
 }
@@ -86,9 +104,19 @@ func handleVpnSocket(conn *net.UnixConn) {
 		return
 	}
 	command := buf[0]
-	if command == 0 {
+	switch command {
+	case androidVpnCmdStop:
 		StopTun()
+		acknowledge(true, "")
 		log.Println("[Android TUN] Received stop command from Android VpnService")
+		return
+	case androidVpnCmdNetworkChanged:
+		handleAndroidNetworkChanged()
+		acknowledge(true, "")
+		return
+	case androidVpnCmdStart:
+	default:
+		acknowledge(false, fmt.Sprintf("未知 VPN 控制指令: %d", command))
 		return
 	}
 
@@ -97,6 +125,7 @@ func handleVpnSocket(conn *net.UnixConn) {
 		cmsgs, parseErr := syscall.ParseSocketControlMessage(oob[:oobn])
 		if parseErr != nil {
 			log.Printf("[Android TUN] ParseSocketControlMessage error: %v", parseErr)
+			acknowledge(false, "解析 VPN 文件描述符失败")
 			return
 		}
 		for _, cmsg := range cmsgs {
@@ -120,7 +149,7 @@ func handleVpnSocket(conn *net.UnixConn) {
 	defer androidTunMu.Unlock()
 
 	if androidTunBox != nil {
-		_ = androidTunBox.Close()
+		_ = closeSingBoxInstance("android tun box", androidTunBox)
 		androidTunBox = nil
 		androidTunFd = -1
 	} else if androidTunFd >= 0 && androidTunFd != receivedFd {
@@ -138,12 +167,36 @@ func handleVpnSocket(conn *net.UnixConn) {
 	common.SetTunModeOn(true)
 	proxyOn, tunOn, _ := common.GetNetworkState()
 	_ = SaveLastNetworkMode(proxyOn, tunOn)
+	stats.SyncTrafficSession(proxyOn, tunOn)
 	acknowledge(true, "")
 	log.Println("[Android TUN] Android Native VPN TUN is now active and routing traffic!")
 }
 
+func handleAndroidNetworkChanged() {
+	if !androidNetResetting.CompareAndSwap(false, true) {
+		return
+	}
+	utils.SafeGo("android network change reset", func() {
+		defer androidNetResetting.Store(false)
+		ResetDNSState()
+		ResetNodeDoHState()
+		ResetNodeIPChoices()
+
+		activeNode, activeName, _ := common.GetActiveNodeSnapshot()
+		if activeName == "" && activeNode.Server == "" {
+			return
+		}
+		if err := SwitchNode(activeNode); err != nil {
+			log.Printf("[Android TUN] 网络切换重建节点客户端失败: %v", err)
+		} else {
+			log.Println("[Android TUN] 网络切换完成，已重置连接池并重建当前节点客户端")
+		}
+	})
+}
+
 type androidPlatformInterface struct {
-	fd int
+	fd       int
+	onOpened func()
 }
 
 // androidDefaultInterfaceMonitor deliberately keeps no system routes. The
@@ -205,7 +258,11 @@ func (p *androidPlatformInterface) OpenInterface(options *singtun.Options, platf
 	options.Name = "wing-tun"
 	options.AutoRoute = false
 	options.StrictRoute = false
-	return singtun.New(*options)
+	tunDev, err := singtun.New(*options)
+	if err == nil && p.onOpened != nil {
+		p.onOpened()
+	}
+	return tunDev, err
 }
 
 func (p *androidPlatformInterface) UsePlatformDefaultInterfaceMonitor() bool {
@@ -274,9 +331,17 @@ func (p *androidPlatformInterface) SendNotification(notification *adapter.Notifi
 }
 
 func startAndroidTunEngineLocked(fd int) (err error) {
+	var fdOwnedByTun atomic.Bool
+	closeUnusedFd := func() {
+		if !fdOwnedByTun.Load() && fd >= 0 {
+			_ = syscall.Close(fd)
+		}
+	}
+
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			_ = syscall.Close(fd)
+			closeUnusedFd()
+			utils.WriteCrashLog("android tun start", recovered)
 			log.Printf("[Android TUN] Recovered core panic: %v\n%s", recovered, debug.Stack())
 			err = fmt.Errorf("Android VPN 核心初始化异常: %v", recovered)
 		}
@@ -284,28 +349,42 @@ func startAndroidTunEngineLocked(fd int) (err error) {
 
 	opts, err := buildAndroidTunBoxOptions()
 	if err != nil {
+		closeUnusedFd()
 		return err
 	}
 
 	ctx := include.Context(context.Background())
-	ctx = service.ContextWith[adapter.PlatformInterface](ctx, &androidPlatformInterface{fd: fd})
+	ctx = service.ContextWith[adapter.PlatformInterface](ctx, &androidPlatformInterface{
+		fd: fd,
+		onOpened: func() {
+			fdOwnedByTun.Store(true)
+		},
+	})
 
 	b, err := box.New(box.Options{
 		Options: opts,
 		Context: ctx,
 	})
 	if err != nil {
-		_ = syscall.Close(fd)
+		closeUnusedFd()
 		return fmt.Errorf("创建 sing-box TUN 实例失败: %w", err)
 	}
 
-	if err := b.Start(); err != nil {
-		_ = b.Close()
+	if err := startSingBoxInstance("android tun box", b); err != nil {
+		closeUnusedFd()
+		_ = closeSingBoxInstance("failed android tun box", b)
 		return fmt.Errorf("启动 sing-box TUN 实例失败: %w", err)
 	}
 
 	androidTunBox = b
 	return nil
+}
+
+func androidTunDNSStrategy() option.DomainStrategy {
+	if GlobalSystemConfig.PreferIPv6 {
+		return option.DomainStrategy(C.DomainStrategyPreferIPv6)
+	}
+	return option.DomainStrategy(C.DomainStrategyIPv4Only)
 }
 
 func buildAndroidTunBoxOptions() (option.Options, error) {
@@ -338,6 +417,9 @@ func buildAndroidTunBoxOptions() (option.Options, error) {
 					},
 				},
 				Final: tunLocalDNSTag,
+				DNSClientOptions: option.DNSClientOptions{
+					Strategy: androidTunDNSStrategy(),
+				},
 			},
 		},
 		Inbounds: []option.Inbound{
@@ -387,7 +469,7 @@ func buildAndroidTunBoxOptions() (option.Options, error) {
 					DefaultOptions: option.DefaultRule{
 						RawDefaultRule: option.RawDefaultRule{
 							Inbound: []string{tunInboundTag},
-							Network: []string{N.NetworkICMP},
+							Network: []string{N.NetworkICMP, N.NetworkUDP},
 						},
 						RuleAction: option.RuleAction{
 							Action: C.RuleActionTypeReject,
@@ -399,7 +481,7 @@ func buildAndroidTunBoxOptions() (option.Options, error) {
 					DefaultOptions: option.DefaultRule{
 						RawDefaultRule: option.RawDefaultRule{
 							Inbound: []string{tunInboundTag},
-							Network: []string{N.NetworkTCP, N.NetworkUDP},
+							Network: []string{N.NetworkTCP},
 						},
 						RuleAction: option.RuleAction{
 							Action: C.RuleActionTypeRoute,
@@ -438,7 +520,7 @@ func StopTun() {
 
 	hadBox := androidTunBox != nil
 	if hadBox {
-		_ = androidTunBox.Close()
+		_ = closeSingBoxInstance("android tun box", androidTunBox)
 		androidTunBox = nil
 	}
 	if androidTunFd >= 0 && !hadBox {
@@ -448,6 +530,8 @@ func StopTun() {
 	common.SetTunModeOn(false)
 	proxyOn, tunOn, _ := common.GetNetworkState()
 	_ = SaveLastNetworkMode(proxyOn, tunOn)
+	stats.SyncTrafficSession(proxyOn, tunOn)
+	debug.FreeOSMemory()
 }
 
 func prepareNodeBypassRouteForSwitch(nodeIP string) func() {

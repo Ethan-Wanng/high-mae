@@ -432,8 +432,13 @@ func TestSummaryStatsOmitsHeavyHistory(t *testing.T) {
 	if _, ok := payload["trafficSessions"]; ok {
 		t.Fatal("summary stats should omit traffic sessions")
 	}
-	if _, ok := payload["totalIn"]; !ok {
-		t.Fatal("summary stats should retain total traffic")
+	if _, ok := payload["memAlloc"]; ok {
+		t.Fatal("summary stats should skip ReadMemStats STW pause and omit memAlloc")
+	}
+	for _, field := range []string{"totalIn", "totalOut", "speedIn", "speedOut"} {
+		if _, ok := payload[field]; !ok {
+			t.Fatalf("summary stats missing required field %q", field)
+		}
 	}
 }
 

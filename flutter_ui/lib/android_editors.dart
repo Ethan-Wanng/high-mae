@@ -75,60 +75,10 @@ class _DnsEditorPageState extends State<_DnsEditorPage> {
 
   Future<void> _editServer([int? index]) async {
     final current = index == null ? null : _servers[index];
-    final name = TextEditingController(text: current?['name']?.toString());
-    final address = TextEditingController(
-      text: current?['address']?.toString() ?? '1.1.1.1:53',
-    );
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Text(index == null ? '添加 DNS 服务器' : '编辑 DNS 服务器'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: name,
-                  autofocus: true,
-                  decoration: const InputDecoration(labelText: '名称'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: address,
-                  keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(
-                    labelText: '地址',
-                    hintText: '1.1.1.1:53',
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  if (name.text.trim().isEmpty || address.text.trim().isEmpty) {
-                    return;
-                  }
-                  Navigator.pop(context, {
-                    'id':
-                        current?['id'] ??
-                        'dns_${DateTime.now().microsecondsSinceEpoch}',
-                    'name': name.text.trim(),
-                    'address': address.text.trim(),
-                    'type': 'udp',
-                  });
-                },
-                child: const Text('确定'),
-              ),
-            ],
-          ),
+      builder: (_) => _DnsServerDialog(current: current),
     );
-    name.dispose();
-    address.dispose();
     if (result == null || !mounted) return;
     final servers = _servers;
     if (index == null) {
@@ -163,78 +113,10 @@ class _DnsEditorPageState extends State<_DnsEditorPage> {
       return;
     }
     final current = index == null ? null : _rules[index];
-    final value = TextEditingController(text: current?['value']?.toString());
-    var type = current?['type']?.toString() ?? 'domain_suffix';
-    var serverId =
-        current?['serverId']?.toString() ?? servers.first['id'].toString();
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder:
-          (context) => StatefulBuilder(
-            builder:
-                (context, setDialogState) => AlertDialog(
-                  title: Text(index == null ? '添加 DNS 规则' : '编辑 DNS 规则'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      DropdownButtonFormField<String>(
-                        value: type,
-                        decoration: const InputDecoration(labelText: '匹配方式'),
-                        items: _ruleTypeItems(),
-                        onChanged:
-                            (next) => setDialogState(() => type = next ?? type),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: value,
-                        decoration: const InputDecoration(
-                          labelText: '域名内容',
-                          hintText: 'example.com',
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: serverId,
-                        decoration: const InputDecoration(labelText: 'DNS 服务器'),
-                        items:
-                            servers
-                                .map(
-                                  (server) => DropdownMenuItem(
-                                    value: server['id'].toString(),
-                                    child: Text(
-                                      server['name']?.toString() ?? '未命名',
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged:
-                            (next) => setDialogState(
-                              () => serverId = next ?? serverId,
-                            ),
-                      ),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('取消'),
-                    ),
-                    FilledButton(
-                      onPressed: () {
-                        if (value.text.trim().isEmpty) return;
-                        Navigator.pop(context, {
-                          'type': type,
-                          'value': value.text.trim(),
-                          'serverId': serverId,
-                        });
-                      },
-                      child: const Text('确定'),
-                    ),
-                  ],
-                ),
-          ),
+      builder: (_) => _DnsRuleDialog(servers: servers, current: current),
     );
-    value.dispose();
     if (result == null || !mounted) return;
     final rules = _rules;
     if (index == null) {
@@ -454,63 +336,10 @@ class _RoutingEditorPageState extends State<_RoutingEditorPage> {
 
   Future<void> _editGroup([int? index]) async {
     final current = index == null ? null : _groups[index];
-    final name = TextEditingController(text: current?['name']?.toString());
-    var action = current?['action']?.toString() ?? 'direct';
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder:
-          (context) => StatefulBuilder(
-            builder:
-                (context, setDialogState) => AlertDialog(
-                  title: Text(index == null ? '添加规则组' : '编辑规则组'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(
-                        controller: name,
-                        autofocus: true,
-                        decoration: const InputDecoration(labelText: '规则组名称'),
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: action,
-                        decoration: const InputDecoration(labelText: '匹配后的动作'),
-                        items: const [
-                          DropdownMenuItem(value: 'direct', child: Text('直连')),
-                          DropdownMenuItem(value: 'proxy', child: Text('代理')),
-                          DropdownMenuItem(value: 'reject', child: Text('拒绝')),
-                        ],
-                        onChanged:
-                            (next) =>
-                                setDialogState(() => action = next ?? action),
-                      ),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('取消'),
-                    ),
-                    FilledButton(
-                      onPressed: () {
-                        if (name.text.trim().isEmpty) return;
-                        Navigator.pop(context, {
-                          'id':
-                              current?['id'] ??
-                              'group_${DateTime.now().microsecondsSinceEpoch}',
-                          'name': name.text.trim(),
-                          'action': action,
-                          'rules':
-                              current?['rules'] ?? <Map<String, dynamic>>[],
-                        });
-                      },
-                      child: const Text('确定'),
-                    ),
-                  ],
-                ),
-          ),
+      builder: (_) => _RoutingGroupDialog(current: current),
     );
-    name.dispose();
     if (result == null || !mounted) return;
     setState(() {
       final next = [..._groups];
@@ -523,77 +352,29 @@ class _RoutingEditorPageState extends State<_RoutingEditorPage> {
     });
   }
 
-  Future<void> _editRule(int groupIndex, [int? ruleIndex]) async {
+  Future<void> _openGroupRules(int groupIndex) async {
     final group = _groups[groupIndex];
-    final rules = _copyMaps(group['rules']);
-    final current = ruleIndex == null ? null : rules[ruleIndex];
-    final value = TextEditingController(text: current?['value']?.toString());
-    var type = current?['type']?.toString() ?? 'domain_suffix';
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder:
-          (context) => StatefulBuilder(
-            builder:
-                (context, setDialogState) => AlertDialog(
-                  title: Text(ruleIndex == null ? '添加路由规则' : '编辑路由规则'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      DropdownButtonFormField<String>(
-                        value: type,
-                        decoration: const InputDecoration(labelText: '匹配方式'),
-                        items: _ruleTypeItems(),
-                        onChanged:
-                            (next) => setDialogState(() => type = next ?? type),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: value,
-                        autofocus: true,
-                        decoration: const InputDecoration(
-                          labelText: '域名内容',
-                          hintText: 'example.com',
-                        ),
-                      ),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('取消'),
-                    ),
-                    FilledButton(
-                      onPressed: () {
-                        if (value.text.trim().isEmpty) return;
-                        Navigator.pop(context, {
-                          'type': type,
-                          'value': value.text.trim(),
-                        });
-                      },
-                      child: const Text('确定'),
-                    ),
-                  ],
-                ),
-          ),
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder:
+            (_) => _RoutingGroupRulesPage(
+              groupName: group['name']?.toString() ?? '未命名规则组',
+              initialRules: _copyMaps(group['rules']),
+              onRulesChanged: (rules) {
+                if (!mounted || groupIndex >= _groups.length) return;
+                setState(() {
+                  final next = [..._groups];
+                  next[groupIndex] = {...next[groupIndex], 'rules': rules};
+                  _groups = next;
+                });
+              },
+            ),
+      ),
     );
-    value.dispose();
-    if (result == null || !mounted) return;
-    if (ruleIndex == null) {
-      rules.add(result);
-    } else {
-      rules[ruleIndex] = result;
-    }
-    setState(() => _groups[groupIndex] = {...group, 'rules': rules});
   }
 
   void _deleteGroup(int index) {
     setState(() => _groups = [..._groups]..removeAt(index));
-  }
-
-  void _deleteRule(int groupIndex, int ruleIndex) {
-    final group = _groups[groupIndex];
-    final rules = _copyMaps(group['rules'])..removeAt(ruleIndex);
-    setState(() => _groups[groupIndex] = {...group, 'rules': rules});
   }
 
   @override
@@ -636,63 +417,503 @@ class _RoutingEditorPageState extends State<_RoutingEditorPage> {
                 itemCount: _groups.length,
                 itemBuilder: (context, groupIndex) {
                   final group = _groups[groupIndex];
-                  final rules = _copyMaps(group['rules']);
+                  final ruleCount = (group['rules'] as List?)?.length ?? 0;
                   return Card(
                     margin: const EdgeInsets.only(bottom: 10),
-                    child: ExpansionTile(
-                      initiallyExpanded: groupIndex == 0,
+                    child: ListTile(
+                      onTap: () => _openGroupRules(groupIndex),
                       leading: Icon(_actionIcon(group['action'])),
                       title: Text(group['name']?.toString() ?? '未命名规则组'),
                       subtitle: Text(
-                        '${_actionLabel(group['action'])} · ${rules.length} 条规则',
+                        '${_actionLabel(group['action'])} · $ruleCount 条规则',
                       ),
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (value) {
-                          if (value == 'edit') _editGroup(groupIndex);
-                          if (value == 'delete') _deleteGroup(groupIndex);
-                        },
-                        itemBuilder:
-                            (_) => const [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Text('编辑规则组'),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text('删除规则组'),
-                              ),
-                            ],
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          PopupMenuButton<String>(
+                            onSelected: (value) {
+                              if (value == 'edit') _editGroup(groupIndex);
+                              if (value == 'delete') _deleteGroup(groupIndex);
+                            },
+                            itemBuilder:
+                                (_) => const [
+                                  PopupMenuItem(
+                                    value: 'edit',
+                                    child: Text('编辑规则组'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text('删除规则组'),
+                                  ),
+                                ],
+                          ),
+                          const Icon(Icons.chevron_right_rounded),
+                        ],
                       ),
-                      children: [
-                        for (final entry in rules.asMap().entries)
-                          ListTile(
-                            onTap: () => _editRule(groupIndex, entry.key),
-                            leading: const Icon(Icons.rule_rounded),
-                            title: Text(entry.value['value']?.toString() ?? ''),
-                            subtitle: Text(_ruleTypeLabel(entry.value['type'])),
-                            trailing: IconButton(
-                              tooltip: '删除',
-                              onPressed:
-                                  () => _deleteRule(groupIndex, entry.key),
-                              icon: const Icon(Icons.delete_outline),
-                            ),
-                          ),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                            child: TextButton.icon(
-                              onPressed: () => _editRule(groupIndex),
-                              icon: const Icon(Icons.add_rounded),
-                              label: const Text('添加规则'),
-                            ),
-                          ),
-                        ),
-                      ],
                     ),
                   );
                 },
               ),
+    );
+  }
+}
+
+class _RoutingGroupRulesPage extends StatefulWidget {
+  const _RoutingGroupRulesPage({
+    required this.groupName,
+    required this.initialRules,
+    required this.onRulesChanged,
+  });
+
+  final String groupName;
+  final List<Map<String, dynamic>> initialRules;
+  final ValueChanged<List<Map<String, dynamic>>> onRulesChanged;
+
+  @override
+  State<_RoutingGroupRulesPage> createState() => _RoutingGroupRulesPageState();
+}
+
+class _RoutingGroupRulesPageState extends State<_RoutingGroupRulesPage> {
+  late List<Map<String, dynamic>> _rules;
+  List<int> _filteredIndices = const [];
+  final _search = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _rules = _copyMaps(widget.initialRules);
+    _rebuildFiltered();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _rebuildFiltered() {
+    final query = _search.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      _filteredIndices = List<int>.generate(_rules.length, (i) => i);
+      return;
+    }
+    final matches = <int>[];
+    for (var i = 0; i < _rules.length; i++) {
+      final value = _rules[i]['value']?.toString().toLowerCase() ?? '';
+      if (value.contains(query)) {
+        matches.add(i);
+      }
+    }
+    _filteredIndices = matches;
+  }
+
+  Future<void> _editRule([int? ruleIndex]) async {
+    final current = ruleIndex == null ? null : _rules[ruleIndex];
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => _RoutingRuleDialog(current: current),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      if (ruleIndex == null) {
+        _rules.add(result);
+      } else {
+        _rules[ruleIndex] = result;
+      }
+      _rebuildFiltered();
+    });
+    widget.onRulesChanged(_copyMaps(_rules));
+  }
+
+  void _deleteRule(int ruleIndex) {
+    setState(() {
+      _rules.removeAt(ruleIndex);
+      _rebuildFiltered();
+    });
+    widget.onRulesChanged(_copyMaps(_rules));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.groupName)),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _editRule(),
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('添加规则'),
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+            child: TextField(
+              controller: _search,
+              onChanged: (_) => setState(_rebuildFiltered),
+              decoration: const InputDecoration(
+                hintText: '搜索域名规则',
+                prefixIcon: Icon(Icons.search_rounded),
+              ),
+            ),
+          ),
+          Expanded(
+            child:
+                _filteredIndices.isEmpty
+                    ? const _EditorEmpty(message: '暂无路由规则')
+                    : ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 96),
+                      itemExtent: 72,
+                      addRepaintBoundaries: true,
+                      itemCount: _filteredIndices.length,
+                      itemBuilder: (context, index) {
+                        final ruleIndex = _filteredIndices[index];
+                        final rule = _rules[ruleIndex];
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          child: ListTile(
+                            onTap: () => _editRule(ruleIndex),
+                            leading: const Icon(Icons.rule_rounded),
+                            title: Text(
+                              rule['value']?.toString() ?? '',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(_ruleTypeLabel(rule['type'])),
+                            trailing: IconButton(
+                              tooltip: '删除',
+                              onPressed: () => _deleteRule(ruleIndex),
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DnsServerDialog extends StatefulWidget {
+  const _DnsServerDialog({this.current});
+
+  final Map<String, dynamic>? current;
+
+  @override
+  State<_DnsServerDialog> createState() => _DnsServerDialogState();
+}
+
+class _DnsServerDialogState extends State<_DnsServerDialog> {
+  late final TextEditingController _name;
+  late final TextEditingController _address;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.current?['name']?.toString());
+    _address = TextEditingController(
+      text: widget.current?['address']?.toString() ?? '1.1.1.1:53',
+    );
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _address.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.current == null ? '添加 DNS 服务器' : '编辑 DNS 服务器'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _name,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: '名称'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _address,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              labelText: '地址',
+              hintText: '1.1.1.1:53',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (_name.text.trim().isEmpty || _address.text.trim().isEmpty) {
+              return;
+            }
+            Navigator.pop(context, {
+              'id':
+                  widget.current?['id'] ??
+                  'dns_${DateTime.now().microsecondsSinceEpoch}',
+              'name': _name.text.trim(),
+              'address': _address.text.trim(),
+              'type': 'udp',
+            });
+          },
+          child: const Text('确定'),
+        ),
+      ],
+    );
+  }
+}
+
+class _DnsRuleDialog extends StatefulWidget {
+  const _DnsRuleDialog({required this.servers, this.current});
+
+  final List<Map<String, dynamic>> servers;
+  final Map<String, dynamic>? current;
+
+  @override
+  State<_DnsRuleDialog> createState() => _DnsRuleDialogState();
+}
+
+class _DnsRuleDialogState extends State<_DnsRuleDialog> {
+  late final TextEditingController _value;
+  late String _type;
+  late String _serverId;
+
+  @override
+  void initState() {
+    super.initState();
+    _value = TextEditingController(text: widget.current?['value']?.toString());
+    final rawType = widget.current?['type']?.toString() ?? 'domain_suffix';
+    _type =
+        _ruleTypeItems().any((item) => item.value == rawType)
+            ? rawType
+            : 'domain_suffix';
+    final rawServer = widget.current?['serverId']?.toString();
+    _serverId =
+        widget.servers.any((s) => s['id']?.toString() == rawServer)
+            ? rawServer!
+            : widget.servers.first['id'].toString();
+  }
+
+  @override
+  void dispose() {
+    _value.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.current == null ? '添加 DNS 规则' : '编辑 DNS 规则'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DropdownButtonFormField<String>(
+            value: _type,
+            decoration: const InputDecoration(labelText: '匹配方式'),
+            items: _ruleTypeItems(),
+            onChanged: (next) => setState(() => _type = next ?? _type),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _value,
+            decoration: const InputDecoration(
+              labelText: '域名内容',
+              hintText: 'example.com',
+            ),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _serverId,
+            decoration: const InputDecoration(labelText: 'DNS 服务器'),
+            items:
+                widget.servers
+                    .map(
+                      (server) => DropdownMenuItem(
+                        value: server['id'].toString(),
+                        child: Text(server['name']?.toString() ?? '未命名'),
+                      ),
+                    )
+                    .toList(),
+            onChanged: (next) => setState(() => _serverId = next ?? _serverId),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (_value.text.trim().isEmpty) return;
+            Navigator.pop(context, {
+              'type': _type,
+              'value': _value.text.trim(),
+              'serverId': _serverId,
+            });
+          },
+          child: const Text('确定'),
+        ),
+      ],
+    );
+  }
+}
+
+class _RoutingGroupDialog extends StatefulWidget {
+  const _RoutingGroupDialog({this.current});
+
+  final Map<String, dynamic>? current;
+
+  @override
+  State<_RoutingGroupDialog> createState() => _RoutingGroupDialogState();
+}
+
+class _RoutingGroupDialogState extends State<_RoutingGroupDialog> {
+  late final TextEditingController _name;
+  late String _action;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.current?['name']?.toString());
+    final rawAction = widget.current?['action']?.toString() ?? 'direct';
+    _action =
+        (rawAction == 'direct' || rawAction == 'proxy' || rawAction == 'reject')
+            ? rawAction
+            : 'direct';
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.current == null ? '添加规则组' : '编辑规则组'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _name,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: '规则组名称'),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _action,
+            decoration: const InputDecoration(labelText: '匹配后的动作'),
+            items: const [
+              DropdownMenuItem(value: 'direct', child: Text('直连')),
+              DropdownMenuItem(value: 'proxy', child: Text('代理')),
+              DropdownMenuItem(value: 'reject', child: Text('拒绝')),
+            ],
+            onChanged: (next) => setState(() => _action = next ?? _action),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (_name.text.trim().isEmpty) return;
+            Navigator.pop(context, {
+              'id':
+                  widget.current?['id'] ??
+                  'group_${DateTime.now().microsecondsSinceEpoch}',
+              'name': _name.text.trim(),
+              'action': _action,
+              'rules': widget.current?['rules'] ?? <Map<String, dynamic>>[],
+            });
+          },
+          child: const Text('确定'),
+        ),
+      ],
+    );
+  }
+}
+
+class _RoutingRuleDialog extends StatefulWidget {
+  const _RoutingRuleDialog({this.current});
+
+  final Map<String, dynamic>? current;
+
+  @override
+  State<_RoutingRuleDialog> createState() => _RoutingRuleDialogState();
+}
+
+class _RoutingRuleDialogState extends State<_RoutingRuleDialog> {
+  late final TextEditingController _value;
+  late String _type;
+
+  @override
+  void initState() {
+    super.initState();
+    _value = TextEditingController(text: widget.current?['value']?.toString());
+    final rawType = widget.current?['type']?.toString() ?? 'domain_suffix';
+    _type =
+        _ruleTypeItems().any((item) => item.value == rawType)
+            ? rawType
+            : 'domain_suffix';
+  }
+
+  @override
+  void dispose() {
+    _value.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.current == null ? '添加路由规则' : '编辑路由规则'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DropdownButtonFormField<String>(
+            value: _type,
+            decoration: const InputDecoration(labelText: '匹配方式'),
+            items: _ruleTypeItems(),
+            onChanged: (next) => setState(() => _type = next ?? _type),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _value,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '域名内容',
+              hintText: 'example.com',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (_value.text.trim().isEmpty) return;
+            Navigator.pop(context, {'type': _type, 'value': _value.text.trim()});
+          },
+          child: const Text('确定'),
+        ),
+      ],
     );
   }
 }

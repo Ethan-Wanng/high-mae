@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -57,7 +58,10 @@ func AddConnLog(target, node string) int64 {
 	// Keep last 5000 logs for history queries.
 	// 🚀 修复 Go slice 内存泄漏：connLogs[1:] 只移动头指针，底层数组永远不被 GC 回收。
 	// 改用 copy 缩容，让旧底层数组可以被 GC 释放。
-	const maxLogs = 5000
+	maxLogs := 5000
+	if runtime.GOOS == "android" {
+		maxLogs = 500
+	}
 	if len(connLogs) > maxLogs {
 		removeCount := len(connLogs) - maxLogs
 		for i := 0; i < removeCount; i++ {

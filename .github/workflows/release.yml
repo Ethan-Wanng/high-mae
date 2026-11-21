@@ -12,9 +12,9 @@ permissions:
   contents: write
 
 env:
-  WING_VERSION: "1.0.7.2"
+  WING_VERSION: "1.0.7.3"
   FLUTTER_VERSION: "3.29.2"
-  FLUTTER_BUILD_NUMBER: "10072"
+  FLUTTER_BUILD_NUMBER: "10073"
   GOPROXY: "https://proxy.golang.org,direct"
   GONOSUMDB: "github.com/sagernet/*"
 
@@ -231,10 +231,9 @@ jobs:
             ${{ hashFiles('artifacts/*.ipa') != '' && format('- iOS: wing-{0}-ios-unsigned.ipa', env.WING_VERSION) || '- iOS: not included in this release (native iOS build in progress)' }}
 
             Notes:
+            - Improves Android VPN stability, crash safety, smoothness, and memory usage: adds START_STICKY/task persistence, a backend health watchdog that re-attaches the TUN FD without dropping VPN, validated underlying network switching (Wi-Fi/Cellular), strict 64MiB Go memory limit + bounded caches/concurrency, direct in-process SOCKS5 relay, lifecycle-aware polling, and lazy virtualized routing rule lists.
             - Reduces Edge/Windows Security false positives: adds an in-app direct updater (avoids browser Zone.Identifier/SmartScreen tags), embeds PE version/manifest/icon metadata and symbol tables in wing.exe, removes hidden PowerShell Bypass calls from the installer, and provides a .zip archive and SHA256SUMS.txt alongside the .exe setup. If downloading manually in Edge, prefer the .zip archive.
-            - Fixes domestic direct traffic (such as Douyin) lagging or routing through the proxy in TUN + Proxy mode: direct domains and domestic DNS servers now resolve directly via domestic DoH/UDP bound to the physical network adapter instead of tunneling DNS over TCP through the proxy node.
-            - Extends TUN IP-to-domain mapping TTL floor to 30 minutes (including HTTPS/SVCB IPv4/IPv6 hints) so short-TTL CDN records do not expire after 13-19s and fall back to proxy routing; direct connections also reuse TUN destination IPs and in-process direct DNS resolution.
-            - Expands built-in ByteDance / Douyin / Volcano Engine CDN direct rules and automatically merges new built-in direct rules into existing user rule configs on startup.
+            - Includes 1.0.7.2: Fixes domestic direct traffic (such as Douyin) lagging or routing through the proxy in TUN + Proxy mode via direct physical-adapter DoH/UDP, 30-minute TUN IP-to-domain mapping TTL floor, and expanded ByteDance/Volcano CDN direct rules.
             - Includes 1.0.7.1: Clash Party-style URLTest latency checks, live node IP probing, IPv6 fallback to IPv4, IME-safe node search, and Hysteria2 pinSHA256 support.
             ${{ hashFiles('artifacts/*.ipa') != '' && '- The iOS IPA is unsigned and must be signed with an Apple Developer certificate before device distribution.' || '' }}
           files: artifacts/*

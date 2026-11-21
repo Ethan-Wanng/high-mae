@@ -5,8 +5,8 @@
 1 24 "wing.exe.manifest"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,7,2
- PRODUCTVERSION 1,0,7,2
+ FILEVERSION 1,0,7,3
+ PRODUCTVERSION 1,0,7,3
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x40004L
@@ -19,12 +19,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Ethan-Wanng\0"
             VALUE "FileDescription", "wing desktop proxy client\0"
-            VALUE "FileVersion", "1.0.7.2\0"
+            VALUE "FileVersion", "1.0.7.3\0"
             VALUE "InternalName", "wing\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 Ethan-Wanng. All rights reserved.\0"
             VALUE "OriginalFilename", "wing.exe\0"
             VALUE "ProductName", "wing\0"
-            VALUE "ProductVersion", "1.0.7.2\0"
+            VALUE "ProductVersion", "1.0.7.3\0"
         END
     END
     BLOCK "VarFileInfo"

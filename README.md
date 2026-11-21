@@ -14,6 +14,14 @@
 
 wing 是一款基于 Flutter + Go 的跨平台代理客户端。它集成 sing-box、Mieru Client、本地 HTTP 代理服务与 Web 控制面板，把节点订阅、测速、网站可用性测试、自动选点、规则分流、隧道连接、DNS 分流、WebRTC 防泄漏和命令行进程规则收进一个轻量桌面入口。界面采用扁平化布局，随网络状态切换直连、代理、TUN、代理 + TUN 四套配色；安装包、桌面窗口和搜索入口使用彩色渐变 wing 图标，首页、自动选择入口和托盘图标会按当前模式自动换成对应图标。
 
+## 1.0.7.3 更新
+
+- 修复 Android 版 VPN 稳定性与断连问题：服务声明 `stopWithTask="false"` 与 `START_STICKY` 持久意图恢复，抽离 `WingBackendManager` 统一守护 `libwing_backend.so` 并在核心失活时自动重启重绑 TUN FD 而不断开 VPN 接口；接入 `ConnectivityManager.NetworkCallback` 自动追踪已验证的底层网络切换（Wi-Fi/蜂窝）并清理过期连接池；移除 Android 启动时误关 TUN 的竞态。
+- 修复 Android 版系统与客户端崩溃：补齐 API 34+ `FOREGROUND_SERVICE_TYPE_SPECIAL_USE` 及 API 21–35 兼容保护，使用显式启动 Intent 构造通知，引入 `SafeMethodResult` 与 `vpnGeneration` 状态锁，修复订阅下拉筛选异常与弹窗控制器提前释放崩溃。
+- 修复 Android 版卡顿与内存/FD 异常：TUN SOCKS5 流量改为进程内直连转发消除本地双环回与非 DNS UDP 握手风暴，默认 MTU 调至 `1400`；`/api/stats?summary=1` 跳过 `ReadMemStats` 全局停顿，Flutter 轮询改用长连接池并在后台或非连接页自动暂停；路由编辑器支持搜索与虚拟化懒加载；在启动环境变量和运行时严格启用 `64 MiB` Go 内存上限、并发/缓存收敛、`RLIMIT_NOFILE` 抬升及空载内存归还；工具页新增电池优化保活入口。
+- Windows 分发优化：新增应用内直连更新下载与校验（绕开 Edge 标记拦截），补全 `wing.exe` PE 版本/图标/清单资源并保留符号表，安装包清理隐式 PowerShell 调用并提供 `.zip` 与 `SHA256SUMS.txt`。
+- 版本统一升级至 `1.0.7.3`。
+
 ## 1.0.7.2 更新
 
 - 修复 TUN + 代理模式下刷抖音等国内应用卡顿、被错误代理的问题：匹配直连规则的域名与国内 DNS 服务器改为绑定物理网卡通过国内 DoH/UDP 直接解析，不再经由代理节点转发 DNS，避免解析超时或拿到海外 CDN 节点。
@@ -153,14 +161,14 @@ go mod download
 双击根目录的 `package-wing.bat` 可以构建并生成给最终用户使用的 Windows 标准安装包：
 
 ```text
-dist/wing-1.0.7.2-windows-x64-setup.exe
+dist/wing-1.0.7.3-windows-x64-setup.exe
 ```
 
 命令行方式如下：
 
 ```powershell
 ./scripts/mk.ps1 build  # 构建 Flutter 控制面板与 Go 后端
-./scripts/mk.ps1 package # 构建并生成 dist/wing-1.0.7.2-windows-x64-setup.exe 标准安装包
+./scripts/mk.ps1 package # 构建并生成 dist/wing-1.0.7.3-windows-x64-setup.exe 标准安装包
 ./scripts/mk.ps1 installer # 同 package
 ./scripts/mk.ps1 portable # 生成旧版自解压安装包，不建议作为公开 Release 资产
 ./scripts/mk.ps1 backend # 仅构建 Go 后端
@@ -174,7 +182,7 @@ dist/wing-1.0.7.2-windows-x64-setup.exe
 
 - `wing.exe`：Go 后端、系统托盘、本地代理与本地 Web API。
 - `build/bin/flutter_ui/wing_ui.exe`：Flutter 桌面控制面板，会加载 `http://127.0.0.1:10809/`。
-- `dist/wing-1.0.7.2-windows-x64-setup.exe`：标准 Windows 安装包，用户双击后可选择安装目录。
+- `dist/wing-1.0.7.3-windows-x64-setup.exe`：标准 Windows 安装包，用户双击后可选择安装目录。
 - `dist/wing-installer.exe`：旧版自解压安装器，仅通过 `portable` 命令生成，公开分发时不推荐使用。
 
 ### 其他平台打包
@@ -199,18 +207,20 @@ bash scripts/package-ios.sh
 可通过环境变量覆盖版本与构建号：
 
 ```bash
-WING_VERSION=1.0.7.2 FLUTTER_BUILD_NUMBER=10072 bash scripts/package-android.sh
+WING_VERSION=1.0.7.3 FLUTTER_BUILD_NUMBER=10073 bash scripts/package-android.sh
 ```
 
 ### Release 资产
 
 GitHub Actions 的 `release.yml` 会为 `v*` 标签生成并上传以下资产：
 
-- `wing-1.0.7.2-windows-x64-setup.exe`
-- `wing-1.0.7.2-linux-x64.run`
-- `wing-1.0.7.2-macos-x64.pkg`
-- `wing-1.0.7.2-android-universal.apk`
-- `wing-1.0.7.2-ios-unsigned.ipa`
+- `wing-1.0.7.3-windows-x64-setup.exe`
+- `wing-1.0.7.3-windows-x64-setup.zip`
+- `wing-1.0.7.3-linux-x64.run`
+- `wing-1.0.7.3-macos-x64.pkg`
+- `wing-1.0.7.3-android-universal.apk`
+- `wing-1.0.7.3-ios-unsigned.ipa`
+- `SHA256SUMS.txt`
 
 iOS 默认 Release 资产是未签名 IPA，需要 Apple Developer 证书签名后才能真机分发；本地可通过 `IOS_EXPORT_OPTIONS_PLIST=/path/to/ExportOptions.plist bash scripts/package-ios.sh` 生成签名 IPA。Windows 代理软件未签名时仍可能被部分安全软件误报；仓库提供 `scripts/sign-windows.ps1`，在配置代码签名证书后可自动签名 Windows 可执行文件和安装包。
 
