@@ -22,13 +22,8 @@ mkdir -p "$DIST"
 pushd "$ROOT" >/dev/null
 echo "Compiling Android Go backend (libwing_backend.so)..."
 
-# 1. Always compile arm64-v8a (supports pure Go / CGO_ENABLED=0)
-echo "Building arm64-v8a backend..."
-mkdir -p flutter_ui/android/app/src/main/jniLibs/arm64-v8a
-env CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -tags "$TAGS" -o flutter_ui/android/app/src/main/jniLibs/arm64-v8a/libwing_backend.so ./mobile
-
-# 2. Android/amd64 and Android/arm require external linking. The Android build
-# excludes desktop systray code, so the NDK is used only as the target linker.
+# All ABIs—including arm64-v8a—must be built with CGO_ENABLED=1 so Go uses
+# Bionic getaddrinfo / Android netd DNS instead of failing on missing /etc/resolv.conf.
 NDK_DIR="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-${ANDROID_NDK_LATEST_HOME:-}}}"
 if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
   SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
@@ -37,7 +32,7 @@ if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
   fi
 fi
 if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
-  echo "Android NDK is required for x86_64 and armeabi-v7a backends." >&2
+  echo "Android NDK is required for Android backends." >&2
   exit 1
 fi
 LLVM_BIN="$(find "$NDK_DIR/toolchains/llvm/prebuilt" -mindepth 2 -maxdepth 2 -type d -name "bin" 2>/dev/null | head -n 1 || true)"
@@ -46,7 +41,51 @@ if [ -z "$LLVM_BIN" ] || [ ! -d "$LLVM_BIN" ]; then
   exit 1
 fi
 
-CLANG_X86="$(find "$LLVM_BIN" -name "x86_64-linux-android*-clang" 2>/dev/null | grep -v 'clang++' | head -n 1 || true)"
+find_ndk_clang() {
+  local prefix="$1"
+  local preferred="$LLVM_BIN/${prefix}21-clang"
+  if [ -x "$preferred" ]; then
+    printf '%s\n' "$preferred"
+    return 0
+  fi
+
+  local candidates
+  candidates="$(find "$LLVM_BIN" -maxdepth 1 -name "${prefix}[0-9]*-clang" ! -name '*clang++*' 2>/dev/null | sort -V || true)"
+  if [ -z "$candidates" ]; then
+    return 1
+  fi
+
+  local match
+  match="$(printf '%s\n' "$candidates" | awk -v prefix="$prefix" '
+    {
+      name = $0
+      sub(/^.*\//, "", name)
+      sub("^" prefix, "", name)
+      sub(/-clang$/, "", name)
+      if (name + 0 >= 21) {
+        print $0
+        exit
+      }
+    }
+  ')"
+  if [ -n "$match" ]; then
+    printf '%s\n' "$match"
+    return 0
+  fi
+
+  printf '%s\n' "$candidates" | head -n 1
+}
+
+CLANG_ARM64="$(find_ndk_clang "aarch64-linux-android" || true)"
+if [ -z "$CLANG_ARM64" ]; then
+  echo "Android NDK arm64-v8a compiler was not found." >&2
+  exit 1
+fi
+echo "Building arm64-v8a backend with NDK: $CLANG_ARM64..."
+mkdir -p flutter_ui/android/app/src/main/jniLibs/arm64-v8a
+env CGO_ENABLED=1 CC="$CLANG_ARM64" GOOS=android GOARCH=arm64 go build -tags "$TAGS" -o flutter_ui/android/app/src/main/jniLibs/arm64-v8a/libwing_backend.so ./mobile
+
+CLANG_X86="$(find_ndk_clang "x86_64-linux-android" || true)"
 if [ -z "$CLANG_X86" ]; then
   echo "Android NDK x86_64 compiler was not found." >&2
   exit 1
@@ -55,7 +94,7 @@ echo "Building x86_64 backend with NDK: $CLANG_X86..."
 mkdir -p flutter_ui/android/app/src/main/jniLibs/x86_64
 env CGO_ENABLED=1 CC="$CLANG_X86" GOOS=android GOARCH=amd64 go build -tags "$TAGS" -o flutter_ui/android/app/src/main/jniLibs/x86_64/libwing_backend.so ./mobile
 
-CLANG_ARM="$(find "$LLVM_BIN" -name "armv7a-linux-androideabi*-clang" 2>/dev/null | grep -v 'clang++' | head -n 1 || true)"
+CLANG_ARM="$(find_ndk_clang "armv7a-linux-androideabi" || true)"
 if [ -z "$CLANG_ARM" ]; then
   echo "Android NDK armeabi-v7a compiler was not found." >&2
   exit 1

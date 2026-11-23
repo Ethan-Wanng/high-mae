@@ -40,6 +40,8 @@ func main() {
 	debug.SetMemoryLimit(64 << 20)
 	debug.SetGCPercent(20)
 	raiseAndroidFDLimit()
+	proxy.EnsureAndroidCertDirs()
+	configureAndroidDNS()
 
 	if err := storage.Init(); err != nil {
 		log.Printf("[Android Core] storage.Init failed: %v", err)

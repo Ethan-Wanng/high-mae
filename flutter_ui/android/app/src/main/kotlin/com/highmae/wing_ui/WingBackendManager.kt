@@ -1,12 +1,16 @@
 package com.highmae.wing_ui
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Process as AndroidProcess
 import android.provider.Settings
 import android.util.Log
 import java.io.File
 import java.net.HttpURLConnection
+import java.net.Inet6Address
 import java.net.URL
 import java.util.UUID
 import kotlin.concurrent.thread
@@ -18,6 +22,8 @@ object WingBackendManager {
     private const val VPN_DESIRED_KEY = "vpn_desired_running"
     private const val VPN_DESIRED_BOOT_COUNT_KEY = "vpn_desired_boot_count"
     private const val PID_FILE_NAME = "wing_backend.pid"
+    private const val ANDROID_CERT_DIRS =
+        "/apex/com.android.conscrypt/cacerts:/system/etc/security/cacerts:/data/misc/keychain/certs-added"
 
     @Volatile
     private var backendProcess: Process? = null
@@ -167,6 +173,7 @@ object WingBackendManager {
                     if (!backend.canExecute()) {
                         backend.setExecutable(true, true)
                     }
+                    val systemDns = collectSystemDnsServers(appContext)
                     val process = ProcessBuilder(backend.absolutePath)
                         .directory(appContext.filesDir)
                         .redirectErrorStream(true)
@@ -175,6 +182,10 @@ object WingBackendManager {
                             environment()["WING_MOBILE_API_TOKEN"] = token
                             environment()["GOMEMLIMIT"] = "64MiB"
                             environment()["GOGC"] = "20"
+                            environment()["SSL_CERT_DIR"] = ANDROID_CERT_DIRS
+                            if (systemDns.isNotEmpty()) {
+                                environment()["WING_ANDROID_DNS_SERVERS"] = systemDns.joinToString(",")
+                            }
                         }
                         .start()
                     restarted = true
@@ -215,6 +226,96 @@ object WingBackendManager {
             error = error,
             abi = abi
         )
+    }
+
+    private fun collectSystemDnsServers(context: Context): List<String> {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return emptyList()
+
+            val orderedNetworks = ArrayList<Network>()
+            val seenNetworkIds = HashSet<String>()
+
+            fun addIfUsable(network: Network?) {
+                if (network == null) return
+                val id = network.toString()
+                if (seenNetworkIds.contains(id)) return
+                val caps = try {
+                    cm.getNetworkCapabilities(network)
+                } catch (_: Exception) {
+                    null
+                } ?: return
+                if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                ) {
+                    return
+                }
+                seenNetworkIds.add(id)
+                orderedNetworks.add(network)
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                addIfUsable(cm.activeNetwork)
+            }
+
+            @Suppress("DEPRECATION")
+            val allNetworks = try {
+                cm.allNetworks
+            } catch (_: Exception) {
+                emptyArray()
+            }
+            val extraNetworks = allNetworks.mapNotNull { net ->
+                val caps = try {
+                    cm.getNetworkCapabilities(net)
+                } catch (_: Exception) {
+                    null
+                } ?: return@mapNotNull null
+                if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                ) {
+                    return@mapNotNull null
+                }
+                val priority = when {
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 3
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 2
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 1
+                    else -> 0
+                }
+                Pair(priority, net)
+            }.sortedByDescending { it.first }
+
+            for ((_, net) in extraNetworks) {
+                addIfUsable(net)
+            }
+
+            val dnsServers = LinkedHashSet<String>()
+            for (net in orderedNetworks) {
+                val linkProps = try {
+                    cm.getLinkProperties(net)
+                } catch (_: Exception) {
+                    null
+                } ?: continue
+                for (addr in linkProps.dnsServers) {
+                    if (addr.isLoopbackAddress ||
+                        addr.isAnyLocalAddress ||
+                        addr.isLinkLocalAddress ||
+                        addr.isMulticastAddress
+                    ) {
+                        continue
+                    }
+                    val rawHost = addr.hostAddress ?: continue
+                    val host = rawHost.substringBefore('%').trim()
+                    if (host.isEmpty() || host == "172.19.0.2") {
+                        continue
+                    }
+                    val formatted = if (addr is Inet6Address) "[$host]:53" else "$host:53"
+                    dnsServers.add(formatted)
+                }
+            }
+            dnsServers.toList()
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun terminateProcess(process: Process?) {
